@@ -1,3 +1,10 @@
+# [1.0.0-next.24](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.0.0-next.23...v1.0.0-next.24) (2025-12-12)
+
+
+### Bug Fixes
+
+* Treat event payload as primitive only if it has value key ([#40](https://github.com/rdkcentral/firebolt-cpp-transport/issues/40)) ([0d47e05](https://github.com/rdkcentral/firebolt-cpp-transport/commit/0d47e05324a1d059626db35105e0b9ec1d72873c))
+
 # [1.0.0-next.23](https://github.com/rdkcentral/firebolt-native-transport/compare/v1.0.0-next.22...v1.0.0-next.23) (2025-12-05)
 
 
