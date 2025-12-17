@@ -19,14 +19,14 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "./.github/scripts/mk-release-package.sh --version ${nextRelease.version} --package firebolt-native-transport"
+        "prepareCmd": "./.github/scripts/mk-release-package.sh --version ${nextRelease.version} --package firebolt-cpp-transport"
       }
     ],
     [
       "@semantic-release/github",
       {
         "assets": [
-          { "path": "build/firebolt-native-transport-*.tar.gz", "label": "Source Code (tar.gz)" }
+          { "path": "build/firebolt-cpp-transport-*.tar.gz", "label": "Source Code (tar.gz)" }
         ]
       }
     ]

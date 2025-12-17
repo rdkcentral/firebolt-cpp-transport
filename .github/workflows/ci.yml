@@ -33,7 +33,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}/firebolt-native-transport-ci
+          images: ghcr.io/${{ github.repository }}/firebolt-cpp-transport-ci
           tags: type=sha
 
       - name: Checkout Code
