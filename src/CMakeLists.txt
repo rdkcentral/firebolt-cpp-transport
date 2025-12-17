@@ -31,8 +31,8 @@ add_library(${TARGET} ${FIREBOLT_LIBRARY_TYPE}
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-find_package(WPEFrameworkWebSocket CONFIG REQUIRED)
-find_package(WPEFrameworkCore CONFIG REQUIRED)
+find_package(${NAMESPACE}WebSocket CONFIG REQUIRED)
+find_package(${NAMESPACE}Core CONFIG REQUIRED)
 
 if (ENABLE_UNIT_TESTS)
     find_package(nlohmann_json_schema_validator)
@@ -45,8 +45,8 @@ endif ()
 
 target_link_libraries(${TARGET}
     PRIVATE
-        WPEFrameworkWebSocket::WPEFrameworkWebSocket
-        WPEFrameworkCore::WPEFrameworkCore
+        ${NAMESPACE}WebSocket::${NAMESPACE}WebSocket
+        ${NAMESPACE}Core::${NAMESPACE}Core
 )
 
 target_include_directories(${TARGET}
