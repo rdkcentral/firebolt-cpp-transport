@@ -1,3 +1,3 @@
-# Firebolt Native Transport
-An abstraction for transport layer being used across native Firebolt Clients.
+# Firebolt C++ Transport
+An abstraction for transport layer being used across C++ Firebolt Clients.
 
