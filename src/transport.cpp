@@ -54,7 +54,8 @@ static Firebolt::Error mapError(websocketpp::lib::error_code error)
 }
 
 Transport::Transport()
-    : connectionStatus_(TransportState::NotStarted),
+    : client_(std::make_unique<client>()),
+      connectionStatus_(TransportState::NotStarted),
       id_counter_(0),
       debugEnabled_(false)
 {
@@ -67,13 +68,13 @@ Transport::~Transport()
 
 void Transport::start()
 {
-    client_.clear_access_channels(websocketpp::log::alevel::all);
-    client_.clear_error_channels(websocketpp::log::elevel::all);
+    client_->clear_access_channels(websocketpp::log::alevel::all);
+    client_->clear_error_channels(websocketpp::log::elevel::all);
 
-    client_.init_asio();
-    client_.start_perpetual();
+    client_->init_asio();
+    client_->start_perpetual();
 
-    connectionThread_.reset(new websocketpp::lib::thread(&client::run, &client_));
+    connectionThread_.reset(new websocketpp::lib::thread(&client::run, client_.get()));
     connectionStatus_ = TransportState::Disconnected;
 }
 
@@ -112,7 +113,7 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     setLogging(include, exclude);
 
     websocketpp::lib::error_code ec;
-    client::connection_ptr con = client_.get_connection(url, ec);
+    client::connection_ptr con = client_->get_connection(url, ec);
 
     if (ec)
     {
@@ -122,15 +123,17 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
 
     connectionHandle_ = con->get_handle();
 
-    con->set_open_handler(websocketpp::lib::bind(&Transport::onOpen, this, &client_, websocketpp::lib::placeholders::_1));
-    con->set_fail_handler(websocketpp::lib::bind(&Transport::onFail, this, &client_, websocketpp::lib::placeholders::_1));
+    con->set_open_handler(
+        websocketpp::lib::bind(&Transport::onOpen, this, client_.get(), websocketpp::lib::placeholders::_1));
+    con->set_fail_handler(
+        websocketpp::lib::bind(&Transport::onFail, this, client_.get(), websocketpp::lib::placeholders::_1));
     con->set_close_handler(
-        websocketpp::lib::bind(&Transport::onClose, this, &client_, websocketpp::lib::placeholders::_1));
+        websocketpp::lib::bind(&Transport::onClose, this, client_.get(), websocketpp::lib::placeholders::_1));
 
     con->set_message_handler(websocketpp::lib::bind(&Transport::onMessage, this, websocketpp::lib::placeholders::_1,
                                                     websocketpp::lib::placeholders::_2));
 
-    client_.connect(con);
+    client_->connect(con);
 
     debugEnabled_ = Logger::isLogLevelEnabled(Firebolt::LogLevel::Debug);
 
@@ -143,12 +146,12 @@ Firebolt::Error Transport::disconnect()
     {
         return Firebolt::Error::None;
     }
-    client_.stop_perpetual();
+    client_->stop_perpetual();
 
     if (connectionStatus_ == TransportState::Connected)
     {
         websocketpp::lib::error_code ec;
-        client_.close(connectionHandle_, websocketpp::close::status::going_away, "", ec);
+        client_->close(connectionHandle_, websocketpp::close::status::going_away, "", ec);
         if (ec)
         {
             FIREBOLT_LOG_ERROR("Transport", "Error closing connection: %s", ec.message().c_str());
@@ -160,6 +163,7 @@ Firebolt::Error Transport::disconnect()
         connectionThread_->join();
     }
 
+    client_ = std::make_unique<client>();
     connectionStatus_ = TransportState::NotStarted;
     return Firebolt::Error::None;
 }
@@ -191,7 +195,7 @@ Firebolt::Error Transport::send(const std::string& method, const nlohmann::json&
 
     websocketpp::lib::error_code ec;
 
-    client_.send(connectionHandle_, to_string(msg), websocketpp::frame::opcode::text, ec);
+    client_->send(connectionHandle_, to_string(msg), websocketpp::frame::opcode::text, ec);
     if (ec)
     {
         FIREBOLT_LOG_ERROR("Transport", "Error sending message :%s", ec.message().c_str());
@@ -203,8 +207,8 @@ Firebolt::Error Transport::send(const std::string& method, const nlohmann::json&
 
 void Transport::setLogging(websocketpp::log::level include, websocketpp::log::level exclude)
 {
-    client_.set_access_channels(include);
-    client_.clear_access_channels(exclude);
+    client_->set_access_channels(include);
+    client_->clear_access_channels(exclude);
 }
 
 void Transport::onMessage(websocketpp::connection_hdl /* hdl */,
