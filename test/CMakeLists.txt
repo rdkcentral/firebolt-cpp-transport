@@ -27,6 +27,7 @@ set(UNIT_TESTS_APP FireboltTransportUnitTests)
 message("Setup ${UNIT_TESTS_APP}")
 
 set(UNIT_TESTS
+    "unit/gatewayTest.cpp"
     "unit/json_typesTest.cpp"
     "unit/transportTest.cpp"
 )
