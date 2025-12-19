@@ -20,40 +20,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 project(FireboltTransport)
 
-if (FIREBOLT_TRANSPORT_VERSION)
-    set(PROJECT_VERSION ${FIREBOLT_TRANSPORT_VERSION})
-endif ()
-if (NOT PROJECT_VERSION)
-    set(VERSION_STRING "0.1.0-unknown")
-
-    find_package(Git QUIET)
-
-    if (GIT_FOUND)
-        execute_process(
-            COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 --match "v[0-9]*.[0-9]*.[0-9]*"
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-            OUTPUT_VARIABLE GIT_VERSION
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            ERROR_QUIET
-        )
-    endif ()
-
-    if (GIT_VERSION)
-        string(REGEX REPLACE "^v" "" VERSION_STRING "${GIT_VERSION}")
-    endif ()
-
-    if(VERSION_STRING STREQUAL "0.1.0-unknown" AND EXISTS "${CMAKE_SOURCE_DIR}/.version")
-        file(READ "${CMAKE_SOURCE_DIR}/.version" VERSION_STRING)
-        string(STRIP ${VERSION_STRING} VERSION_STRING)
-    endif()
-
-    set(PROJECT_VERSION "${VERSION_STRING}" CACHE STRING "Project version string")
-endif ()
-
-set(VERSION ${PROJECT_VERSION})
-string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\1" PROJECT_VERSION_MAJOR ${PROJECT_VERSION})
-string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\2" PROJECT_VERSION_MINOR ${PROJECT_VERSION})
-string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\3" PROJECT_VERSION_PATCH ${PROJECT_VERSION})
+include(version)
 
 message(STATUS "Project version: ${PROJECT_VERSION}")
 
