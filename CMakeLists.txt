@@ -14,25 +14,52 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.3)
+cmake_minimum_required(VERSION 3.10)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
-include(HelperFunctions)
 
 project(FireboltTransport)
-project_version("1.0.0")
 
-set(FIREBOLT_TRANSPORT_NAMESPACE ${PROJECT_NAME} CACHE STRING "Namespace of the project")
-set(FIREBOLT_TRANSPORT_WAITTIME 1000 CACHE STRING "Maximum time to wait for Transport layer to get response")
-option(FIREBOLT_ENABLE_STATIC_LIB "Create Firebolt library as Static library" OFF)
-option(ENABLE_UNIT_TESTS "Build openrpc native test" OFF)
-
-if (FIREBOLT_ENABLE_STATIC_LIB)
-    set(FIREBOLT_LIBRARY_TYPE STATIC)
-    add_compile_definitions(FIREBOLTSDK_STATIC)
-else ()
-    set(FIREBOLT_LIBRARY_TYPE SHARED)
+if (FIREBOLT_TRANSPORT_VERSION)
+    set(PROJECT_VERSION ${FIREBOLT_TRANSPORT_VERSION})
 endif ()
+if (NOT PROJECT_VERSION)
+    set(VERSION_STRING "0.1.0-unknown")
+
+    find_package(Git QUIET)
+
+    if (GIT_FOUND)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 --match "v[0-9]*.[0-9]*.[0-9]*"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_VERSION
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif ()
+
+    if (GIT_VERSION)
+        string(REGEX REPLACE "^v" "" VERSION_STRING "${GIT_VERSION}")
+    endif ()
+
+    if(VERSION_STRING STREQUAL "0.1.0-unknown" AND EXISTS "${CMAKE_SOURCE_DIR}/.version")
+        file(READ "${CMAKE_SOURCE_DIR}/.version" VERSION_STRING)
+        string(STRIP ${VERSION_STRING} VERSION_STRING)
+    endif()
+
+    set(PROJECT_VERSION "${VERSION_STRING}" CACHE STRING "Project version string")
+endif ()
+
+set(VERSION ${PROJECT_VERSION})
+string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\1" PROJECT_VERSION_MAJOR ${PROJECT_VERSION})
+string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\2" PROJECT_VERSION_MINOR ${PROJECT_VERSION})
+string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\3" PROJECT_VERSION_PATCH ${PROJECT_VERSION})
+
+message(STATUS "Project version: ${PROJECT_VERSION}")
+
+option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+option(ENABLE_TESTS "Build tests" OFF)
+option(DISCOVER_UT "Discover all Unit Tests" ON)
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${SYSROOT_PATH}/usr" CACHE INTERNAL "" FORCE)
@@ -47,17 +74,10 @@ list(APPEND CMAKE_MODULE_PATH
         "${SYSROOT_PATH}/usr/lib/cmake"
         "${SYSROOT_PATH}/tools/cmake")
 
-find_package(WPEFramework CONFIG REQUIRED)
-
-if (ENABLE_UNIT_TESTS)
-    add_compile_definitions(UNIT_TEST UT_OPEN_RPC_FILE="firebolt-open-rpc.json")
-endif ()
+add_compile_options(-Wall -Wextra -Wpedantic)
 
 add_subdirectory(src)
 
-message("${CMAKE_BINARY_DIR}/${PROJECT_NAME}Config.cmake")
-
-configure_file("${CMAKE_SOURCE_DIR}/cmake/project.cmake.in"
-    "${CMAKE_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
-    @ONLY)
-
+if (ENABLE_TESTS)
+    add_subdirectory(test)
+endif()

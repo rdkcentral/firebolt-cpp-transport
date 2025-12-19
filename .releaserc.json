@@ -17,10 +17,17 @@
     "@semantic-release/release-notes-generator",
     "@semantic-release/changelog",
     [
-      "@semantic-release/git",
+      "@semantic-release/exec",
       {
-        "assets": ["CHANGELOG.md"],
-        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+        "prepareCmd": "./.github/scripts/mk-release-package.sh --version ${nextRelease.version} --package firebolt-cpp-transport"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          { "path": "build/firebolt-cpp-transport-*.tar.gz", "label": "Source Code (tar.gz)" }
+        ]
       }
     ]
   ]

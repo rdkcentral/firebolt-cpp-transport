@@ -1,14 +1,12 @@
-name: Automatic Semantic Release
+name: Manual Release
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - next
-      - '+([0-9])\.+([0-9])\.x-maintenance'
 
 jobs:
   release:
+    if: github.ref_name == 'main' || github.ref_name == 'next' || endsWith(github.ref_name, '.x-maintenance')
+                                                                       # '+([0-9])\.+([0-9])\.x-maintenance'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -25,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 'lts/*'
 
       - name: Install dependencies
         run: npm install
@@ -35,6 +33,18 @@ jobs:
         run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+
+      - name: Add Checksum to Job Summary
+        shell: bash
+        run: |
+          (
+            echo "# Release Package Checksum"
+            echo
+            echo '```'
+            cd ${{ github.workspace }}/build && sha256sum *.tar.gz
+            echo '```'
+            echo
+          ) >> $GITHUB_STEP_SUMMARY
 
       - name: Sync main back to next
         if: steps.semantic.outputs.new_release_published == 'true' && github.ref == 'refs/heads/main'
