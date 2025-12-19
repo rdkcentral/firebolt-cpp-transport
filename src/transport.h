@@ -21,6 +21,7 @@
 #include "firebolt/types.h"
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
@@ -61,12 +62,12 @@ private:
 private:
     enum class TransportState;
 
+    std::unique_ptr<websocketpp::client<websocketpp::config::asio_client>> client_;
     std::atomic<TransportState> connectionStatus_;
     std::atomic<unsigned> id_counter_ = 0;
     bool debugEnabled_ = false;
     MessageCallback messageReceiver_;
     ConnectionCallback connectionReceiver_;
-    websocketpp::client<websocketpp::config::asio_client> client_;
     websocketpp::lib::shared_ptr<websocketpp::lib::thread> connectionThread_;
     websocketpp::connection_hdl connectionHandle_;
 };

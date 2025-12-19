@@ -37,6 +37,7 @@ namespace Firebolt::Transport
 
 // Runtime configuration used by client/server watchdog and provider wait
 static unsigned runtime_waitTime_ms = 3000;
+static unsigned watchdog_interval_ms = 500;
 
 using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
 using MessageID = uint32_t;
@@ -61,6 +62,7 @@ class Client
         }
         const MessageID id;
         std::promise<Result<nlohmann::json>> promise;
+        Timestamp timestamp = std::chrono::steady_clock::now();
     };
 
     std::map<MessageID, std::shared_ptr<Caller>> queue;
@@ -74,6 +76,26 @@ public:
     Client(IClientTransport& transport)
         : transport_(transport)
     {
+    }
+
+    void checkPromises()
+    {
+        std::lock_guard<std::mutex> lock(queue_mtx);
+        auto now = std::chrono::steady_clock::now();
+        for (auto it = queue.begin(); it != queue.end();)
+        {
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
+                runtime_waitTime_ms)
+            {
+                FIREBOLT_LOG_WARNING("Gateway", "Request timed out, id: %u", it->second->id);
+                it->second->promise.set_value(Result<nlohmann::json>(Firebolt::Error::Timedout));
+                it = queue.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
     }
 
     Firebolt::Error send(const std::string& method, const nlohmann::json& parameters)
@@ -258,15 +280,29 @@ private:
     Transport transport;
     Client client;
     Server server;
+    std::thread watchdogThread;
+    std::atomic<bool> watchdogRunning;
+    std::once_flag watchdogOnceFlag;
 
 public:
     GatewayImpl()
         : client(*this),
-          server()
+          server(),
+          watchdogRunning(false)
     {
     }
 
-    ~GatewayImpl() = default;
+    ~GatewayImpl()
+    {
+        if (watchdogRunning)
+        {
+            watchdogRunning = false;
+            if (watchdogThread.joinable())
+            {
+                watchdogThread.join();
+            }
+        }
+    }
 
     virtual Firebolt::Error connect(const Firebolt::Config& cfg, ConnectionChangeCallback onConnectionChange) override
     {
@@ -305,10 +341,34 @@ public:
             return status;
         }
 
+        std::call_once(watchdogOnceFlag, [this]() {
+            watchdogRunning = true;
+            watchdogThread = std::thread(
+                [this]()
+                {
+                    while (watchdogRunning)
+                    {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(watchdog_interval_ms));
+                        client.checkPromises();
+                    }
+                });
+        });
+
         return status;
     }
 
-    virtual Firebolt::Error disconnect() override { return transport.disconnect(); }
+    virtual Firebolt::Error disconnect() override
+    {
+        if (watchdogRunning)
+        {
+            watchdogRunning = false;
+            if (watchdogThread.joinable())
+            {
+                watchdogThread.join();
+            }
+        }
+        return transport.disconnect();
+    }
 
     Firebolt::Error send(const std::string& method, const nlohmann::json& parameters) override
     {
@@ -317,16 +377,7 @@ public:
 
     std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters) override
     {
-        auto future = client.request(method, parameters);
-
-        if (future.wait_for(std::chrono::milliseconds(runtime_waitTime_ms)) == std::future_status::timeout)
-        {
-            FIREBOLT_LOG_WARNING("Gateway", "Request timed out, method: %s", method.c_str());
-            std::promise<Result<nlohmann::json>> p;
-            p.set_value(Result<nlohmann::json>{Error::Timedout});
-            return p.get_future();
-        }
-        return future;
+        return client.request(method, parameters);
     }
 
     Firebolt::Error subscribe(const std::string& event, EventCallback callback, void* usercb) override
