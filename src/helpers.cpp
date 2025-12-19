@@ -118,9 +118,7 @@ public:
 private:
     Result<nlohmann::json> getJson(const std::string& methodName, const nlohmann::json& parameters) override
     {
-        auto future = Firebolt::Transport::GetGatewayInstance().request(methodName, parameters);
-        auto result = future.get();
-
+        auto result = Firebolt::Transport::GetGatewayInstance().request(methodName, parameters).get();
         if (!result)
         {
             return Result<nlohmann::json>{result.error()};
