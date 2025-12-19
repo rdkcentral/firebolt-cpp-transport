@@ -2,14 +2,14 @@
   "branches": [
     "main",
     {
-      "name": "next",
-      "prerelease": "next",
-      "channel": "next"
+      "name": "+([0-9])\\.+([0-9])-rc",
+      "prerelease": "rc",
+      "channel": "rc"
     },
     {
       "name": "+([0-9])\\.+([0-9])\\.x-maintenance",
-      "range": "${name}",
-      "channel": "${name}"
+      "channel": "${name}",
+      "range": "$1.$2.x"
     }
   ],
   "plugins": [
