@@ -1,6 +1,9 @@
-Copyright 2023 Comcast Cable Communications Management, LLC
+firebolt-cpp-transport
 
-Licensed under the Apache License, Version 2.0 (the "License");you may not use this file except in compliance with the License.
+Copyright 2025 Comcast Cable Communications Management, LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
 http://www.apache.org/licenses/LICENSE-2.0
@@ -11,8 +14,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-Copyright 2025 Sky UK
-Licensed under the Apache License, Version 2.0
+SPDX-License-Identifier: Apache-2.0
+
+This product includes software developed at Comcast (http://www.comcast.com/).
+
+The component may include material which is licensed under other licenses / copyrights as
+listed below. Your use of this material within the component is also subject to the terms and
+conditions of these licenses. The LICENSE file contains the text of all the licenses which apply within this component.
 
 ===========================================================================
 
@@ -22,6 +30,11 @@ nlohmann::json
 Copyright (c) 2013-2025 Niels Lohmann
 Licensed under the MIT License
 https://github.com/nlohmann/json
+
+json-schema-validator
+Copyright (c) 2016 Patrick Boettcher
+Licensed under the MIT License
+https://github.com/pboettch/json-schema-validator
 
 WebSocket++
 Copyright (c) 2014, Peter Thorson. All rights reserved.
@@ -34,4 +47,3 @@ Licensed under the BSD 3-clause license
 https://github.com/google/googletest
 
 For complete license texts, refer to the LICENSE file or the respective project repositories.
-
