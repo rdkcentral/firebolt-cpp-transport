@@ -2,6 +2,7 @@
 
 ### Changes
 - **Breaking**: The call Gateway::request() is asynchronous
+- Legacy support: Events can be retrieved in the old way via `legacyRPCv1` configuration option
 
 ### Fixes
 - Reconnection issue

@@ -35,6 +35,9 @@ struct Config
     /** Timeout for RPC responses in milliseconds. Default: 3000. */
     unsigned waitTime_ms = 3000;
 
+    /** Enable legacy RPC v1 support for event notification. Default: false. */
+    bool legacyRPCv1 = false;
+
     /**
      * @brief Log format settings used by the Firebolt logger.
      */

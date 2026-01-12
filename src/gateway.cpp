@@ -108,9 +108,18 @@ public:
         return transport_.send(method, parameters, id);
     }
 
-    std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters)
+    std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters,
+                                                std::optional<unsigned> idOpt)
     {
-        MessageID id = transport_.getNextMessageID();
+        MessageID id;
+        if (idOpt.has_value())
+        {
+            id = static_cast<MessageID>(idOpt.value());
+        }
+        else
+        {
+            id = transport_.getNextMessageID();
+        }
         std::shared_ptr<Caller> c = std::make_shared<Caller>(id);
         auto future = c->promise.get_future();
 
@@ -283,12 +292,23 @@ private:
     std::thread watchdogThread;
     std::atomic<bool> watchdogRunning;
     std::once_flag watchdogOnceFlag;
+    bool legacyRPCv1;
+
+    struct RPCv1_EventInfo
+    {
+        std::string eventName;
+        void* usercb;
+    };
+    using RPCv1_EventMap = std::map<MessageID, RPCv1_EventInfo>;
+    RPCv1_EventMap rpcv1_eventMap;
+    std::mutex rpcv1_eventMap_mtx;
 
 public:
     GatewayImpl()
         : client(*this),
           server(),
-          watchdogRunning(false)
+          watchdogRunning(false),
+          legacyRPCv1(false)
     {
     }
 
@@ -316,20 +336,30 @@ public:
 
         runtime_waitTime_ms = cfg.waitTime_ms;
         std::string url = cfg.wsUrl;
-        if (url.find("?") == std::string::npos)
+        legacyRPCv1 = cfg.legacyRPCv1;
+
+        if (!legacyRPCv1)
         {
-            url += "?";
+            if (url.find("?") == std::string::npos)
+            {
+                url += "?";
+            }
+            else
+            {
+                url += "&";
+            }
+            url += "RPCv2=true";
         }
-        else
-        {
-            url += "&";
-        }
-        url += "RPCv2=true";
 
         std::optional<unsigned> transportLoggingInclude = cfg.log.transportInclude;
         std::optional<unsigned> transportLoggingExclude = cfg.log.transportExclude;
 
         FIREBOLT_LOG_NOTICE("Transport", "Version: %s", Version::String);
+        if (legacyRPCv1)
+        {
+            FIREBOLT_LOG_NOTICE("Transport", "Legacy RPCv1");
+        }
+
         FIREBOLT_LOG_INFO("Gateway", "Connecting to url = %s", url.c_str());
         Firebolt::Error status = transport.connect(
             url, [this](const nlohmann::json& message) { this->onMessage(message); },
@@ -361,6 +391,7 @@ public:
 
     virtual Firebolt::Error disconnect() override
     {
+        transport.disconnect();
         if (watchdogRunning)
         {
             watchdogRunning = false;
@@ -369,7 +400,6 @@ public:
                 watchdogThread.join();
             }
         }
-        return transport.disconnect();
     }
 
     Firebolt::Error send(const std::string& method, const nlohmann::json& parameters) override
@@ -379,7 +409,7 @@ public:
 
     std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters) override
     {
-        return client.request(method, parameters);
+        return request(method, parameters, std::nullopt);
     }
 
     Firebolt::Error subscribe(const std::string& event, EventCallback callback, void* usercb) override
@@ -398,7 +428,10 @@ public:
 
         nlohmann::json params;
         params["listen"] = true;
-        auto future = request(event, params);
+
+        MessageID id = transport.getNextMessageID();
+        auto future = request(event, params, id);
+
         auto result = future.get();
 
         if (!result)
@@ -409,6 +442,14 @@ public:
         if (status != Firebolt::Error::None)
         {
             server.unsubscribe(event, usercb);
+        }
+        if (legacyRPCv1)
+        {
+            if (status == Firebolt::Error::None)
+            {
+                std::lock_guard<std::mutex> lock(rpcv1_eventMap_mtx);
+                rpcv1_eventMap[id] = {event, usercb};
+            }
         }
         return status;
     }
@@ -435,15 +476,60 @@ public:
         {
             status = result.error();
         }
+        if (legacyRPCv1)
+        {
+            if (status == Firebolt::Error::None)
+            {
+                std::lock_guard<std::mutex> lock(rpcv1_eventMap_mtx);
+                for (auto it = rpcv1_eventMap.begin(); it != rpcv1_eventMap.end();)
+                {
+                    if (it->second.eventName == event && it->second.usercb == usercb)
+                    {
+                        it = rpcv1_eventMap.erase(it);
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+            }
+        }
 
         return status;
     }
 
 private:
+    std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters,
+                                                std::optional<unsigned> id)
+    {
+        return client.request(method, parameters, id);
+    }
+
     void onMessage(const nlohmann::json& message)
     {
         if (message.contains("id") && (message.contains("result") || message.contains("error")))
         {
+            if (legacyRPCv1)
+            {
+                if (message.contains("result") && !message["result"].contains("listening") && !message["result"].empty())
+                {
+                    MessageID id = message["id"];
+                    std::string eventName;
+                    {
+                        std::lock_guard<std::mutex> lock(rpcv1_eventMap_mtx);
+                        auto it = rpcv1_eventMap.find(id);
+                        if (it != rpcv1_eventMap.end())
+                        {
+                            eventName = it->second.eventName;
+                        }
+                    }
+                    if (!eventName.empty())
+                    {
+                        server.notify(eventName, message["result"]);
+                        return;
+                    }
+                }
+            }
             client.response(message);
             return;
         }
@@ -452,6 +538,7 @@ private:
             if (message.contains("id"))
             {
                 FIREBOLT_LOG_ERROR("Gateway", "Invalid payload received (id is present): %s", message.dump().c_str());
+                return;
             }
             else
             {

@@ -54,7 +54,7 @@ done
 
 $cleanFirst && rm -rf $bdir
 
-if [[ ! -e $bdir ]]; then
+if [[ ! -e $bdir || ! -z "$@" ]]; then
   cmake -B $bdir \
     -DCMAKE_BUILD_TYPE=$buildType \
     -DSYSROOT_PATH=$SYSROOT_PATH \
