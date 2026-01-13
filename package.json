@@ -1,11 +1,9 @@
 {
   "private": true,
   "devDependencies": {
-    "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/commit-analyzer": "^11.1.0",
     "@semantic-release/exec": "^6.0.3",
     "@semantic-release/github": "^9.2.6",
-    "@semantic-release/release-notes-generator": "^12.1.0",
     "glob": ">=10.5.0",
     "js-yaml": ">=4.1.1",
     "semantic-release": "^25.0.2"
