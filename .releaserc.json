@@ -13,6 +13,12 @@
     }
   ],
   "plugins": [
+    [
+      "@semantic-release/exec",
+      {
+        "verifyConditionsCmd": "if grep -q '^## \\[Unreleased\\]' CHANGELOG.md; then echo 'ERROR: CHANGELOG.md has not been updated for the new release.'; exit 1; fi"
+      }
+    ],
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     "@semantic-release/changelog",
