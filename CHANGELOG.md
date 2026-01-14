@@ -1,3 +1,8 @@
+## [Unreleased](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.0.0...main) (2026-01-13)
+
+### Changed
+- Set `SameMajorVersion` compatibility
+
 ## [1.0.0](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v0.2.0...v1.0.0) (2026-01-13)
 
 ### Added
