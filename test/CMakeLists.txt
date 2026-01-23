@@ -22,7 +22,7 @@ include(GoogleTest)
 
 enable_testing()
 
-set(UNIT_TESTS_APP FireboltTransportUnitTests)
+set(UNIT_TESTS_APP utApp)
 
 message("Setup ${UNIT_TESTS_APP}")
 
