@@ -99,9 +99,9 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     messageReceiver_ = onMessage;
     connectionReceiver_ = onConnectionChange;
 
-    websocketpp::log::level include = websocketpp::log::alevel::all;
-    websocketpp::log::level exclude = (websocketpp::log::alevel::frame_header |
-                                       websocketpp::log::alevel::frame_payload | websocketpp::log::alevel::control);
+    websocketpp::log::level include = websocketpp::log::alevel::all & ~websocketpp::log::alevel::frame_payload;
+    websocketpp::log::level exclude = (websocketpp::log::alevel::frame_header | websocketpp::log::alevel::control);
+
     if (transportLoggingInclude.has_value())
     {
         include = static_cast<websocketpp::log::level>(transportLoggingInclude.value());
@@ -109,6 +109,10 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     if (transportLoggingExclude.has_value())
     {
         exclude = static_cast<websocketpp::log::level>(transportLoggingExclude.value());
+    }
+    if (!(include & websocketpp::log::alevel::frame_payload))
+    {
+        exclude |= websocketpp::log::alevel::frame_payload;
     }
     setLogging(include, exclude);
 
