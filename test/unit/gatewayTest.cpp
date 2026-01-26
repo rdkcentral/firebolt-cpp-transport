@@ -366,3 +366,39 @@ TEST_F(GatewayTest, UnsubscribeSpecific)
 
     gateway.unsubscribe("test.onEvent", &eventPromise2);
 }
+
+TEST_F(GatewayTest, InvalidNotification)
+{
+    IGateway& gateway = connectAndWait();
+
+    m_onMessageAction = [](server* s, connection_hdl hdl)
+    {
+        nlohmann::json invalidMsg1;
+        invalidMsg1["jsonrpc"] = "2.0";
+        invalidMsg1["method"] = "test.onEvent";
+        s->send(hdl, invalidMsg1.dump(), websocketpp::frame::opcode::text);
+
+        nlohmann::json invalidMsg2;
+        invalidMsg2["jsonrpc"] = "2.0";
+        invalidMsg2["method"] = "test.onEvent";
+        invalidMsg2["id"] = 123;
+        invalidMsg2["params"] = {};
+        s->send(hdl, invalidMsg2.dump(), websocketpp::frame::opcode::text);
+
+        nlohmann::json invalidMsg3;
+        invalidMsg3["jsonrpc"] = "2.0";
+        s->send(hdl, invalidMsg3.dump(), websocketpp::frame::opcode::text);
+    };
+
+    gateway.send("dummy.message", {});
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    auto responseFuture = gateway.request("test.method", {{"key", "value"}});
+    auto responseStatus = responseFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(responseStatus, std::future_status::ready)
+        << "Gateway did not respond to a valid request after invalid notifications.";
+
+    auto result = responseFuture.get();
+    EXPECT_TRUE(result) << "Gateway returned an error for a valid request after invalid notifications.";
+}
