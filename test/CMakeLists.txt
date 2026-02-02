@@ -28,6 +28,7 @@ message("Setup ${UNIT_TESTS_APP}")
 
 set(UNIT_TESTS
     "unit/gatewayTest.cpp"
+    "unit/helperTest.cpp"
     "unit/json_typesTest.cpp"
     "unit/transportTest.cpp"
 )
