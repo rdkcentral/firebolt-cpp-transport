@@ -26,12 +26,7 @@ set(UNIT_TESTS_APP utApp)
 
 message("Setup ${UNIT_TESTS_APP}")
 
-set(UNIT_TESTS
-    "unit/gatewayTest.cpp"
-    "unit/helperTest.cpp"
-    "unit/json_typesTest.cpp"
-    "unit/transportTest.cpp"
-)
+file(GLOB UNIT_TESTS CONFIGURE_DEPENDS unit/*Test.cpp)
 
 add_executable(${UNIT_TESTS_APP}
     UnitTestsMain.cpp
