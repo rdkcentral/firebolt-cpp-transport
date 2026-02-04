@@ -16,7 +16,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "firebolt/gateway.h"
 #include "firebolt/helpers.h"
+#include "helpers_impl.h"
 #include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -26,6 +28,17 @@ using namespace Firebolt::Helpers;
 using ::testing::_;
 using ::testing::Invoke;
 using ::testing::Return;
+
+class MockGateway : public Transport::IGateway
+{
+public:
+    MOCK_METHOD(Error, connect, (const Config&, Firebolt::Transport::ConnectionChangeCallback), (override));
+    MOCK_METHOD(Error, disconnect, (), (override));
+    MOCK_METHOD(std::future<Result<nlohmann::json>>, request, (const std::string&, const nlohmann::json&), (override));
+    MOCK_METHOD(Error, send, (const std::string&, const nlohmann::json&), (override));
+    MOCK_METHOD(Error, subscribe, (const std::string&, Firebolt::Transport::EventCallback, void*), (override));
+    MOCK_METHOD(Error, unsubscribe, (const std::string&, void*), (override));
+};
 
 class MockHelper : public IHelper
 {
@@ -42,6 +55,101 @@ public:
     MOCK_METHOD(void, unsubscribeAll, (void* owner), (override));
 };
 
+struct TestJson
+{
+    int v;
+    void fromJson(const nlohmann::json& json) { v = json.at("value").get<int>(); }
+    auto value() const { return v; }
+};
+
+class HelperTest : public ::testing::Test
+{
+protected:
+    MockGateway mockGateway;
+    HelperImpl helper{mockGateway};
+};
+
+TEST_F(HelperTest, SetSuccess)
+{
+    const std::string methodName = "test.set";
+    const nlohmann::json params = {{"key", "value"}};
+
+    std::promise<Result<nlohmann::json>> promise;
+    promise.set_value(Result<nlohmann::json>{nlohmann::json{}});
+
+    EXPECT_CALL(mockGateway, request(methodName, params)).WillOnce(Return(promise.get_future()));
+
+    auto result = helper.set(methodName, params);
+    EXPECT_TRUE(result);
+}
+
+TEST_F(HelperTest, SetFailure)
+{
+    const std::string methodName = "test.set";
+    const nlohmann::json params = {{"key", "value"}};
+
+    std::promise<Result<nlohmann::json>> promise;
+    promise.set_value(Result<nlohmann::json>{Error::General});
+
+    EXPECT_CALL(mockGateway, request(methodName, params)).WillOnce(Return(promise.get_future()));
+
+    auto result = helper.set(methodName, params);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), Error::General);
+}
+
+TEST_F(HelperTest, InvokeSuccess)
+{
+    const std::string methodName = "test.invoke";
+    const nlohmann::json params = {{"key", "value"}};
+
+    EXPECT_CALL(mockGateway, send(methodName, params)).WillOnce(Return(Error::None));
+
+    auto result = helper.invoke(methodName, params);
+    EXPECT_TRUE(result);
+}
+
+TEST_F(HelperTest, GetSuccess)
+{
+    const std::string methodName = "test.get";
+    const nlohmann::json responseJson = {{"value", 123}};
+    std::promise<Result<nlohmann::json>> promise;
+    promise.set_value(Result<nlohmann::json>{responseJson});
+
+    EXPECT_CALL(mockGateway, request(methodName, _)).WillOnce(Return(promise.get_future()));
+
+    auto result = helper.get<TestJson, int>(methodName);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(*result, 123);
+}
+
+TEST_F(HelperTest, GetJsonFailure)
+{
+    const std::string methodName = "test.get";
+    std::promise<Result<nlohmann::json>> promise;
+    promise.set_value(Result<nlohmann::json>{Error::MethodNotFound});
+
+    EXPECT_CALL(mockGateway, request(methodName, _)).WillOnce(Return(promise.get_future()));
+
+    auto result = helper.get<TestJson, int>(methodName);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), Error::MethodNotFound);
+}
+
+TEST_F(HelperTest, GetParseFailure)
+{
+    const std::string methodName = "test.get";
+    const nlohmann::json invalidResponseJson = {{"wrong_key", 123}};
+    std::promise<Result<nlohmann::json>> promise;
+    promise.set_value(Result<nlohmann::json>{invalidResponseJson});
+
+    EXPECT_CALL(mockGateway, request(methodName, _)).WillOnce(Return(promise.get_future()));
+
+    auto result = helper.get<TestJson, int>(methodName);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), Error::InvalidParams);
+}
+
 class SubscriptionManagerTest : public ::testing::Test
 {
 protected:
@@ -50,13 +158,6 @@ protected:
     std::unique_ptr<SubscriptionManager> subscriptionManager;
 
     void SetUp() override { subscriptionManager = std::make_unique<SubscriptionManager>(mockHelper, owner); }
-};
-
-struct TestJson
-{
-    int v;
-    void fromJson(const nlohmann::json& json) { v = json.at("value").get<int>(); }
-    auto value() const { return v; }
 };
 
 TEST_F(SubscriptionManagerTest, Subscribe)
