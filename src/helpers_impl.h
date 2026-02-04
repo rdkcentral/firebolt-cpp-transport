@@ -16,42 +16,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "firebolt/helpers.h"
 #include "firebolt/gateway.h"
+#include "firebolt/helpers.h"
 
 namespace Firebolt::Helpers
 {
 
-SubscriptionManager::SubscriptionManager(IHelper& helper, void* owner)
-    : helper_(helper),
-      owner_(owner)
-{
-}
-SubscriptionManager::~SubscriptionManager()
-{
-    unsubscribeAll();
-}
-
-Result<void> SubscriptionManager::unsubscribe(SubscriptionId id)
-{
-    return helper_.unsubscribe(id);
-}
-
-void SubscriptionManager::unsubscribeAll()
-{
-    helper_.unsubscribeAll(owner_);
-}
-
 class HelperImpl : public IHelper
 {
 public:
+    HelperImpl(Firebolt::Transport::IGateway& gateway)
+        : gateway_(gateway)
+    {
+    }
+
     ~HelperImpl() override
     {
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& subscription : subscriptions_)
         {
             void* notificationPtr = reinterpret_cast<void*>(&subscription.second);
-            Firebolt::Transport::GetGatewayInstance().unsubscribe(subscription.second.eventName, notificationPtr);
+            gateway_.unsubscribe(subscription.second.eventName, notificationPtr);
         }
         subscriptions_.clear();
     }
@@ -68,7 +53,7 @@ public:
         {
             p["value"] = parameters;
         }
-        auto future = Firebolt::Transport::GetGatewayInstance().request(methodName, p);
+        auto future = gateway_.request(methodName, p);
         auto requestResult = future.get();
 
         if (!requestResult)
@@ -80,7 +65,7 @@ public:
 
     Result<void> invoke(const std::string& methodName, const nlohmann::json& parameters) override
     {
-        return Result<void>{Firebolt::Transport::GetGatewayInstance().send(methodName, parameters)};
+        return Result<void>{gateway_.send(methodName, parameters)};
     }
 
     Result<void> unsubscribe(SubscriptionId id) override
@@ -92,7 +77,7 @@ public:
             return Result<void>{Error::General};
         }
         void* notificationPtr = reinterpret_cast<void*>(&it->second);
-        auto errorStatus{Firebolt::Transport::GetGatewayInstance().unsubscribe(it->second.eventName, notificationPtr)};
+        auto errorStatus{gateway_.unsubscribe(it->second.eventName, notificationPtr)};
         subscriptions_.erase(it);
         return Result<void>{errorStatus};
     }
@@ -105,7 +90,7 @@ public:
             if (it->second.owner == owner)
             {
                 void* notificationPtr = reinterpret_cast<void*>(&it->second);
-                Firebolt::Transport::GetGatewayInstance().unsubscribe(it->second.eventName, notificationPtr);
+                gateway_.unsubscribe(it->second.eventName, notificationPtr);
                 it = subscriptions_.erase(it);
             }
             else
@@ -118,7 +103,7 @@ public:
 private:
     Result<nlohmann::json> getJson(const std::string& methodName, const nlohmann::json& parameters) override
     {
-        auto result = Firebolt::Transport::GetGatewayInstance().request(methodName, parameters).get();
+        auto result = gateway_.request(methodName, parameters).get();
         if (!result)
         {
             return Result<nlohmann::json>{result.error()};
@@ -134,7 +119,7 @@ private:
         subscriptions_[newId] = SubscriptionData{owner, eventName, std::move(notification)};
         void* notificationPtr = reinterpret_cast<void*>(&subscriptions_[newId]);
 
-        Error status = Firebolt::Transport::GetGatewayInstance().subscribe(eventName, callback, notificationPtr);
+        Error status = gateway_.subscribe(eventName, callback, notificationPtr);
 
         if (Error::None != status)
         {
@@ -144,15 +129,9 @@ private:
         return Result<SubscriptionId>{newId};
     }
 
+    Firebolt::Transport::IGateway& gateway_;
     std::mutex mutex_;
     std::map<uint64_t, SubscriptionData> subscriptions_;
     uint64_t currentId_{0};
 };
-
-IHelper& GetHelperInstance()
-{
-    static HelperImpl instance;
-    return instance;
-}
-
 } // namespace Firebolt::Helpers
