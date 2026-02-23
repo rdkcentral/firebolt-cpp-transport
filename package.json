@@ -5,10 +5,12 @@
     "@semantic-release/exec": "^6.0.3",
     "@semantic-release/github": "^9.2.6",
     "glob": ">=10.5.0",
+    "http-client": ">=2.2.0",
     "js-yaml": ">=4.1.1",
     "semantic-release": "^25.0.2",
     "lodash": ">=4.17.23",
     "lodash-es": ">=4.17.23",
-    "tar": ">=7.5.8"
+    "tar": ">=7.5.8",
+    "undici": ">=6.23.0"
   }
 }
