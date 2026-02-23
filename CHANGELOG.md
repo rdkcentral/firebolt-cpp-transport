@@ -1,3 +1,8 @@
+## [Unreleased](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.0...main)
+
+### Fixed
+- Fixed a deadlock that occurred when unsubscribing from an event inside its callback
+
 ## [1.1.0](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.0.0...v1.1.0)
 
 ### Added

@@ -453,3 +453,69 @@ TEST_F(GatewayTest, LegacyRPCv1Event)
 
     gateway.unsubscribe("test.onEvent", &eventPromise);
 }
+
+TEST_F(GatewayTest, UnsubscribeFromCallbackDoesNotDeadlock)
+{
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        try
+        {
+            auto request = nlohmann::json::parse(msg->get_payload());
+            nlohmann::json response;
+            if (request.contains("id") && request.contains("params") && request["params"].contains("listen"))
+            {
+                response["jsonrpc"] = "2.0";
+                response["id"] = request["id"];
+                response["result"] = {{"listening", request["params"]["listen"]}};
+            }
+            if (request.contains("id") && request.contains("method") && request["method"] == "fire.event")
+            {
+                response["jsonrpc"] = "2.0";
+                response["method"] = "test.onEvent";
+                response["params"] = {{"fired", true}};
+            }
+            if (!response.empty())
+            {
+                m_server.send(hdl, response.dump(), websocketpp::frame::opcode::text);
+            }
+        }
+        catch (...)
+        {
+        }
+    };
+
+    IGateway& gateway = connectAndWait();
+
+    struct CallbackCtx
+    {
+        IGateway* gateway;
+        std::promise<void>* done;
+        std::string eventName;
+    };
+
+    std::promise<void> donePromise;
+    auto doneFuture = donePromise.get_future();
+
+    CallbackCtx ctx{&gateway, &donePromise, "test.onEvent"};
+
+    auto onEvent = [](void* usercb, const nlohmann::json& /*params*/)
+    {
+        auto* ctx = static_cast<CallbackCtx*>(usercb);
+        ctx->gateway->unsubscribe(ctx->eventName, usercb);
+        try
+        {
+            ctx->done->set_value();
+        }
+        catch (...)
+        {
+        }
+    };
+
+    Firebolt::Error err = gateway.subscribe("test.onEvent", onEvent, &ctx);
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    gateway.send("fire.event", {});
+
+    auto status = doneFuture.wait_for(std::chrono::seconds(2));
+    EXPECT_EQ(status, std::future_status::ready) << "Callback blocked (possible deadlock)";
+}

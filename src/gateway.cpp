@@ -250,13 +250,21 @@ public:
             params = parameters;
         }
 
-        std::lock_guard lck(eventMap_mtx);
-        for (auto& callback : eventList)
+        std::vector<CallbackDataEvent> callbacks;
         {
-            if (callback.eventName == key)
+            std::lock_guard lck(eventMap_mtx);
+            for (auto& callback : eventList)
             {
-                callback.lambda(callback.usercb, params);
+                if (callback.eventName == key)
+                {
+                    callbacks.push_back(callback);
+                }
             }
+        }
+
+        for (auto& callback : callbacks)
+        {
+            callback.lambda(callback.usercb, params);
         }
     }
 
