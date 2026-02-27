@@ -98,7 +98,6 @@ target_include_directories(${TARGET}
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\1" PROJECT_VERSION_MAJOR ${PROJECT_VERSION})
 set_target_properties(${TARGET} PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
