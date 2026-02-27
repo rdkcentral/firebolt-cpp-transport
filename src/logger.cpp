@@ -65,6 +65,10 @@ void Logger::setLogLevel(LogLevel logLevel)
     {
         _logLevel = logLevel;
     }
+    else if (logLevel == LogLevel::MaxLevel)
+    {
+        _logLevel = LogLevel::Debug;
+    }
 }
 
 void Logger::setFormat(bool addTs, bool addLocation, bool addFunction, bool addThreadId)

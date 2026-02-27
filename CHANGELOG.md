@@ -1,3 +1,8 @@
+## [Unreleased](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.1...main)
+
+### Changed
+- Allow setting log level to `MaxLevel`, fallback to `Debug`
+
 ## [1.1.1](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.0...v1.1.1)
 
 ### Changed
