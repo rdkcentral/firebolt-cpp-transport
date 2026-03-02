@@ -20,11 +20,15 @@
 
 #include "firebolt/types.h"
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <queue>
 #include <string>
+#include <thread>
 #include <websocketpp/client.hpp>
 #include <websocketpp/config/asio_no_tls_client.hpp>
 
@@ -52,6 +56,9 @@ public:
 
 private:
     void start();
+    void startMessageWorker();
+    void stopMessageWorker();
+    void processQueuedMessages();
     void setLogging(websocketpp::log::level include, websocketpp::log::level exclude = 0);
     void onMessage(websocketpp::connection_hdl hdl,
                    websocketpp::client<websocketpp::config::asio_client>::message_ptr msg);
@@ -70,5 +77,10 @@ private:
     ConnectionCallback connectionReceiver_;
     websocketpp::lib::shared_ptr<websocketpp::lib::thread> connectionThread_;
     websocketpp::connection_hdl connectionHandle_;
+    std::thread messageWorkerThread_;
+    std::mutex messageQueueMutex_;
+    std::condition_variable messageQueueCv_;
+    std::queue<std::string> messageQueue_;
+    std::atomic<bool> stopMessageWorker_{false};
 };
 } // namespace Firebolt::Transport

@@ -64,6 +64,7 @@ Transport::Transport()
 Transport::~Transport()
 {
     disconnect();
+    stopMessageWorker();
 }
 
 void Transport::start()
@@ -75,7 +76,66 @@ void Transport::start()
     client_->start_perpetual();
 
     connectionThread_.reset(new websocketpp::lib::thread(&client::run, client_.get()));
+    startMessageWorker();
     connectionStatus_ = TransportState::Disconnected;
+}
+
+void Transport::startMessageWorker()
+{
+    if (messageWorkerThread_.joinable())
+    {
+        return;
+    }
+    stopMessageWorker_ = false;
+    messageWorkerThread_ = std::thread(&Transport::processQueuedMessages, this);
+}
+
+void Transport::stopMessageWorker()
+{
+    stopMessageWorker_ = true;
+    messageQueueCv_.notify_all();
+
+    if (messageWorkerThread_.joinable())
+    {
+        messageWorkerThread_.join();
+    }
+}
+
+void Transport::processQueuedMessages()
+{
+    while (true)
+    {
+        std::string payload;
+        {
+            std::unique_lock<std::mutex> lock(messageQueueMutex_);
+            messageQueueCv_.wait(lock, [this] { return stopMessageWorker_ || !messageQueue_.empty(); });
+
+            if (messageQueue_.empty())
+            {
+                if (stopMessageWorker_)
+                {
+                    return;
+                }
+                continue;
+            }
+
+            payload = std::move(messageQueue_.front());
+            messageQueue_.pop();
+        }
+        try
+        {
+            nlohmann::json jsonMsg = nlohmann::json::parse(payload);
+            if (debugEnabled_)
+            {
+                FIREBOLT_LOG_DEBUG("Transport", "Received: %s", jsonMsg.dump().c_str());
+            }
+            messageReceiver_(jsonMsg);
+        }
+        catch (const std::exception&)
+        {
+            FIREBOLT_LOG_ERROR("Transport", "Cannot parse payload: '%s'", payload.c_str());
+        }
+    }
 }
 
 Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, ConnectionCallback onConnectionChange,
@@ -167,6 +227,8 @@ Firebolt::Error Transport::disconnect()
         connectionThread_->join();
     }
 
+    stopMessageWorker();
+
     client_ = std::make_unique<client>();
     connectionStatus_ = TransportState::NotStarted;
     return Firebolt::Error::None;
@@ -222,19 +284,11 @@ void Transport::onMessage(websocketpp::connection_hdl /* hdl */,
     {
         return;
     }
-    try
     {
-        nlohmann::json jsonMsg = nlohmann::json::parse(msg->get_payload());
-        if (debugEnabled_)
-        {
-            FIREBOLT_LOG_DEBUG("Transport", "Received: %s", jsonMsg.dump().c_str());
-        }
-        messageReceiver_(jsonMsg);
+        std::lock_guard<std::mutex> lock(messageQueueMutex_);
+        messageQueue_.push(msg->get_payload());
     }
-    catch (const std::exception& e)
-    {
-        FIREBOLT_LOG_ERROR("Transport", "Cannot parse payload: '%s'", msg->get_payload().c_str());
-    }
+    messageQueueCv_.notify_one();
 }
 
 void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)

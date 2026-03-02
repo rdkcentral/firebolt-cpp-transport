@@ -1,5 +1,8 @@
 ## [1.1.1](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.0...v1.1.1)
 
+### Changed
+- Events are dispatched in separate threads to avoid blocking the main queue
+
 ### Fixed
 - Deadlock when unsubscribing from an event inside its callback
 

@@ -23,14 +23,17 @@
 #include "transport.h"
 #include <assert.h>
 #include <chrono>
+#include <condition_variable>
 #include <future>
 #include <list>
 #include <map>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <queue>
 #include <set>
 #include <string>
+#include <thread>
 
 namespace Firebolt::Transport
 {
@@ -182,22 +185,89 @@ class Server
         void* usercb;
     };
 
+    struct QueuedNotification
+    {
+        std::vector<CallbackDataEvent> callbacks;
+        nlohmann::json params;
+    };
+
     using EventList = std::list<CallbackDataEvent>;
 
     EventList eventList;
     mutable std::mutex eventMap_mtx;
 
+    std::queue<QueuedNotification> notificationQueue_;
+    mutable std::mutex notificationQueueMutex_;
+    std::condition_variable notificationQueueCv_;
+    std::thread notificationWorkerThread_;
+    std::atomic<bool> stopNotificationWorker_{false};
+
 public:
+    Server() = default;
+
     virtual ~Server()
     {
+        stopNotificationWorker();
         {
             std::lock_guard lck(eventMap_mtx);
             eventList.clear();
         }
     }
 
+    void stopNotificationWorker()
+    {
+        stopNotificationWorker_ = true;
+        notificationQueueCv_.notify_all();
+
+        if (notificationWorkerThread_.joinable())
+        {
+            notificationWorkerThread_.join();
+        }
+    }
+
+    void ensureNotificationWorkerStarted()
+    {
+        if (!notificationWorkerThread_.joinable())
+        {
+            stopNotificationWorker_ = false;
+            notificationWorkerThread_ = std::thread(&Server::processQueuedNotifications, this);
+        }
+    }
+
+    void processQueuedNotifications()
+    {
+        while (true)
+        {
+            QueuedNotification notification;
+            {
+                std::unique_lock<std::mutex> lock(notificationQueueMutex_);
+                notificationQueueCv_.wait(lock,
+                                          [this] { return stopNotificationWorker_ || !notificationQueue_.empty(); });
+
+                if (notificationQueue_.empty())
+                {
+                    if (stopNotificationWorker_)
+                    {
+                        return;
+                    }
+                    continue;
+                }
+
+                notification = std::move(notificationQueue_.front());
+                notificationQueue_.pop();
+            }
+
+            for (auto& callback : notification.callbacks)
+            {
+                callback.lambda(callback.usercb, notification.params);
+            }
+        }
+    }
+
     Firebolt::Error subscribe(const std::string& event, EventCallback callback, void* usercb)
     {
+        ensureNotificationWorkerStarted();
+
         CallbackDataEvent callbackData = {event, callback, usercb};
 
         std::lock_guard lck(eventMap_mtx);
@@ -262,10 +332,11 @@ public:
             }
         }
 
-        for (auto& callback : callbacks)
         {
-            callback.lambda(callback.usercb, params);
+            std::lock_guard<std::mutex> lock(notificationQueueMutex_);
+            notificationQueue_.push(QueuedNotification{std::move(callbacks), params});
         }
+        notificationQueueCv_.notify_one();
     }
 
     bool isAnySubscriber(const std::string& method)
@@ -402,6 +473,7 @@ public:
                 watchdogThread.join();
             }
         }
+        server.stopNotificationWorker();
         return Error::None;
     }
 
