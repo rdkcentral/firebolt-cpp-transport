@@ -144,7 +144,7 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
 {
     if (connectionStatus_ == TransportState::Connected)
     {
-        FIREBOLT_LOG_WARNING("Transport", "Connect called when already connected. Ignoring.");
+        FIREBOLT_LOG_WARNING("Transport", "Connect called when already connected. Ignoring");
         return Firebolt::Error::AlreadyConnected;
     }
 
@@ -282,6 +282,12 @@ void Transport::onMessage(websocketpp::connection_hdl /* hdl */,
 {
     if (msg->get_opcode() != websocketpp::frame::opcode::text)
     {
+        FIREBOLT_LOG_WARNING("Transport", "Received a non-text message. Ignoring");
+        return;
+    }
+    if (stopMessageWorker_)
+    {
+        FIREBOLT_LOG_WARNING("Transport", "Received a message while stopping the message worker. Ignoring");
         return;
     }
     {

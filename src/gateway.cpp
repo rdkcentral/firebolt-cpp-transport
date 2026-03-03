@@ -301,6 +301,11 @@ public:
 
     void notify(const std::string& method, const nlohmann::json& parameters)
     {
+        if (stopNotificationWorker_)
+        {
+            FIREBOLT_LOG_WARNING("Gateway", "Received a notification while stopping the notification worker. Ignoring");
+            return;
+        }
         std::string key = method;
         nlohmann::json params;
         if (parameters.size() == 1 && parameters.contains("value"))
@@ -330,6 +335,12 @@ public:
                     callbacks.push_back(callback);
                 }
             }
+        }
+
+        if (callbacks.empty())
+        {
+            FIREBOLT_LOG_WARNING("Gateway", "No subscribers for event: %s", method.c_str());
+            return;
         }
 
         {
