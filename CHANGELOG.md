@@ -1,7 +1,7 @@
-## [Unreleased](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.1...main)
+## [1.1.2](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.1...v1.1.2)
 
 ### Changed
-- Allow setting log level to `MaxLevel`, fallback to `Debug`
+- Allow setting log level to `MaxLevel`, falling back to `Debug`
 
 ### Fixed
 - Events are dispatched in separate thread to avoid blocking the main queue
