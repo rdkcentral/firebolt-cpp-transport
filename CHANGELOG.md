@@ -3,10 +3,10 @@
 ### Changed
 - Allow setting log level to `MaxLevel`, fallback to `Debug`
 
-## [1.1.1](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.0...v1.1.1)
+### Fixed
+- Events are dispatched in separate thread to avoid blocking the main queue
 
-### Changed
-- Events are dispatched in separate threads to avoid blocking the main queue
+## [1.1.1](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.0...v1.1.1)
 
 ### Fixed
 - Deadlock when unsubscribing from an event inside its callback
