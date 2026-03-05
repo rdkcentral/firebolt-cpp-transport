@@ -23,6 +23,7 @@
 #include <map>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <vector>
 
 namespace Firebolt::JSON
 {
@@ -40,6 +41,19 @@ template <typename T> inline std::string toString(const EnumType<T>& enumType, c
 
 template <typename T> class NL_Json_Basic
 {
+protected:
+    bool checkRequiredFields(const nlohmann::json& json, const std::vector<std::string>& fields) const
+    {
+        for (const auto& field : fields)
+        {
+            if (!json.contains(field))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
 public:
     virtual void fromJson(const nlohmann::json& json) = 0;
     T virtual value() const = 0;

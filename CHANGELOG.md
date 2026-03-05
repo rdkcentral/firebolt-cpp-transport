@@ -1,3 +1,8 @@
+## [1.1.3](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.2...v1.1.3)
+
+### Changed
+- Add JSON payload validation to ensure all required fields are present
+
 ## [1.1.2](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.1...v1.1.2)
 
 ### Changed
