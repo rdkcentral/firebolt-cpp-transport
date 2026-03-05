@@ -24,11 +24,10 @@ jobs:
         with:
           node-version: 'lts/*'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install release deps
+        run: npm ci --prefix .github/release
 
       - name: Run semantic-release
-        id: semantic
-        run: npx semantic-release
+        run: npm --prefix .github/release exec -- semantic-release --extends ./.github/release/releaserc.json
         env:
           GITHUB_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}

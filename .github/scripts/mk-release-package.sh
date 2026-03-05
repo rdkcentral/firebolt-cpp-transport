@@ -47,7 +47,7 @@ else
   git ls-files $sub_path | git checkout-index --stdin -qf --prefix="$dist_path.tmp/"
   mv -T "$dist_path.tmp/$sub_path/" "$dist_path/"
 fi
-rm -rf $dist_path/package.json $dist_path/package-lock.json $dist_path/.releaserc.json $dist_path/.github
+rm -rf $dist_path/.github
 echo "$version" >$dist_path/.version
 tar -czf "build/$dist_name.tar.gz" -C "build" "$dist_name"
 
@@ -55,4 +55,3 @@ if [[ ! -z "$dst" ]]; then
   mkdir -p "$dst"
   cp "build/$dist_name.tar.gz" "$dst/"
 fi
-
