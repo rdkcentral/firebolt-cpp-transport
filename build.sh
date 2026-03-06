@@ -29,6 +29,7 @@ while [[ ! -z $1 ]]; do
   --clean) cleanFirst=true;;
   --release) buildType="Release";;
   --sysroot) SYSROOT_PATH="$2"; shift;;
+  --legacy) params+=" -DENABLE_LEGACY_RPC_V1=ON";;
   -i | --install) do_install=true;;
   +tests) params+=" -DENABLE_TESTS=ON"; bdir="build-dev";;
   +gen-cov)

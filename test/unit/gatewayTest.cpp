@@ -17,6 +17,7 @@
  */
 
 #include "firebolt/gateway.h"
+#include "utils.h"
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -24,6 +25,27 @@
 #include <websocketpp/server.hpp>
 
 using namespace Firebolt::Transport;
+
+TEST(GatewayUrlUtilsTest, VerifyUrls)
+{
+    bool legacyRPCv1 = false;
+    EXPECT_EQ(buildGatewayUrl("ws://127.0.0.1:3437", legacyRPCv1), "ws://127.0.0.1:3437/?RPCv2=true");
+    EXPECT_EQ(buildGatewayUrl("ws://127.0.0.1:3437?sessionId=abc", legacyRPCv1),
+              "ws://127.0.0.1:3437/?sessionId=abc&RPCv2=true");
+    EXPECT_EQ(buildGatewayUrl("ws://127.0.0.1:3437/json?session=abc", legacyRPCv1),
+              "ws://127.0.0.1:3437/json?session=abc&RPCv2=true");
+    EXPECT_EQ(buildGatewayUrl("ws://localhost:9003", legacyRPCv1), "ws://localhost:9003/?RPCv2=true");
+}
+
+TEST(GatewayUrlUtilsTest, VerifyUrls_LegacyMode)
+{
+    bool legacyRPCv1 = true;
+    EXPECT_EQ(buildGatewayUrl("ws://127.0.0.1:3437", legacyRPCv1), "ws://127.0.0.1:3437/");
+    EXPECT_EQ(buildGatewayUrl("ws://127.0.0.1:3437?sessionId=abc", legacyRPCv1), "ws://127.0.0.1:3437/?sessionId=abc");
+    EXPECT_EQ(buildGatewayUrl("ws://127.0.0.1:3437/json?session=abc", legacyRPCv1),
+              "ws://127.0.0.1:3437/json?session=abc");
+    EXPECT_EQ(buildGatewayUrl("ws://localhost:9003", legacyRPCv1), "ws://localhost:9003/");
+}
 
 class GatewayTest : public ::testing::Test
 {

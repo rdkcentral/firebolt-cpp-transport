@@ -1,3 +1,8 @@
+## [1.1.4](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.3...v1.1.4)
+
+### Fixed
+- Add `/` at the end of URL, otherwise query arguments were not sent
+
 ## [1.1.3](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.2...v1.1.3)
 
 ### Changed

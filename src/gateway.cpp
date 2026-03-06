@@ -21,6 +21,7 @@
 #include "firebolt/transport_version.h"
 #include "firebolt/types.h"
 #include "transport.h"
+#include "utils.h"
 #include <assert.h>
 #include <chrono>
 #include <condition_variable>
@@ -418,21 +419,9 @@ public:
         connectionChangeListener = onConnectionChange;
 
         runtime_waitTime_ms = cfg.waitTime_ms;
-        std::string url = cfg.wsUrl;
         legacyRPCv1 = cfg.legacyRPCv1;
 
-        if (!legacyRPCv1)
-        {
-            if (url.find("?") == std::string::npos)
-            {
-                url += "?";
-            }
-            else
-            {
-                url += "&";
-            }
-            url += "RPCv2=true";
-        }
+        std::string url = buildGatewayUrl(cfg.wsUrl, legacyRPCv1);
 
         std::optional<unsigned> transportLoggingInclude = cfg.log.transportInclude;
         std::optional<unsigned> transportLoggingExclude = cfg.log.transportExclude;
