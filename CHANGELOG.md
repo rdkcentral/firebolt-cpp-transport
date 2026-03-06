@@ -1,3 +1,9 @@
+## [Unreleased](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.4...main)
+
+### Changed
+- Enable websocketpp logs by default only at `Debug` log level; they can also be controlled with
+  `Config.log.transportInclude` and `Config.log.transportExclude`
+
 ## [1.1.4](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.3...v1.1.4)
 
 ### Fixed

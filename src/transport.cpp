@@ -150,6 +150,7 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
 
     if (connectionStatus_ == TransportState::NotStarted)
     {
+        debugEnabled_ = Logger::isLogLevelEnabled(Firebolt::LogLevel::Debug);
         start();
     }
 
@@ -159,9 +160,13 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     messageReceiver_ = onMessage;
     connectionReceiver_ = onConnectionChange;
 
-    websocketpp::log::level include = websocketpp::log::alevel::all & ~websocketpp::log::alevel::frame_payload;
-    websocketpp::log::level exclude = (websocketpp::log::alevel::frame_header | websocketpp::log::alevel::control);
-
+    websocketpp::log::level include = websocketpp::log::alevel::none;
+    websocketpp::log::level exclude = websocketpp::log::alevel::none;
+    if (debugEnabled_)
+    {
+        include = websocketpp::log::alevel::all & ~websocketpp::log::alevel::frame_payload;
+        exclude = (websocketpp::log::alevel::frame_header | websocketpp::log::alevel::control);
+    }
     if (transportLoggingInclude.has_value())
     {
         include = static_cast<websocketpp::log::level>(transportLoggingInclude.value());
@@ -198,8 +203,6 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
                                                     websocketpp::lib::placeholders::_2));
 
     client_->connect(con);
-
-    debugEnabled_ = Logger::isLogLevelEnabled(Firebolt::LogLevel::Debug);
 
     return Firebolt::Error::None;
 }
