@@ -432,7 +432,7 @@ public:
             FIREBOLT_LOG_NOTICE("Transport", "Legacy RPCv1");
         }
 
-        FIREBOLT_LOG_INFO("Gateway", "Connecting to url = %s", url.c_str());
+        FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s", url.c_str());
         Firebolt::Error status = transport.connect(
             url, [this](const nlohmann::json& message) { this->onMessage(message); },
             [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
