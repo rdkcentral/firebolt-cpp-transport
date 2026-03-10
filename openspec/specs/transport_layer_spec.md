@@ -34,9 +34,9 @@ The Firebolt Transport Layer provides an event-driven interface for connecting, 
 ---
 
 ## Extensibility
-- **Callback-based integration** for event and connection handling.
-- **Template-based notification** for property changes.
-- **Flexible payloads** via std::any and nlohmann::json.
+- Callback-based integration for event and connection handling.
+- Template-based notification for property changes.
+- Flexible payloads via native types and JSON serialization.
 
 ---
 

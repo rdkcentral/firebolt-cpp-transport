@@ -7,29 +7,19 @@ This spec documents the key header interfaces provided by the Firebolt transport
 
 ## IHelper
 - Manages property access, method invocation, and subscription lifecycle.
-- Enables type-safe, template-based integration for client libraries.
-
-### Example: Property Access
-```cpp
-Result<bool> result = helper_.get<Firebolt::JSON::Boolean, bool>("Discovery.watched", parameters);
-```
+- Enables type-safe integration for client libraries.
 
 ---
 
 ## SubscriptionManager
 - Simplifies subscription handling for clients.
-- Provides RAII cleanup and template-based notifications.
+- Provides resource cleanup and notification.
 
 ---
 
 ## json_types
 - Provides standardized serialization/deserialization utilities for enums and structured data.
 - Ensures type safety and consistency across language implementations.
-
-### Example: Enum Serialization
-```cpp
-parameters["agePolicy"] = Firebolt::JSON::toString(Firebolt::JsonData::AgePolicyEnum, *agePolicy);
-```
 
 ---
 

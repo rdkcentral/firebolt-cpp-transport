@@ -18,29 +18,27 @@ This document describes how JSON-RPC messages are handled within the Firebolt Tr
 
 ## JSON Serialization & Deserialization
 
-- **Library Used**: The Firebolt Transport Layer uses the [nlohmann::json](https://github.com/nlohmann/json) library for all JSON serialization and deserialization tasks.
+- **Library Used**: The Firebolt Transport Layer uses a JSON serialization/deserialization library appropriate to the implementation language.
 - **Features**:
-  - Provides a modern, C++-style interface for working with JSON objects.
-  - Supports conversion between C++ types and JSON with minimal boilerplate.
+  - Provides a modern interface for working with JSON objects.
+  - Supports conversion between native types and JSON with minimal boilerplate.
   - Handles parsing, validation, and error reporting for JSON-RPC messages.
 - **Usage**:
-  - Incoming WebSocket messages are parsed into nlohmann::json objects.
-  - Outgoing requests, responses, and notifications are constructed as nlohmann::json and serialized to string.
-  - Callbacks receive parsed nlohmann::json payloads for flexible handling.
+  - Incoming WebSocket messages are parsed into JSON objects.
+  - Outgoing requests, responses, and notifications are constructed as JSON and serialized to string.
+  - Callbacks receive parsed JSON payloads for flexible handling.
 - **Advantages**:
   - Strong type safety and expressive syntax.
   - Widely used and actively maintained open-source library.
-  - Integrates seamlessly with STL containers and custom types.
+  - Integrates seamlessly with native containers and custom types.
 
 ---
 
 ## Callback Integration
 
-- **EventCallback**: `std::function<void(void* usercb, const nlohmann::json& params)>`
-  - Invoked for incoming event notifications.
+- **EventCallback**: Invoked for incoming event notifications.
   - Provides user context and parsed JSON parameters.
-- **ConnectionChangeCallback**: `std::function<void(const bool connected, const Firebolt::Error error)>`
-  - Invoked on connection/disconnection and error states.
+- **ConnectionChangeCallback**: Invoked on connection/disconnection and error states.
 - **Property Change Callback**: Template-based, e.g. `onPropertyChangedCallback<void*, nlohmann::json>`
   - Used for property change notifications, supports flexible payloads.
 
@@ -48,10 +46,10 @@ This document describes how JSON-RPC messages are handled within the Firebolt Tr
 
 ## Callback Registration
 
-- IGateway exposes `Subscribe` and `Unsubscribe` methods for event callback management.
+- Gateway exposes Subscribe and Unsubscribe methods for event callback management.
 - Event names are agnostic to the transport layer but are case sensitive.
-- `EventCallback` is used to register callbacks for specific event types.
-- The Firebolt transport layer implements JSON-RPC mechanisms for subscribe and unsubscribe, as defined in the [RDK8 Firebolt JSON-RPC Specification](https://wiki.rdkcentral.com/spaces/WG/pages/440675944/RDK8+Firebolt%C2%AE+JSON-RPC+Specification).
+- EventCallback is used to register callbacks for specific event types.
+- The transport layer implements JSON-RPC mechanisms for subscribe and unsubscribe, as defined in the Firebolt JSON-RPC Specification.
 - Callbacks can be dynamically registered and unregistered at runtime, allowing flexible event handling.
 
 ---
@@ -60,10 +58,10 @@ This document describes how JSON-RPC messages are handled within the Firebolt Tr
 
 ### Request/Response Callback Flow
 
-- When a JSON-RPC request is sent, it includes a unique `id`.
-- The transport layer tracks outstanding requests by `id`.
-- Upon receiving a JSON-RPC response (result or error) with a matching `id`, the corresponding callback is triggered.
-- The callback receives the parsed nlohmann::json result or error payload, allowing application logic to process the response.
+- When a JSON-RPC request is sent, it includes a unique id.
+- The transport layer tracks outstanding requests by id.
+- Upon receiving a JSON-RPC response (result or error) with a matching id, the corresponding callback is triggered.
+- The callback receives the parsed JSON result or error payload, allowing application logic to process the response.
 
 **Flow Diagram:**
 
@@ -89,7 +87,7 @@ Callback receives parsed JSON result/error
 
 - JSON-RPC notifications (events) are sent without an `id`.
 - The transport layer parses the event and determines the registered callback for the event type (method name).
-- The callback is invoked with the parsed nlohmann::json event payload and user context.
+- The callback is invoked with the parsed JSON event payload and user context.
 
 **Flow Diagram:**
 

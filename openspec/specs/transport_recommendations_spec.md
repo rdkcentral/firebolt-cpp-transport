@@ -29,12 +29,7 @@ This document captures key recommendations for improving the Firebolt transport 
 ---
 
 ## IGateway Interface
-- Consider replacing or supplementing future-based request with a callback-based variant for non-blocking, async response handling:
-  ```cpp
-  virtual Firebolt::Error request(const std::string& method,
-                                  const nlohmann::json& parameters,
-                                  std::function<void(Firebolt::Result<nlohmann::json>)> responseCallback) = 0;
-  ```
+- Consider replacing or supplementing future-based request with a callback-based variant for non-blocking, async response handling.
 - Document thread safety, callback registration, and error handling expectations.
 - Add batch request methods with clear, extensible signatures.
 
@@ -48,7 +43,7 @@ This document captures key recommendations for improving the Firebolt transport 
 ---
 
 ## Examples & Usage Patterns
-- Provide examples for context-aware callbacks (using usercb), property access, and enum serialization.
+- Provide examples for context-aware callbacks, property access, and enum serialization.
 - Encourage idiomatic, language-specific patterns for each client library.
 
 ---
@@ -71,5 +66,5 @@ This document captures key recommendations for improving the Firebolt transport 
 ---
 
 ## Future Enhancements
-- Plan for multi-language transport libraries (C, Dart, JS, TypeScript) using unified specs.
+- Plan for multi-language transport libraries (Dart, JS, TypeScript) using unified specs.
 - Modularize specs for easier cross-repo adoption and evolution.
