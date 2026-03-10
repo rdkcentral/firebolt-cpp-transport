@@ -7,23 +7,6 @@ The Firebolt Transport Layer provides an event-driven interface for connecting, 
 
 ## Key Interfaces
 
-### IGateway
-- **Purpose**: Central interface for managing transport connections.
-- **Methods**:
-  - `connect(config, onConnectionChange)`
-    - Establishes a connection using provided configuration.
-    - Notifies via callback on connection state changes.
-  - `disconnect()`
-    - Terminates the connection.
-- **Callbacks**:
-  - `EventCallback`: Handles transport events with user context and JSON parameters.
-  - `ConnectionChangeCallback`: Notifies on connection/disconnection and error states.
-
-### Helpers
-- **Purpose**: Manage subscriptions and property change notifications.
-- **Types**:
-  - `SubscriptionData`: Contains owner, event name, and notification payload.
-  - `onPropertyChangedCallback`: Template for property change notifications, using JSON responses.
 
 ---
 
@@ -59,24 +42,6 @@ The Firebolt Transport Layer provides an event-driven interface for connecting, 
 
 ## Subscription Lifecycle & Integration Points
 
-### Subscription Lifecycle
-- Subscriptions are managed via the `IHelper` interface and `SubscriptionManager` class.
-- Consumers call `subscribe` to register for event notifications, associating each subscription with an owner and callback.
-- `unsubscribe` removes a subscription by ID; `unsubscribeAll` cleans up all subscriptions for an owner.
-- `SubscriptionManager` provides template-based subscribe for flexible notification types and ensures cleanup via its destructor.
-- Events trigger registered callbacks as notifications arrive.
-
-**Lifecycle Flow:**
-1. Consumer calls `subscribe` via SubscriptionManager.
-2. SubscriptionManager delegates to IHelper, registers callback.
-3. Events trigger callbacks as notifications arrive.
-4. Consumer can call `unsubscribe` or `unsubscribeAll` to clean up.
-5. SubscriptionManager destructor ensures all subscriptions are removed.
-
-### Integration Points
-- `GetHelperInstance()` exposes the IHelper interface for external integration.
-- IGateway and helpers provide extension points for SDKs and external systems.
-- Callbacks and template-based notifications allow flexible integration with application logic.
 
 ---
 
@@ -176,3 +141,10 @@ The transport layer is designed for internal use, with IGateway serving as the p
 
 **Conclusion:**
 The transport library is decoupled from client and schema logic, providing a generic, extensible foundation for JSON-RPC over WebSocket. Integration patterns and initialization flows should be defined to support external consumers and future SDKs.
+
+## Externalized Headers & Usage Findings
+
+
+## Refactoring Note
+
+Header interface details (IHelper, SubscriptionManager, json_types, types.h, logger.h) have been moved to a dedicated spec: `header_interfaces_spec.md`. The transport layer spec now focuses solely on transport mechanics, protocol, and architecture.
