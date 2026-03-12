@@ -22,7 +22,7 @@
 
 using namespace Firebolt::JSON;
 
-TEST(JsonTypesTest, StringBasicType)
+TEST(JsonTypesUTest, StringBasicType)
 {
     String str;
     nlohmann::json json = "test string";
@@ -30,7 +30,7 @@ TEST(JsonTypesTest, StringBasicType)
     EXPECT_EQ(str.value(), "test string");
 }
 
-TEST(JsonTypesTest, BooleanBasicType)
+TEST(JsonTypesUTest, BooleanBasicType)
 {
     Boolean boolean;
     nlohmann::json json = true;
@@ -38,7 +38,7 @@ TEST(JsonTypesTest, BooleanBasicType)
     EXPECT_TRUE(boolean.value());
 }
 
-TEST(JsonTypesTest, FloatBasicType)
+TEST(JsonTypesUTest, FloatBasicType)
 {
     Float floatVal;
     nlohmann::json json = 3.14f;
@@ -46,7 +46,7 @@ TEST(JsonTypesTest, FloatBasicType)
     EXPECT_FLOAT_EQ(floatVal.value(), 3.14f);
 }
 
-TEST(JsonTypesTest, UnsignedBasicType)
+TEST(JsonTypesUTest, UnsignedBasicType)
 {
     Unsigned unsignedVal;
     nlohmann::json json = 42u;
@@ -54,7 +54,7 @@ TEST(JsonTypesTest, UnsignedBasicType)
     EXPECT_EQ(unsignedVal.value(), 42u);
 }
 
-TEST(JsonTypesTest, IntegerBasicType)
+TEST(JsonTypesUTest, IntegerBasicType)
 {
     Integer intVal;
     nlohmann::json json = -42;
@@ -62,7 +62,7 @@ TEST(JsonTypesTest, IntegerBasicType)
     EXPECT_EQ(intVal.value(), -42);
 }
 
-TEST(JsonTypesTest, StringArrayType)
+TEST(JsonTypesUTest, StringArrayType)
 {
     NL_Json_Array<String, std::string> stringArray;
     nlohmann::json json = {"first", "second", "third"};
@@ -75,7 +75,7 @@ TEST(JsonTypesTest, StringArrayType)
     EXPECT_EQ(result[2], "third");
 }
 
-TEST(JsonTypesTest, IntegerArrayType)
+TEST(JsonTypesUTest, IntegerArrayType)
 {
     NL_Json_Array<Integer, int32_t> intArray;
     nlohmann::json json = {1, 2, 3, 4, 5};
@@ -87,7 +87,7 @@ TEST(JsonTypesTest, IntegerArrayType)
     EXPECT_EQ(result[4], 5);
 }
 
-TEST(JsonTypesTest, BooleanArrayType)
+TEST(JsonTypesUTest, BooleanArrayType)
 {
     NL_Json_Array<Boolean, bool> boolArray;
     nlohmann::json json = {true, false, true};
@@ -100,7 +100,7 @@ TEST(JsonTypesTest, BooleanArrayType)
     EXPECT_TRUE(result[2]);
 }
 
-TEST(JsonTypesTest, EmptyArray)
+TEST(JsonTypesUTest, EmptyArray)
 {
     NL_Json_Array<String, std::string> stringArray;
     nlohmann::json json = nlohmann::json::array();
@@ -110,7 +110,7 @@ TEST(JsonTypesTest, EmptyArray)
     EXPECT_TRUE(result.empty());
 }
 
-TEST(JsonTypesTest, EnumTypeToString)
+TEST(JsonTypesUTest, EnumTypeToString)
 {
     // clang-format off
     enum class Color { Red, Green, Blue };
@@ -126,7 +126,7 @@ TEST(JsonTypesTest, EnumTypeToString)
     EXPECT_EQ(toString(colorMap, Color::Blue), "blue");
 }
 
-TEST(JsonTypesTest, EnumTypeToStringNotFound)
+TEST(JsonTypesUTest, EnumTypeToStringNotFound)
 {
     // clang-format off
     enum class Status { Active, Inactive };
@@ -139,7 +139,7 @@ TEST(JsonTypesTest, EnumTypeToStringNotFound)
     EXPECT_TRUE(result.empty());
 }
 
-TEST(JsonTypesTest, FloatArrayType)
+TEST(JsonTypesUTest, FloatArrayType)
 {
     NL_Json_Array<Float, float> floatArray;
     nlohmann::json json = {1.1, 2.2, 3.3};
@@ -152,7 +152,7 @@ TEST(JsonTypesTest, FloatArrayType)
     EXPECT_FLOAT_EQ(result[2], 3.3);
 }
 
-TEST(JsonTypesTest, UnsignedArrayType)
+TEST(JsonTypesUTest, UnsignedArrayType)
 {
     NL_Json_Array<Unsigned, uint32_t> unsignedArray;
     nlohmann::json json = {10u, 20u, 30u};
@@ -165,7 +165,7 @@ TEST(JsonTypesTest, UnsignedArrayType)
     EXPECT_EQ(result[2], 30u);
 }
 
-TEST(JsonTypesTest, BasicTypeIncorrectPayload)
+TEST(JsonTypesUTest, BasicTypeIncorrectPayload)
 {
     String str;
     nlohmann::json jsonInt = 123;
@@ -176,14 +176,14 @@ TEST(JsonTypesTest, BasicTypeIncorrectPayload)
     EXPECT_THROW(integer.fromJson(jsonStr), nlohmann::json::type_error);
 }
 
-TEST(JsonTypesTest, ArrayWithNonArrayPayload)
+TEST(JsonTypesUTest, ArrayWithNonArrayPayload)
 {
     NL_Json_Array<String, std::string> stringArray;
     nlohmann::json json = {{"key", "value"}};
     EXPECT_THROW(stringArray.fromJson(json), nlohmann::json::type_error);
 }
 
-TEST(JsonTypesTest, ArrayWithMixedTypes)
+TEST(JsonTypesUTest, ArrayWithMixedTypes)
 {
     NL_Json_Array<Integer, int32_t> intArray;
     nlohmann::json json = {1, "two", 3};
