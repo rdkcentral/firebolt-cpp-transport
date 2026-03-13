@@ -19,6 +19,7 @@
 #pragma once
 
 #include "firebolt/types.h"
+#include <map>
 #include <optional>
 #include <string>
 
@@ -31,6 +32,9 @@ struct Config
 {
     /** WebSocket URL to connect to. */
     std::string wsUrl = "ws://127.0.0.1:9998";
+
+    /** Custom headers to send during connection. */
+    std::map<std::string, std::string> headers;
 
     /** Timeout for RPC responses in milliseconds. Default: 3000. */
     unsigned waitTime_ms = 3000;
