@@ -198,7 +198,8 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     }
 
     // Inject custom headers before connecting
-    for (const auto& header : headers) {
+    for (const auto& header : headers)
+    {
         con->replace_header(header.first, header.second);
     }
 
@@ -321,9 +322,11 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
     {
         std::lock_guard<std::mutex> lock(responseHeadersMutex_);
         responseHeaders_.clear();
-        if (con) {
+        if (con)
+        {
             const auto& headers = con->get_response_header();
-            for (const auto& header : headers) {
+            for (const auto& header : headers)
+            {
                 responseHeaders_[header.first] = header.second;
             }
         }
@@ -349,7 +352,8 @@ std::optional<std::string> Transport::getResponseHeader(const std::string& heade
 {
     std::lock_guard<std::mutex> lock(responseHeadersMutex_);
     auto it = responseHeaders_.find(headerName);
-    if (it != responseHeaders_.end()) {
+    if (it != responseHeaders_.end())
+    {
         return it->second;
     }
     return std::nullopt;

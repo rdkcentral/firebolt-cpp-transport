@@ -279,9 +279,10 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
     auto onMessage = [&](const nlohmann::json& /*msg*/) {};
 
     // Custom header to inject
-    std::map<std::string, std::string> customHeaders = { {"X-Test-Header", "HeaderValue"} };
+    std::map<std::string, std::string> customHeaders = {{"X-Test-Header", "HeaderValue"}};
 
-    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange, std::nullopt, std::nullopt, customHeaders);
+    Firebolt::Error err =
+        transport.connect(m_uri, onMessage, onConnectionChange, std::nullopt, std::nullopt, customHeaders);
     ASSERT_EQ(err, Firebolt::Error::None);
 
     auto status = connectionFuture.wait_for(std::chrono::seconds(2));
@@ -301,7 +302,6 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
     err = transport.disconnect();
     EXPECT_EQ(err, Firebolt::Error::None);
 }
-
 
 class TransportCustomServerUTest : public ::testing::Test
 {
