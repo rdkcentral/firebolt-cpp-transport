@@ -55,6 +55,13 @@ public:
     unsigned getNextMessageID();
     Firebolt::Error send(const std::string& method, const nlohmann::json& params, const unsigned id);
 
+    /**
+     * @brief Retrieve a response header by name from the server after connection.
+     * @param headerName The name of the header to retrieve.
+     * @return The header value if present, otherwise std::nullopt.
+     */
+    std::optional<std::string> getResponseHeader(const std::string& headerName);
+
 private:
     void start();
     void startMessageWorker();
@@ -83,5 +90,7 @@ private:
     std::condition_variable messageQueueCv_;
     std::queue<std::string> messageQueue_;
     std::atomic<bool> stopMessageWorker_{false};
+    std::map<std::string, std::string> responseHeaders_;
+    std::mutex responseHeadersMutex_;
 };
 } // namespace Firebolt::Transport

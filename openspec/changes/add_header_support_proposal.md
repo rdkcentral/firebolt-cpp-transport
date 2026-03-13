@@ -16,11 +16,13 @@ Currently, the transport layer does not support custom headers for WebSocket con
   - `std::optional<std::string> getResponseHeader(const std::string& headerName);`
   - Returns the header value if present, otherwise null/empty.
 
+
 ## Design Details
 - `Config` struct: Add `std::map<std::string, std::string> headers;` (default: empty).
 - `connect` method: Accept and forward headers to the underlying WebSocket implementation.
 - New method: `getResponseHeader(const std::string& headerName)` returns the value for the requested header.
 - Ensure thread safety and proper error handling for header operations.
+- Reference: [websocketpp connection API - get_response_header](https://docs.websocketpp.org/classwebsocketpp_1_1connection.html#a72e0c94609844078fc611716c39791de) (for retrieving response headers)
 
 ## Compatibility & Migration
 - Backward compatible: Existing clients can ignore the new headers field.

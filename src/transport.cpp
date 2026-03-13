@@ -317,6 +317,17 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
     connectionStatus_ = TransportState::Connected;
 
     client::connection_ptr con = c->get_con_from_hdl(hdl);
+    // Populate responseHeaders_ from the connection's response headers
+    {
+        std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+        responseHeaders_.clear();
+        if (con) {
+            const auto& headers = con->get_response_header();
+            for (const auto& header : headers) {
+                responseHeaders_[header.first] = header.second;
+            }
+        }
+    }
     connectionReceiver_(true, Firebolt::Error::None);
 }
 
@@ -334,4 +345,12 @@ void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c,
     connectionReceiver_(false, mapError(con->get_ec()));
 }
 
+std::optional<std::string> Transport::getResponseHeader(const std::string& headerName)
+{
+    std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+    auto it = responseHeaders_.find(headerName);
+    if (it != responseHeaders_.end()) {
+        return it->second;
+    }
+    return std::nullopt;
 } // namespace Firebolt::Transport
