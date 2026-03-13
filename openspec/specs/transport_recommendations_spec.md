@@ -60,11 +60,30 @@ This document captures key recommendations for improving the Firebolt transport 
 
 ---
 
-## Security & Performance
-- Consider input validation, authentication, and performance tuning (batching, thread management).
+## Security
+- Security and authentication must be handled at the server level.
+- The transport layer should expose all available options for authentication and security during the connection phase (e.g., token, credentials, TLS).
+- Recommendation: Allow custom headers to be specified during connection setup to support authentication schemes and additional security requirements.
+
+---
+
+## Performance
+- The transport layer should have minimal knowledge of payload and authentication.
+- Performance criteria: maximize throughput by minimizing processing and validation.
+- Only requirement: ensure JSON validity, which is typically provided by the interface object in the specific language implementation.
 
 ---
 
 ## Future Enhancements
-- Plan for multi-language transport libraries (Dart, JS, TypeScript) using unified specs.
+- Plan for multi-language transport libraries (C, Dart, JS, TypeScript) using unified specs.
 - Modularize specs for easier cross-repo adoption and evolution.
+- For each new language repo, reuse transport, JSON-RPC, header interfaces, and recommendations specs, and create a language-specific implementation spec (e.g., cpp_specifics_spec.md, dart_specifics_spec.md, js_specifics_spec.md).
+- Expectation: Each language repo will follow the same interface abstractions and protocol compliance, adapting idiomatic patterns and libraries as needed for the target language.
+
+---
+
+## Conformance Testing & Validation
+- Focus on JSON validity and protocol compliance across implementations.
+- Error and callback handling must follow JSON-RPC message formats as defined in the protocol and header interfaces.
+- Notification callbacks should also adhere to JSON-RPC design.
+- Batch request support is optional; implement only if justified by use case and trade-off analysis.
