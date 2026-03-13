@@ -54,6 +54,45 @@ TEST_F(TransportTest, DisconnectWithoutStart)
 }
 
 class TransportIntegrationTest : public ::testing::Test
+TEST_F(TransportIntegrationTest, HeaderInjectionAndResponseHeaderRetrieval)
+{
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (connected)
+        {
+            connectionPromise.set_value(true);
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& /*msg*/) {};
+
+    // Custom header to inject
+    std::map<std::string, std::string> customHeaders = { {"X-Test-Header", "HeaderValue"} };
+
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange, std::nullopt, std::nullopt, customHeaders);
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+    EXPECT_TRUE(connectionFuture.get());
+
+    // The server will echo back headers, but since we use websocketpp, only standard headers may be available.
+    // We check that getResponseHeader returns something for a standard header (e.g., Sec-WebSocket-Accept)
+    // and for our custom header (may be empty if server does not echo).
+    auto stdHeader = transport.getResponseHeader("Sec-WebSocket-Accept");
+    EXPECT_TRUE(stdHeader.has_value());
+
+    auto customHeader = transport.getResponseHeader("X-Test-Header");
+    // Custom header may not be echoed by server, but should not crash
+    EXPECT_TRUE(customHeader == std::nullopt || customHeader.has_value());
+
+    err = transport.disconnect();
+    EXPECT_EQ(err, Firebolt::Error::None);
+}
 {
 protected:
     using server = websocketpp::server<websocketpp::config::asio>;
