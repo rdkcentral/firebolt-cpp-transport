@@ -46,11 +46,10 @@ public:
     virtual Firebolt::Error unsubscribe(const std::string& event, void* usercb) = 0;
 
     /**
-     * @brief Retrieve a response header by name from the server after connection.
-     * @param headerName The name of the header to retrieve.
-     * @return The header value if present, otherwise std::nullopt.
+     * @brief Retrieve all response headers from the server after connection.
+     * @return A map of header names to their values.
      */
-    virtual std::optional<std::string> getResponseHeader(const std::string& headerName) = 0;
+    virtual std::map<std::string, std::string> getResponseHeaders() = 0;
 };
 
 FIREBOLTTRANSPORT_EXPORT IGateway& GetGatewayInstance();

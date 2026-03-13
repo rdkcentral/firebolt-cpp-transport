@@ -348,14 +348,9 @@ void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c,
     connectionReceiver_(false, mapError(con->get_ec()));
 }
 
-std::optional<std::string> Transport::getResponseHeader(const std::string& headerName)
+std::map<std::string, std::string> Transport::getResponseHeaders()
 {
     std::lock_guard<std::mutex> lock(responseHeadersMutex_);
-    auto it = responseHeaders_.find(headerName);
-    if (it != responseHeaders_.end())
-    {
-        return it->second;
-    }
-    return std::nullopt;
+    return responseHeaders_;
 }
 } // namespace Firebolt::Transport

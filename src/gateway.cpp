@@ -639,10 +639,7 @@ private:
         return transport.send(method, parameters, id);
     }
 
-    std::optional<std::string> getResponseHeader(const std::string& headerName) override
-    {
-        return transport.getResponseHeader(headerName);
-    }
+    std::map<std::string, std::string> getResponseHeaders() { return transport.getResponseHeaders(); }
 };
 
 IGateway& GetGatewayInstance()
