@@ -38,6 +38,7 @@ public:
     MOCK_METHOD(Error, send, (const std::string&, const nlohmann::json&), (override));
     MOCK_METHOD(Error, subscribe, (const std::string&, Firebolt::Transport::EventCallback, void*), (override));
     MOCK_METHOD(Error, unsubscribe, (const std::string&, void*), (override));
+    MOCK_METHOD(std::optional<std::string>, getResponseHeader, (const std::string&), (override));
 };
 
 class MockHelper : public IHelper

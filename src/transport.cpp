@@ -324,7 +324,7 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
         responseHeaders_.clear();
         if (con)
         {
-            const auto& headers = con->get_response_header();
+            const auto& headers = con->get_response().get_headers();
             for (const auto& header : headers)
             {
                 responseHeaders_[header.first] = header.second;
@@ -357,4 +357,5 @@ std::optional<std::string> Transport::getResponseHeader(const std::string& heade
         return it->second;
     }
     return std::nullopt;
+}
 } // namespace Firebolt::Transport
