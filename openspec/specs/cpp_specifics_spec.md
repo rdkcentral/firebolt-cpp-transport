@@ -53,9 +53,22 @@ This spec consolidates all C++-specific implementation details, patterns, and li
 - nlohmann::json for JSON
 - STL containers for data structures
 - std::any for flexible payloads
+- websocketpp for WebSocket transport (supports custom header injection via replace_header)
 
 ---
 
 ## Notes
 - All C++-specific code, patterns, and library references are consolidated here for clarity.
 - General transport, protocol, and cross-language recommendations remain in their respective specs.
+
+## WebSocket Connection & Message Management
+- The transport layer uses websocketpp to establish and manage WebSocket connections.
+- Connection setup:
+  - Calls client_->get_connection(url, ec) to create a connection object.
+  - Injects custom headers using con->replace_header(key, value) before connecting.
+  - Registers open, fail, close, and message handlers via websocketpp::lib::bind.
+  - Calls client_->connect(con) to initiate the connection.
+- Message management:
+  - Registers a message handler to process incoming messages and invoke callbacks.
+  - Uses onMessage, onOpen, onClose, and onFail methods for connection lifecycle events.
+  - Handles connection state, error logging, and callback invocation for client integration.

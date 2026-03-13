@@ -49,7 +49,8 @@ public:
 
     Firebolt::Error connect(std::string url, MessageCallback onMessage, ConnectionCallback onConnectionChange,
                             std::optional<unsigned> transportLoggingInclude = std::nullopt,
-                            std::optional<unsigned> transportLoggingExclude = std::nullopt);
+                            std::optional<unsigned> transportLoggingExclude = std::nullopt,
+                            const std::map<std::string, std::string>& headers = {});
     Firebolt::Error disconnect();
     unsigned getNextMessageID();
     Firebolt::Error send(const std::string& method, const nlohmann::json& params, const unsigned id);

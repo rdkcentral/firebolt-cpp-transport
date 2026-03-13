@@ -140,7 +140,8 @@ void Transport::processQueuedMessages()
 
 Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, ConnectionCallback onConnectionChange,
                                    std::optional<unsigned> transportLoggingInclude,
-                                   std::optional<unsigned> transportLoggingExclude)
+                                   std::optional<unsigned> transportLoggingExclude,
+                                   const std::map<std::string, std::string>& headers)
 {
     if (connectionStatus_ == TransportState::Connected)
     {
@@ -188,6 +189,17 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     {
         FIREBOLT_LOG_ERROR("Transport", "Could not create connection because: %s", ec.message().c_str());
         return Firebolt::Error::NotConnected;
+    }
+
+    if (!con)
+    {
+        FIREBOLT_LOG_ERROR("Transport", "Connection pointer is null after get_connection.");
+        return Firebolt::Error::NotConnected;
+    }
+
+    // Inject custom headers before connecting
+    for (const auto& header : headers) {
+        con->replace_header(header.first, header.second);
     }
 
     connectionHandle_ = con->get_handle();
