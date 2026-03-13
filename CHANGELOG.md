@@ -1,8 +1,11 @@
-## [Unreleased](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.4...main)
+## [1.1.5](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.4...v1.1.5)
 
 ### Changed
 - Enable websocketpp logs by default only at `Debug` log level; they can also be controlled with
   `Config.log.transportInclude` and `Config.log.transportExclude`
+
+### Fixed
+- In legacy protocol, allow `result` to be an object or an array
 
 ## [1.1.4](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.3...v1.1.4)
 

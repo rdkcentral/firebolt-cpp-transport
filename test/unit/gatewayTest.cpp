@@ -26,7 +26,7 @@
 
 using namespace Firebolt::Transport;
 
-TEST(GatewayUrlUtilsTest, VerifyUrls)
+TEST(GatewayUrlUtilsUTest, VerifyUrls)
 {
     bool legacyRPCv1 = false;
     EXPECT_EQ(buildGatewayUrl("ws://127.0.0.1:3437", legacyRPCv1), "ws://127.0.0.1:3437/?RPCv2=true");
@@ -37,7 +37,7 @@ TEST(GatewayUrlUtilsTest, VerifyUrls)
     EXPECT_EQ(buildGatewayUrl("ws://localhost:9003", legacyRPCv1), "ws://localhost:9003/?RPCv2=true");
 }
 
-TEST(GatewayUrlUtilsTest, VerifyUrls_LegacyMode)
+TEST(GatewayUrlUtilsUTest, VerifyUrls_LegacyMode)
 {
     bool legacyRPCv1 = true;
     EXPECT_EQ(buildGatewayUrl("ws://127.0.0.1:3437", legacyRPCv1), "ws://127.0.0.1:3437/");
@@ -47,7 +47,7 @@ TEST(GatewayUrlUtilsTest, VerifyUrls_LegacyMode)
     EXPECT_EQ(buildGatewayUrl("ws://localhost:9003", legacyRPCv1), "ws://localhost:9003/");
 }
 
-class GatewayTest : public ::testing::Test
+class GatewayUTest : public ::testing::Test
 {
 protected:
     using server = websocketpp::server<websocketpp::config::asio>;
@@ -192,7 +192,7 @@ protected:
     }
 };
 
-TEST_F(GatewayTest, ConnectAndDisconnect)
+TEST_F(GatewayUTest, ConnectAndDisconnect)
 {
     startServer();
     IGateway& gateway = GetGatewayInstance();
@@ -210,7 +210,7 @@ TEST_F(GatewayTest, ConnectAndDisconnect)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-TEST_F(GatewayTest, Request)
+TEST_F(GatewayUTest, Request)
 {
     IGateway& gateway = connectAndWait();
 
@@ -224,7 +224,7 @@ TEST_F(GatewayTest, Request)
     EXPECT_TRUE(result);
 }
 
-TEST_F(GatewayTest, Send)
+TEST_F(GatewayUTest, Send)
 {
     IGateway& gateway = connectAndWait();
 
@@ -233,7 +233,7 @@ TEST_F(GatewayTest, Send)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-TEST_F(GatewayTest, SubscribeUnsubscribe)
+TEST_F(GatewayUTest, SubscribeUnsubscribe)
 {
     IGateway& gateway = connectAndWait();
 
@@ -267,7 +267,7 @@ TEST_F(GatewayTest, SubscribeUnsubscribe)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-TEST_F(GatewayTest, RequestTimeout)
+TEST_F(GatewayUTest, RequestTimeout)
 {
     m_messageHandler = [](connection_hdl /*hdl*/, server::message_ptr /*msg*/) {};
     IGateway& gateway = connectAndWait();
@@ -283,7 +283,7 @@ TEST_F(GatewayTest, RequestTimeout)
     EXPECT_EQ(result.error(), Firebolt::Error::Timedout);
 }
 
-TEST_F(GatewayTest, RequestWithError)
+TEST_F(GatewayUTest, RequestWithError)
 {
     m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
     {
@@ -316,7 +316,7 @@ TEST_F(GatewayTest, RequestWithError)
     EXPECT_EQ(result.error(), Firebolt::Error::MethodNotFound);
 }
 
-TEST_F(GatewayTest, MultipleSubscriptions)
+TEST_F(GatewayUTest, MultipleSubscriptions)
 {
     IGateway& gateway = connectAndWait();
 
@@ -353,7 +353,7 @@ TEST_F(GatewayTest, MultipleSubscriptions)
     gateway.unsubscribe("test.onEvent", &eventPromise2);
 }
 
-TEST_F(GatewayTest, UnsubscribeSpecific)
+TEST_F(GatewayUTest, UnsubscribeSpecific)
 {
     IGateway& gateway = connectAndWait();
 
@@ -389,7 +389,7 @@ TEST_F(GatewayTest, UnsubscribeSpecific)
     gateway.unsubscribe("test.onEvent", &eventPromise2);
 }
 
-TEST_F(GatewayTest, InvalidNotification)
+TEST_F(GatewayUTest, InvalidNotification)
 {
     IGateway& gateway = connectAndWait();
 
@@ -425,7 +425,7 @@ TEST_F(GatewayTest, InvalidNotification)
     EXPECT_TRUE(result) << "Gateway returned an error for a valid request after invalid notifications.";
 }
 
-TEST_F(GatewayTest, LegacyRPCv1Event)
+TEST_F(GatewayUTest, LegacyRPCv1Event)
 {
     std::promise<nlohmann::json> eventPromise;
     auto eventFuture = eventPromise.get_future();
@@ -476,7 +476,58 @@ TEST_F(GatewayTest, LegacyRPCv1Event)
     gateway.unsubscribe("test.onEvent", &eventPromise);
 }
 
-TEST_F(GatewayTest, UnsubscribeFromCallbackDoesNotDeadlock)
+TEST_F(GatewayUTest, LegacyRPCv1Event_array)
+{
+    std::promise<nlohmann::json> eventPromise;
+    auto eventFuture = eventPromise.get_future();
+
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        auto request = nlohmann::json::parse(msg->get_payload());
+        if (request["method"].get<std::string>().find(".onEvent") != std::string::npos)
+        {
+            nlohmann::json response;
+            response["jsonrpc"] = "2.0";
+            response["id"] = request["id"];
+            response["result"]["listening"] = true;
+            m_server.send(hdl, response.dump(), msg->get_opcode());
+
+            nlohmann::json legacyEvent;
+            legacyEvent["jsonrpc"] = "2.0";
+            legacyEvent["id"] = request["id"];
+            legacyEvent["result"] = {{{"fired", true}}};
+            m_server.send(hdl, legacyEvent.dump(), msg->get_opcode());
+        }
+    };
+
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+    auto connectionFuture = m_connectionPromise.get_future();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.legacyRPCv1 = true;
+    Firebolt::Error connectErr = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& err)
+                                                 { onConnectionChange(connected, err); });
+    ASSERT_EQ(connectErr, Firebolt::Error::None);
+
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    auto onEvent = [](void* usercb, const nlohmann::json& params)
+    { static_cast<std::promise<nlohmann::json>*>(usercb)->set_value(params); };
+
+    Firebolt::Error err = gateway.subscribe("test.onEvent", onEvent, &eventPromise);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    auto eventStatus = eventFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(eventStatus, std::future_status::ready) << "Legacy event was not received";
+
+    nlohmann::json eventParams = eventFuture.get();
+    EXPECT_TRUE(eventParams[0]["fired"].get<bool>());
+
+    gateway.unsubscribe("test.onEvent", &eventPromise);
+}
+
+TEST_F(GatewayUTest, UnsubscribeFromCallbackDoesNotDeadlock)
 {
     m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
     {

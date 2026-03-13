@@ -62,14 +62,14 @@ struct TestJson
     auto value() const { return v; }
 };
 
-class HelperTest : public ::testing::Test
+class HelperUTest : public ::testing::Test
 {
 protected:
     MockGateway mockGateway;
     HelperImpl helper{mockGateway};
 };
 
-TEST_F(HelperTest, SetSuccess)
+TEST_F(HelperUTest, SetSuccess)
 {
     const std::string methodName = "test.set";
     const nlohmann::json params = {{"key", "value"}};
@@ -83,7 +83,7 @@ TEST_F(HelperTest, SetSuccess)
     EXPECT_TRUE(result);
 }
 
-TEST_F(HelperTest, SetFailure)
+TEST_F(HelperUTest, SetFailure)
 {
     const std::string methodName = "test.set";
     const nlohmann::json params = {{"key", "value"}};
@@ -98,7 +98,7 @@ TEST_F(HelperTest, SetFailure)
     EXPECT_EQ(result.error(), Error::General);
 }
 
-TEST_F(HelperTest, InvokeSuccess)
+TEST_F(HelperUTest, InvokeSuccess)
 {
     const std::string methodName = "test.invoke";
     const nlohmann::json params = {{"key", "value"}};
@@ -109,7 +109,7 @@ TEST_F(HelperTest, InvokeSuccess)
     EXPECT_TRUE(result);
 }
 
-TEST_F(HelperTest, GetSuccess)
+TEST_F(HelperUTest, GetSuccess)
 {
     const std::string methodName = "test.get";
     const nlohmann::json responseJson = {{"value", 123}};
@@ -123,7 +123,7 @@ TEST_F(HelperTest, GetSuccess)
     EXPECT_EQ(*result, 123);
 }
 
-TEST_F(HelperTest, GetJsonFailure)
+TEST_F(HelperUTest, GetJsonFailure)
 {
     const std::string methodName = "test.get";
     std::promise<Result<nlohmann::json>> promise;
@@ -136,7 +136,7 @@ TEST_F(HelperTest, GetJsonFailure)
     EXPECT_EQ(result.error(), Error::MethodNotFound);
 }
 
-TEST_F(HelperTest, GetParseFailure)
+TEST_F(HelperUTest, GetParseFailure)
 {
     const std::string methodName = "test.get";
     const nlohmann::json invalidResponseJson = {{"wrong_key", 123}};
@@ -150,7 +150,7 @@ TEST_F(HelperTest, GetParseFailure)
     EXPECT_EQ(result.error(), Error::InvalidParams);
 }
 
-class SubscriptionManagerTest : public ::testing::Test
+class SubscriptionManagerUTest : public ::testing::Test
 {
 protected:
     MockHelper mockHelper;
@@ -160,7 +160,7 @@ protected:
     void SetUp() override { subscriptionManager = std::make_unique<SubscriptionManager>(mockHelper, owner); }
 };
 
-TEST_F(SubscriptionManagerTest, Subscribe)
+TEST_F(SubscriptionManagerUTest, Subscribe)
 {
     std::function<void(int)> notification = [](int) {};
     EXPECT_CALL(mockHelper, subscribe(owner, "test.event", _, _)).WillOnce(Return(Result<SubscriptionId>{123}));
@@ -170,21 +170,21 @@ TEST_F(SubscriptionManagerTest, Subscribe)
     EXPECT_EQ(*result, 123);
 }
 
-TEST_F(SubscriptionManagerTest, Unsubscribe)
+TEST_F(SubscriptionManagerUTest, Unsubscribe)
 {
     EXPECT_CALL(mockHelper, unsubscribe(123)).WillOnce(Return(Result<void>(Error::None)));
     auto result = subscriptionManager->unsubscribe(123);
     EXPECT_TRUE(result);
 }
 
-TEST_F(SubscriptionManagerTest, UnsubscribeAll)
+TEST_F(SubscriptionManagerUTest, UnsubscribeAll)
 {
     EXPECT_CALL(mockHelper, unsubscribeAll(owner));
     subscriptionManager->unsubscribeAll();
     subscriptionManager.release();
 }
 
-TEST(OnPropertyChangedCallbackTest, Basic)
+TEST(OnPropertyChangedCallbackUTest, Basic)
 {
     SubscriptionData subData;
     subData.owner = nullptr;
@@ -204,7 +204,7 @@ TEST(OnPropertyChangedCallbackTest, Basic)
     EXPECT_EQ(future.get(), 42);
 }
 
-TEST(OnPropertyChangedCallbackTest, InvalidJson)
+TEST(OnPropertyChangedCallbackUTest, InvalidJson)
 {
     SubscriptionData subData;
     subData.owner = nullptr;

@@ -586,8 +586,8 @@ private:
         {
             if (legacyRPCv1)
             {
-                if (message.contains("result") && !message["result"].empty() && message["result"].is_object() &&
-                    !message["result"].contains("listening"))
+                if (message.contains("result") && !message["result"].empty() &&
+                    (!message["result"].is_object() || !message["result"].contains("listening")))
                 {
                     MessageID id = message["id"];
                     std::string eventName;

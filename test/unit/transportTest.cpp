@@ -26,13 +26,13 @@
 
 using namespace Firebolt::Transport;
 
-class TransportTest : public ::testing::Test
+class TransportUTest : public ::testing::Test
 {
 protected:
     Transport transport;
 };
 
-TEST_F(TransportTest, GetNextMessageID)
+TEST_F(TransportUTest, GetNextMessageID)
 {
     unsigned firstId = transport.getNextMessageID();
     unsigned secondId = transport.getNextMessageID();
@@ -40,59 +40,20 @@ TEST_F(TransportTest, GetNextMessageID)
     EXPECT_EQ(secondId, 2);
 }
 
-TEST_F(TransportTest, SendWithoutConnection)
+TEST_F(TransportUTest, SendWithoutConnection)
 {
     nlohmann::json params;
     Firebolt::Error err = transport.send("test.method", params, 1);
     EXPECT_EQ(err, Firebolt::Error::NotConnected);
 }
 
-TEST_F(TransportTest, DisconnectWithoutStart)
+TEST_F(TransportUTest, DisconnectWithoutStart)
 {
     Firebolt::Error err = transport.disconnect();
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-class TransportIntegrationTest : public ::testing::Test
-TEST_F(TransportIntegrationTest, HeaderInjectionAndResponseHeaderRetrieval)
-{
-    Transport transport;
-    std::promise<bool> connectionPromise;
-    auto connectionFuture = connectionPromise.get_future();
-
-    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
-    {
-        if (connected)
-        {
-            connectionPromise.set_value(true);
-        }
-    };
-
-    auto onMessage = [&](const nlohmann::json& /*msg*/) {};
-
-    // Custom header to inject
-    std::map<std::string, std::string> customHeaders = { {"X-Test-Header", "HeaderValue"} };
-
-    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange, std::nullopt, std::nullopt, customHeaders);
-    ASSERT_EQ(err, Firebolt::Error::None);
-
-    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
-    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
-    EXPECT_TRUE(connectionFuture.get());
-
-    // The server will echo back headers, but since we use websocketpp, only standard headers may be available.
-    // We check that getResponseHeader returns something for a standard header (e.g., Sec-WebSocket-Accept)
-    // and for our custom header (may be empty if server does not echo).
-    auto stdHeader = transport.getResponseHeader("Sec-WebSocket-Accept");
-    EXPECT_TRUE(stdHeader.has_value());
-
-    auto customHeader = transport.getResponseHeader("X-Test-Header");
-    // Custom header may not be echoed by server, but should not crash
-    EXPECT_TRUE(customHeader == std::nullopt || customHeader.has_value());
-
-    err = transport.disconnect();
-    EXPECT_EQ(err, Firebolt::Error::None);
-}
+class TransportIntegrationUTest : public ::testing::Test
 {
 protected:
     using server = websocketpp::server<websocketpp::config::asio>;
@@ -154,7 +115,7 @@ protected:
     }
 };
 
-TEST_F(TransportIntegrationTest, ConnectAndDisconnect)
+TEST_F(TransportIntegrationUTest, ConnectAndDisconnect)
 {
     Transport transport;
     std::promise<bool> connectionPromise;
@@ -181,7 +142,7 @@ TEST_F(TransportIntegrationTest, ConnectAndDisconnect)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-TEST_F(TransportIntegrationTest, SendAndReceiveMessage)
+TEST_F(TransportIntegrationUTest, SendAndReceiveMessage)
 {
     Transport transport;
     std::promise<bool> connectionPromise;
@@ -223,7 +184,7 @@ TEST_F(TransportIntegrationTest, SendAndReceiveMessage)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-TEST_F(TransportTest, ConnectionFailure)
+TEST_F(TransportUTest, ConnectionFailure)
 {
     Transport transport;
     std::promise<bool> connectedPromise;
@@ -262,7 +223,7 @@ TEST_F(TransportTest, ConnectionFailure)
     EXPECT_NE(errorFuture.get(), Firebolt::Error::None);
 }
 
-TEST_F(TransportIntegrationTest, ConnectWhenAlreadyConnected)
+TEST_F(TransportIntegrationUTest, ConnectWhenAlreadyConnected)
 {
     Transport transport;
     std::promise<void> firstConnectionPromise;
@@ -301,7 +262,48 @@ TEST_F(TransportIntegrationTest, ConnectWhenAlreadyConnected)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-class TransportCustomServerTest : public ::testing::Test
+TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
+{
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (connected)
+        {
+            connectionPromise.set_value(true);
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& /*msg*/) {};
+
+    // Custom header to inject
+    std::map<std::string, std::string> customHeaders = { {"X-Test-Header", "HeaderValue"} };
+
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange, std::nullopt, std::nullopt, customHeaders);
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+    EXPECT_TRUE(connectionFuture.get());
+
+    // The server will echo back headers, but since we use websocketpp, only standard headers may be available.
+    // We check that getResponseHeader returns something for a standard header (e.g., Sec-WebSocket-Accept)
+    // and for our custom header (may be empty if server does not echo).
+    auto stdHeader = transport.getResponseHeader("Sec-WebSocket-Accept");
+    EXPECT_TRUE(stdHeader.has_value());
+
+    auto customHeader = transport.getResponseHeader("X-Test-Header");
+    // Custom header may not be echoed by server, but should not crash
+    EXPECT_TRUE(customHeader == std::nullopt || customHeader.has_value());
+
+    err = transport.disconnect();
+    EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+
+class TransportCustomServerUTest : public ::testing::Test
 {
 protected:
     using server = websocketpp::server<websocketpp::config::asio>;
@@ -349,7 +351,7 @@ protected:
     }
 };
 
-TEST_F(TransportCustomServerTest, ServerClosesConnection)
+TEST_F(TransportCustomServerUTest, ServerClosesConnection)
 {
     m_server.set_open_handler(
         [this](connection_hdl hdl)
@@ -396,7 +398,7 @@ TEST_F(TransportCustomServerTest, ServerClosesConnection)
     ASSERT_EQ(closeStatus, std::future_status::ready) << "onClose event timed out";
 }
 
-TEST_F(TransportCustomServerTest, SendAfterServerDisconnect)
+TEST_F(TransportCustomServerUTest, SendAfterServerDisconnect)
 {
     std::promise<void> messageReceivedPromise;
     auto messageReceivedFuture = messageReceivedPromise.get_future();
@@ -460,7 +462,7 @@ TEST_F(TransportCustomServerTest, SendAfterServerDisconnect)
     transport.disconnect();
 }
 
-TEST_F(TransportIntegrationTest, SendWithEmptyParams)
+TEST_F(TransportIntegrationUTest, SendWithEmptyParams)
 {
     Transport transport;
     std::promise<bool> connectionPromise;
@@ -503,7 +505,7 @@ TEST_F(TransportIntegrationTest, SendWithEmptyParams)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-TEST_F(TransportCustomServerTest, MalformedMessageFromServer)
+TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
 {
     std::promise<void> malformedMessageSentPromise;
     auto malformedMessageSentFuture = malformedMessageSentPromise.get_future();
