@@ -53,17 +53,9 @@ if(ENABLE_TESTS)
     target_link_options(${TARGET} PRIVATE --coverage)
 endif()
 
-if(NOT TARGET nlohmann_json::nlohmann_json)
-    find_package(nlohmann_json REQUIRED)
-endif()
-
-if(NOT TARGET websocketpp::websocketpp)
-    find_package(websocketpp REQUIRED)
-endif()
-
-if(NOT TARGET Boost::system)
-    find_package(Boost REQUIRED COMPONENTS system)
-endif()
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(websocketpp CONFIG REQUIRED)
+find_package(Boost CONFIG REQUIRED COMPONENTS system)
 
 generate_export_header(
     ${TARGET}
@@ -77,7 +69,7 @@ configure_file(
 )
 
 configure_file(
-    "${PROJECT_SOURCE_DIR}/include/firebolt/config.h.in"
+    "${CMAKE_SOURCE_DIR}/include/firebolt/config.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/firebolt/config.h"
     @ONLY
 )
@@ -93,7 +85,7 @@ target_include_directories(${TARGET}
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
     PUBLIC
-        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
@@ -101,10 +93,20 @@ target_include_directories(${TARGET}
 set_target_properties(${TARGET} PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
-    VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
     POSITION_INDEPENDENT_CODE ON
 )
+if(DISABLE_SO_VERSION)
+    set_target_properties(${TARGET} PROPERTIES
+        NO_SONAME ON
+        VERSION ""
+        SOVERSION ""
+    )
+else()
+    set_target_properties(${TARGET} PROPERTIES
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+    )
+endif()
 
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
@@ -113,7 +115,7 @@ write_basic_package_version_file(
 )
 
 configure_package_config_file(
-    "${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}Config.cmake.in"
+    "${CMAKE_SOURCE_DIR}/cmake/${PROJECT_NAME}Config.cmake.in"
     "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
 )
@@ -133,7 +135,7 @@ install(
 )
 
 install(
-    DIRECTORY ${PROJECT_SOURCE_DIR}/include/
+    DIRECTORY ${CMAKE_SOURCE_DIR}/include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/
     FILES_MATCHING PATTERN "*.h"
 )

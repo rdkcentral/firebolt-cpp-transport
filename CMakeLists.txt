@@ -28,6 +28,7 @@ option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 option(ENABLE_TESTS "Build tests" OFF)
 option(DISCOVER_UT "Discover all Unit Tests" ON)
 option(ENABLE_LEGACY_RPC_V1 "Use legacy communication" OFF)
+option(DISABLE_SO_VERSION "Disable SONAME/SOVERSION of shared library" OFF)
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${SYSROOT_PATH}/usr" CACHE INTERNAL "" FORCE)
