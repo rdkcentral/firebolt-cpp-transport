@@ -1,3 +1,8 @@
+## [1.1.6](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.5...v1.1.6)
+
+### Changed
+- Allow building without a SONAME
+
 ## [1.1.5](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.4...v1.1.5)
 
 ### Changed
