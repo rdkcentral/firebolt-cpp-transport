@@ -1,6 +1,6 @@
 ---
 
-# OpenSpec & Copilot: Accelerating Change Management in Brownfield Projects
+# Spec Driven Development with OpenSpec & Copilot
 
 > A practical guide to using Spec-driven Development (SDD) and AI agents for safe, traceable, and efficient evolution of complex codebases.
 
@@ -21,6 +21,7 @@ flowchart LR
 
 - Ensures code and requirements stay in sync for fewer bugs.
 - Makes changes traceable and collaboration easier.
+- Enables AI agents to assist with clear guidance and feedback loops.
 
 ---
 
@@ -78,7 +79,7 @@ What is the objective?
 - Propose and implement changes.
 - Document and share learnings.
 
-> Use Github Copilot and preferrably a simple Agent like GPT-4.1 to assist with all phases of the process, from spec generation to code implementation and documentation.
+> Use VS Code with Copilot and preferrably a simple Agent like GPT-4.1(0x Tokens) from spec generation to code implementation and documentation.
 
 ---
 
@@ -108,7 +109,7 @@ flowchart LR
 
 ---
 
-# [Explore]: Generated Specs
+# [Explore]: AI Generated Specs
 
 ```sh
 $ ls
@@ -128,7 +129,7 @@ changes/
 
 ---
 
-# [Explore] Generate Recommendations
+# [Explore] AI Generated Recommendations
 
 - Support headers in the transport layer
 - Add robust support for JSON-RPC batch requests
@@ -139,7 +140,7 @@ changes/
 
 ---
 
-# [Propose] Add Header Support
+# [Propose] New feature: Add Header Support
 
 ```sh
 $ /ospx-propose "Add header support to transport layer" --spec "header_support_spec.md" --tasks "tasks.md"
@@ -194,15 +195,18 @@ https://github.com/rdkcentral/firebolt-cpp-transport/tree/feature/openspec
 
 - AI accelerates structured change management
 - OpenSpec ensures traceability and review
-- Copilot improves productivity and documentation
-- Openspec content also powers Slidev for presentations
+- AI agents improve productivity and documentation
+- AI + Openspec also powers Slidev for presentations (Thanks to #comcast-ai-community
+)
+  - Current slides are Auto Generated from OpenSpec and Copilot chat conversations.
+  - Multiple Reusable Skills generated for creating slides based on the effort
 
 ---
 
 # Next Steps
 
-- Expand OpenSpec usage
-- Share learnings with the team
+- Share learning with team.
+- RDK-E Middleware Crews will expand usage of OpenSpec.
 - Continue integrating AI into other repositories and workflows
 
 
