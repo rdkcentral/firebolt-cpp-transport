@@ -1,6 +1,6 @@
 ---
 
-# OpenSpec & Copilot: Accelerating Change Management in Brownfield C++ Projects
+# OpenSpec & Copilot: Accelerating Change Management in Brownfield Projects
 
 > A practical guide to using Spec-driven Development (SDD) and AI agents for safe, traceable, and efficient evolution of complex codebases.
 
