@@ -17,12 +17,15 @@
  */
 
 #include "transport.h"
+#include <array>
 #include <chrono>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <websocketpp/base64/base64.hpp>
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
+#include <websocketpp/sha1/sha1.hpp>
 
 using namespace Firebolt::Transport;
 
@@ -419,6 +422,162 @@ TEST_F(TransportCustomServerUTest, SendAfterServerDisconnect)
     EXPECT_EQ(err, Firebolt::Error::NotConnected);
 
     transport.disconnect();
+}
+
+// ---- Regression test: disconnect() must not hang when the server ignores the close handshake ----
+//
+// Root cause: disconnect() called client_->close() (async) then immediately joined the ASIO
+// thread.  websocketpp's default close_handshake_timeout is 5 s, so if the gateway process
+// was hung (TCP connection alive but no frames processed) the call would block for 5 s.
+//
+// Fix: set con->set_close_handshake_timeout(2000) just before calling close(), capping the
+// wait at 2 s.  This test asserts the whole call returns in under 3 s.
+//
+// The server used here is a minimal raw TCP server that performs the WebSocket HTTP upgrade
+// then reads all incoming bytes into /dev/null without ever replying — exactly what happens
+// when a gateway process freezes with the TCP connection still open.
+namespace
+{
+namespace asio = websocketpp::lib::asio;
+
+class SilentAfterUpgradeServer
+{
+public:
+    explicit SilentAfterUpgradeServer(uint16_t port)
+    {
+        m_acceptor.open(asio::ip::tcp::v4());
+        m_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true));
+        m_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port));
+        m_acceptor.listen();
+    }
+
+    ~SilentAfterUpgradeServer() { stop(); }
+
+    void start()
+    {
+        accept();
+        m_thread = std::thread([this] { m_ioc.run(); });
+    }
+
+    void stop()
+    {
+        m_ioc.stop();
+        if (m_thread.joinable())
+            m_thread.join();
+    }
+
+private:
+    void accept()
+    {
+        m_acceptor.async_accept(
+            [this](websocketpp::lib::error_code ec, asio::ip::tcp::socket sock)
+            {
+                if (ec)
+                    return;
+                doUpgrade(std::make_shared<asio::ip::tcp::socket>(std::move(sock)));
+            });
+    }
+
+    void doUpgrade(std::shared_ptr<asio::ip::tcp::socket> sock)
+    {
+        auto buf = std::make_shared<asio::streambuf>();
+        asio::async_read_until(*sock, *buf, "\r\n\r\n",
+                               [this, sock, buf](websocketpp::lib::error_code ec, size_t)
+                               {
+                                   if (ec)
+                                       return;
+                                   std::istream stream(buf.get());
+                                   std::string line;
+                                   std::string wsKey;
+                                   while (std::getline(stream, line))
+                                   {
+                                       const std::string header = "Sec-WebSocket-Key:";
+                                       if (line.find(header) != std::string::npos)
+                                       {
+                                           wsKey = line.substr(line.find(':') + 2);
+                                           wsKey.erase(wsKey.find_last_not_of(" \t\r\n") + 1);
+                                       }
+                                   }
+                                   sendUpgradeResponse(sock, wsKey);
+                               });
+    }
+
+    void sendUpgradeResponse(std::shared_ptr<asio::ip::tcp::socket> sock, const std::string& wsKey)
+    {
+        const std::string combined = wsKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        unsigned char sha1Digest[20];
+        websocketpp::sha1::calc(combined.c_str(), static_cast<int>(combined.size()), sha1Digest);
+        const std::string accept = websocketpp::base64_encode(sha1Digest, 20);
+
+        auto response = std::make_shared<std::string>("HTTP/1.1 101 Switching Protocols\r\n"
+                                                      "Upgrade: websocket\r\n"
+                                                      "Connection: Upgrade\r\n"
+                                                      "Sec-WebSocket-Accept: " +
+                                                      accept + "\r\n\r\n");
+
+        asio::async_write(*sock, asio::buffer(*response),
+                          [this, sock, response](websocketpp::lib::error_code ec, size_t)
+                          {
+                              if (ec)
+                                  return;
+                              // Upgrade done. Read forever and discard — never send a CLOSE response.
+                              discardForever(sock);
+                          });
+    }
+
+    void discardForever(std::shared_ptr<asio::ip::tcp::socket> sock)
+    {
+        auto buf = std::make_shared<std::array<char, 1024>>();
+        sock->async_read_some(asio::buffer(*buf),
+                              [this, sock, buf](websocketpp::lib::error_code ec, size_t)
+                              {
+                                  if (ec)
+                                      return;
+                                  discardForever(sock);
+                              });
+    }
+
+    asio::io_context m_ioc;
+    asio::ip::tcp::acceptor m_acceptor{m_ioc};
+    std::thread m_thread;
+};
+} // namespace
+
+TEST(TransportDisconnectTimeoutComponentTest, DisconnectDoesNotHangWhenServerIgnoresCloseHandshake)
+{
+    SilentAfterUpgradeServer silentServer(9005);
+    silentServer.start();
+
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+    std::atomic<bool> promiseSet{false};
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        bool expected = false;
+        if (promiseSet.compare_exchange_strong(expected, true))
+            connectionPromise.set_value(connected);
+    };
+    auto onMessage = [](const nlohmann::json& /*msg*/) {};
+
+    ASSERT_EQ(transport.connect("ws://localhost:9005", onMessage, onConnectionChange), Firebolt::Error::None);
+
+    auto connStatus = connectionFuture.wait_for(std::chrono::seconds(3));
+    ASSERT_EQ(connStatus, std::future_status::ready) << "Transport never connected to silent server";
+    ASSERT_TRUE(connectionFuture.get());
+
+    // disconnect() sends a CLOSE frame; the silent server reads the bytes but never replies.
+    // Without the timeout cap this would block for websocketpp's default 5 seconds.
+    // The fix sets close_handshake_timeout(2000), so this must return well under 3 s.
+    const auto start = std::chrono::steady_clock::now();
+    const Firebolt::Error err = transport.disconnect();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_EQ(err, Firebolt::Error::None);
+    EXPECT_LT(elapsed, std::chrono::seconds(3))
+        << "disconnect() blocked for " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
+        << " ms — close-handshake timeout was not applied (expected < 3000 ms)";
 }
 
 TEST_F(TransportIntegrationUTest, SendWithEmptyParams)
