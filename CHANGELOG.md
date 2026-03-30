@@ -1,3 +1,9 @@
+## [1.1.7](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.6...v1.1.7)
+
+### Fixed
+- fix(transport): cap close-handshake timeout at 100ms to prevent disconnect()
+
+
 ## [1.1.6](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.5...v1.1.6)
 
 ### Changed
