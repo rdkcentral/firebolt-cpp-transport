@@ -226,7 +226,7 @@ Firebolt::Error Transport::disconnect()
         try
         {
             auto con = client_->get_con_from_hdl(connectionHandle_);
-            con->set_close_handshake_timeout(500);
+            con->set_close_handshake_timeout(100);
         }
         catch (const std::bad_weak_ptr& ex)
         {

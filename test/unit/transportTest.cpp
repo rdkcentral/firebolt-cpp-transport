@@ -452,10 +452,7 @@ public:
         m_acceptor.listen();
     }
 
-    uint16_t port() const
-    {
-        return m_acceptor.local_endpoint().port();
-    }
+    uint16_t port() const { return m_acceptor.local_endpoint().port(); }
 
     ~SilentAfterUpgradeServer() { stop(); }
 
@@ -568,7 +565,8 @@ TEST(TransportDisconnectTimeoutComponentTest, DisconnectDoesNotHangWhenServerIgn
     };
     auto onMessage = [](const nlohmann::json& /*msg*/) {};
 
-    ASSERT_EQ(transport.connect("ws://localhost:" + std::to_string(port), onMessage, onConnectionChange), Firebolt::Error::None);
+    ASSERT_EQ(transport.connect("ws://localhost:" + std::to_string(port), onMessage, onConnectionChange),
+              Firebolt::Error::None);
 
     auto connStatus = connectionFuture.wait_for(std::chrono::seconds(3));
     ASSERT_EQ(connStatus, std::future_status::ready) << "Transport never connected to silent server";
