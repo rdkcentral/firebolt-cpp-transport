@@ -26,6 +26,7 @@
 using namespace Firebolt;
 using namespace Firebolt::Helpers;
 using ::testing::_;
+using ::testing::ByMove;
 using ::testing::Invoke;
 using ::testing::Return;
 
@@ -77,7 +78,7 @@ TEST_F(HelperUTest, SetSuccess)
     std::promise<Result<nlohmann::json>> promise;
     promise.set_value(Result<nlohmann::json>{nlohmann::json{}});
 
-    EXPECT_CALL(mockGateway, request(methodName, params)).WillOnce(Return(promise.get_future()));
+    EXPECT_CALL(mockGateway, request(methodName, params)).WillOnce(Return(ByMove(promise.get_future())));
 
     auto result = helper.set(methodName, params);
     EXPECT_TRUE(result);
@@ -91,7 +92,7 @@ TEST_F(HelperUTest, SetFailure)
     std::promise<Result<nlohmann::json>> promise;
     promise.set_value(Result<nlohmann::json>{Error::General});
 
-    EXPECT_CALL(mockGateway, request(methodName, params)).WillOnce(Return(promise.get_future()));
+    EXPECT_CALL(mockGateway, request(methodName, params)).WillOnce(Return(ByMove(promise.get_future())));
 
     auto result = helper.set(methodName, params);
     EXPECT_FALSE(result);
@@ -116,7 +117,7 @@ TEST_F(HelperUTest, GetSuccess)
     std::promise<Result<nlohmann::json>> promise;
     promise.set_value(Result<nlohmann::json>{responseJson});
 
-    EXPECT_CALL(mockGateway, request(methodName, _)).WillOnce(Return(promise.get_future()));
+    EXPECT_CALL(mockGateway, request(methodName, _)).WillOnce(Return(ByMove(promise.get_future())));
 
     auto result = helper.get<TestJson, int>(methodName);
     ASSERT_TRUE(result);
@@ -129,7 +130,7 @@ TEST_F(HelperUTest, GetJsonFailure)
     std::promise<Result<nlohmann::json>> promise;
     promise.set_value(Result<nlohmann::json>{Error::MethodNotFound});
 
-    EXPECT_CALL(mockGateway, request(methodName, _)).WillOnce(Return(promise.get_future()));
+    EXPECT_CALL(mockGateway, request(methodName, _)).WillOnce(Return(ByMove(promise.get_future())));
 
     auto result = helper.get<TestJson, int>(methodName);
     ASSERT_FALSE(result);
@@ -143,7 +144,7 @@ TEST_F(HelperUTest, GetParseFailure)
     std::promise<Result<nlohmann::json>> promise;
     promise.set_value(Result<nlohmann::json>{invalidResponseJson});
 
-    EXPECT_CALL(mockGateway, request(methodName, _)).WillOnce(Return(promise.get_future()));
+    EXPECT_CALL(mockGateway, request(methodName, _)).WillOnce(Return(ByMove(promise.get_future())));
 
     auto result = helper.get<TestJson, int>(methodName);
     ASSERT_FALSE(result);

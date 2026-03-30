@@ -17,12 +17,16 @@
  */
 
 #include "transport.h"
+#include <array>
 #include <chrono>
+#include <future>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <websocketpp/base64/base64.hpp>
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
+#include <websocketpp/sha1/sha1.hpp>
 
 using namespace Firebolt::Transport;
 
@@ -134,7 +138,7 @@ TEST_F(TransportIntegrationUTest, ConnectAndDisconnect)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
     EXPECT_TRUE(connectionFuture.get());
 
@@ -163,7 +167,7 @@ TEST_F(TransportIntegrationUTest, SendAndReceiveMessage)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
     ASSERT_TRUE(connectionFuture.get());
 
@@ -172,7 +176,7 @@ TEST_F(TransportIntegrationUTest, SendAndReceiveMessage)
     err = transport.send("test.method", params, msgId);
     EXPECT_EQ(err, Firebolt::Error::None);
 
-    auto msgStatus = messageFuture.wait_for(std::chrono::seconds(2));
+    auto msgStatus = messageFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(msgStatus, std::future_status::ready) << "Message response timed out";
 
     nlohmann::json receivedMsg = messageFuture.get();
@@ -212,12 +216,12 @@ TEST_F(TransportUTest, ConnectionFailure)
     Firebolt::Error err = transport.connect("ws://localhost:49151", onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = connectedFuture.wait_for(std::chrono::seconds(3));
+    auto status = connectedFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "onConnectionChange callback timed out";
 
     EXPECT_FALSE(connectedFuture.get());
 
-    auto errorStatus = errorFuture.wait_for(std::chrono::seconds(1));
+    auto errorStatus = errorFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(errorStatus, std::future_status::ready) << "Error promise timed out";
 
     EXPECT_NE(errorFuture.get(), Firebolt::Error::None);
@@ -247,7 +251,7 @@ TEST_F(TransportIntegrationUTest, ConnectWhenAlreadyConnected)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = firstConnectionFuture.wait_for(std::chrono::seconds(2));
+    auto status = firstConnectionFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "Initial connection timed out";
     ASSERT_EQ(connectionChangeCount, 1);
 
@@ -350,10 +354,10 @@ TEST_F(TransportCustomServerUTest, ServerClosesConnection)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto openStatus = connectionOpenedFuture.wait_for(std::chrono::seconds(2));
+    auto openStatus = connectionOpenedFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(openStatus, std::future_status::ready) << "onOpen event timed out";
 
-    auto closeStatus = connectionClosedFuture.wait_for(std::chrono::seconds(2));
+    auto closeStatus = connectionClosedFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(closeStatus, std::future_status::ready) << "onClose event timed out";
 }
 
@@ -401,7 +405,7 @@ TEST_F(TransportCustomServerUTest, SendAfterServerDisconnect)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    ASSERT_EQ(connectionOpenedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready)
+    ASSERT_EQ(connectionOpenedFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
         << "Client connection timed out";
 
     nlohmann::json params;
@@ -409,16 +413,176 @@ TEST_F(TransportCustomServerUTest, SendAfterServerDisconnect)
     err = transport.send("test.method", params, transport.getNextMessageID());
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    ASSERT_EQ(messageReceivedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready)
+    ASSERT_EQ(messageReceivedFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
         << "Server did not receive the message in time";
 
-    ASSERT_EQ(connectionClosedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready)
+    ASSERT_EQ(connectionClosedFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
         << "Client did not detect server-initiated disconnection";
 
     err = transport.send("test.method.fail", params, transport.getNextMessageID());
     EXPECT_EQ(err, Firebolt::Error::NotConnected);
 
     transport.disconnect();
+}
+
+// ---- Regression test: disconnect() must not hang when the server ignores the close handshake ----
+//
+// Root cause: disconnect() called client_->close() (async) then immediately joined the ASIO
+// thread.  websocketpp's default close_handshake_timeout is 5 s, so if the gateway process
+// was hung (TCP connection alive but no frames processed) the call would block for 5 s.
+//
+// Fix: set con->set_close_handshake_timeout(100) just before calling close(), capping the
+// wait at 100ms.  This test asserts the whole call returns in under 3 s.
+//
+// The server used here is a minimal raw TCP server that performs the WebSocket HTTP upgrade
+// then reads all incoming bytes into /dev/null without ever replying — exactly what happens
+// when a gateway process freezes with the TCP connection still open.
+namespace
+{
+namespace asio = websocketpp::lib::asio;
+
+class SilentAfterUpgradeServer
+{
+public:
+    explicit SilentAfterUpgradeServer()
+    {
+        m_acceptor.open(asio::ip::tcp::v4());
+        m_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true));
+        m_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
+        m_acceptor.listen();
+    }
+
+    uint16_t port() const { return m_acceptor.local_endpoint().port(); }
+
+    ~SilentAfterUpgradeServer() { stop(); }
+
+    void start()
+    {
+        accept();
+        m_thread = std::thread([this] { m_ioc.run(); });
+    }
+
+    void stop()
+    {
+        m_ioc.stop();
+        if (m_thread.joinable())
+            m_thread.join();
+    }
+
+private:
+    void accept()
+    {
+        m_acceptor.async_accept(
+            [this](websocketpp::lib::error_code ec, asio::ip::tcp::socket sock)
+            {
+                if (ec)
+                    return;
+                doUpgrade(std::make_shared<asio::ip::tcp::socket>(std::move(sock)));
+            });
+    }
+
+    void doUpgrade(std::shared_ptr<asio::ip::tcp::socket> sock)
+    {
+        auto buf = std::make_shared<asio::streambuf>();
+        asio::async_read_until(*sock, *buf, "\r\n\r\n",
+                               [this, sock, buf](websocketpp::lib::error_code ec, size_t)
+                               {
+                                   if (ec)
+                                       return;
+                                   std::istream stream(buf.get());
+                                   std::string line;
+                                   std::string wsKey;
+                                   while (std::getline(stream, line))
+                                   {
+                                       const std::string header = "Sec-WebSocket-Key:";
+                                       if (line.find(header) != std::string::npos)
+                                       {
+                                           wsKey = line.substr(line.find(':') + 2);
+                                           wsKey.erase(wsKey.find_last_not_of(" \t\r\n") + 1);
+                                       }
+                                   }
+                                   sendUpgradeResponse(sock, wsKey);
+                               });
+    }
+
+    void sendUpgradeResponse(std::shared_ptr<asio::ip::tcp::socket> sock, const std::string& wsKey)
+    {
+        const std::string combined = wsKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        unsigned char sha1Digest[20];
+        websocketpp::sha1::calc(combined.c_str(), static_cast<int>(combined.size()), sha1Digest);
+        const std::string accept = websocketpp::base64_encode(sha1Digest, 20);
+
+        auto response = std::make_shared<std::string>("HTTP/1.1 101 Switching Protocols\r\n"
+                                                      "Upgrade: websocket\r\n"
+                                                      "Connection: Upgrade\r\n"
+                                                      "Sec-WebSocket-Accept: " +
+                                                      accept + "\r\n\r\n");
+
+        asio::async_write(*sock, asio::buffer(*response),
+                          [this, sock, response](websocketpp::lib::error_code ec, size_t)
+                          {
+                              if (ec)
+                                  return;
+                              // Upgrade done. Read forever and discard — never send a CLOSE response.
+                              discardForever(sock);
+                          });
+    }
+
+    void discardForever(std::shared_ptr<asio::ip::tcp::socket> sock)
+    {
+        auto buf = std::make_shared<std::array<char, 1024>>();
+        sock->async_read_some(asio::buffer(*buf),
+                              [this, sock, buf](websocketpp::lib::error_code ec, size_t)
+                              {
+                                  if (ec)
+                                      return;
+                                  discardForever(sock);
+                              });
+    }
+
+    asio::io_context m_ioc;
+    asio::ip::tcp::acceptor m_acceptor{m_ioc};
+    std::thread m_thread;
+};
+} // namespace
+
+TEST(TransportDisconnectTimeoutComponentTest, DisconnectDoesNotHangWhenServerIgnoresCloseHandshake)
+{
+    SilentAfterUpgradeServer silentServer;
+    silentServer.start();
+    const uint16_t port = silentServer.port();
+
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+    std::atomic<bool> promiseSet{false};
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        bool expected = false;
+        if (promiseSet.compare_exchange_strong(expected, true))
+            connectionPromise.set_value(connected);
+    };
+    auto onMessage = [](const nlohmann::json& /*msg*/) {};
+
+    ASSERT_EQ(transport.connect("ws://localhost:" + std::to_string(port), onMessage, onConnectionChange),
+              Firebolt::Error::None);
+
+    auto connStatus = connectionFuture.wait_for(std::chrono::milliseconds(150));
+    ASSERT_EQ(connStatus, std::future_status::ready) << "Transport never connected to silent server";
+    ASSERT_TRUE(connectionFuture.get());
+
+    // disconnect() sends a CLOSE frame; the silent server reads the bytes but never replies.
+    // Without the timeout cap this would block for websocketpp's default 5 seconds.
+    // The fix sets close_handshake_timeout(2000), so this must return well under 3 s.
+    const auto start = std::chrono::steady_clock::now();
+    const Firebolt::Error err = transport.disconnect();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_EQ(err, Firebolt::Error::None);
+    EXPECT_LT(elapsed, std::chrono::seconds(3))
+        << "disconnect() blocked for " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
+        << " ms — close-handshake timeout was not applied (expected < 3000 ms)";
 }
 
 TEST_F(TransportIntegrationUTest, SendWithEmptyParams)
@@ -442,7 +606,7 @@ TEST_F(TransportIntegrationUTest, SendWithEmptyParams)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
     ASSERT_TRUE(connectionFuture.get());
 
@@ -451,7 +615,7 @@ TEST_F(TransportIntegrationUTest, SendWithEmptyParams)
     err = transport.send("test.method.empty", emptyParams, msgId);
     EXPECT_EQ(err, Firebolt::Error::None);
 
-    auto msgStatus = messageFuture.wait_for(std::chrono::seconds(2));
+    auto msgStatus = messageFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(msgStatus, std::future_status::ready) << "Message response timed out";
 
     nlohmann::json receivedMsg = messageFuture.get();
@@ -507,12 +671,13 @@ TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
 
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
-    ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready) << "Connection timed out";
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
+        << "Connection timed out";
 
     err = transport.send("test.method", {}, transport.getNextMessageID());
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    ASSERT_EQ(malformedMessageSentFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready)
+    ASSERT_EQ(malformedMessageSentFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
         << "Server did not send malformed message in time";
 
     nlohmann::json params = {{"key", "value"}};
@@ -520,7 +685,7 @@ TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
     err = transport.send("test.method.valid", params, validMsgId);
     EXPECT_EQ(err, Firebolt::Error::None);
 
-    auto msgStatus = validMessageFuture.wait_for(std::chrono::seconds(2));
+    auto msgStatus = validMessageFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(msgStatus, std::future_status::ready)
         << "Did not receive the valid message. The transport may have crashed or closed.";
 

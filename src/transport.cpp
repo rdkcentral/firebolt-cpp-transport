@@ -20,6 +20,7 @@
 #include "firebolt/logger.h"
 #include "firebolt/types.h"
 #include <assert.h>
+#include <memory>
 
 namespace Firebolt::Transport
 {
@@ -217,6 +218,21 @@ Firebolt::Error Transport::disconnect()
 
     if (connectionStatus_ == TransportState::Connected)
     {
+        // Shorten the close-handshake timeout so that join() below does not block
+        // for the full websocketpp default (5 s) if the gateway is unresponsive.
+        // get_con_from_hdl() throws bad_weak_ptr when the connection has already
+        // been torn down at the network level, in which case close() will fail
+        // gracefully via its error_code path.
+        try
+        {
+            auto con = client_->get_con_from_hdl(connectionHandle_);
+            con->set_close_handshake_timeout(100);
+        }
+        catch (const std::bad_weak_ptr& ex)
+        {
+            FIREBOLT_LOG_WARNING("Transport", "Could not set close handshake timeout: %s", ex.what());
+        }
+
         websocketpp::lib::error_code ec;
         client_->close(connectionHandle_, websocketpp::close::status::going_away, "", ec);
         if (ec)
