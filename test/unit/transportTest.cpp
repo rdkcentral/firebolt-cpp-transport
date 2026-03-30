@@ -431,8 +431,8 @@ TEST_F(TransportCustomServerUTest, SendAfterServerDisconnect)
 // thread.  websocketpp's default close_handshake_timeout is 5 s, so if the gateway process
 // was hung (TCP connection alive but no frames processed) the call would block for 5 s.
 //
-// Fix: set con->set_close_handshake_timeout(2000) just before calling close(), capping the
-// wait at 2 s.  This test asserts the whole call returns in under 3 s.
+// Fix: set con->set_close_handshake_timeout(100) just before calling close(), capping the
+// wait at 100ms.  This test asserts the whole call returns in under 3 s.
 //
 // The server used here is a minimal raw TCP server that performs the WebSocket HTTP upgrade
 // then reads all incoming bytes into /dev/null without ever replying — exactly what happens
@@ -606,7 +606,7 @@ TEST_F(TransportIntegrationUTest, SendWithEmptyParams)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(200));
     ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
     ASSERT_TRUE(connectionFuture.get());
 
@@ -615,7 +615,7 @@ TEST_F(TransportIntegrationUTest, SendWithEmptyParams)
     err = transport.send("test.method.empty", emptyParams, msgId);
     EXPECT_EQ(err, Firebolt::Error::None);
 
-    auto msgStatus = messageFuture.wait_for(std::chrono::seconds(2));
+    auto msgStatus = messageFuture.wait_for(std::chrono::milliseconds(200));
     ASSERT_EQ(msgStatus, std::future_status::ready) << "Message response timed out";
 
     nlohmann::json receivedMsg = messageFuture.get();
@@ -671,12 +671,13 @@ TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
 
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
-    ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready) << "Connection timed out";
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::milliseconds(200)), std::future_status::ready)
+        << "Connection timed out";
 
     err = transport.send("test.method", {}, transport.getNextMessageID());
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    ASSERT_EQ(malformedMessageSentFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready)
+    ASSERT_EQ(malformedMessageSentFuture.wait_for(std::chrono::milliseconds(200)), std::future_status::ready)
         << "Server did not send malformed message in time";
 
     nlohmann::json params = {{"key", "value"}};
@@ -684,7 +685,7 @@ TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
     err = transport.send("test.method.valid", params, validMsgId);
     EXPECT_EQ(err, Firebolt::Error::None);
 
-    auto msgStatus = validMessageFuture.wait_for(std::chrono::seconds(2));
+    auto msgStatus = validMessageFuture.wait_for(std::chrono::milliseconds(200));
     ASSERT_EQ(msgStatus, std::future_status::ready)
         << "Did not receive the valid message. The transport may have crashed or closed.";
 
