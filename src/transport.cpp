@@ -20,6 +20,7 @@
 #include "firebolt/logger.h"
 #include "firebolt/types.h"
 #include <assert.h>
+#include <memory>
 
 namespace Firebolt::Transport
 {
@@ -227,7 +228,7 @@ Firebolt::Error Transport::disconnect()
             auto con = client_->get_con_from_hdl(connectionHandle_);
             con->set_close_handshake_timeout(2000);
         }
-        catch (const std::exception& ex)
+        catch (const std::bad_weak_ptr& ex)
         {
             FIREBOLT_LOG_WARNING("Transport", "Could not set close handshake timeout: %s", ex.what());
         }

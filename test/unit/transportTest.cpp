@@ -19,6 +19,7 @@
 #include "transport.h"
 #include <array>
 #include <chrono>
+#include <future>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -443,12 +444,17 @@ namespace asio = websocketpp::lib::asio;
 class SilentAfterUpgradeServer
 {
 public:
-    explicit SilentAfterUpgradeServer(uint16_t port)
+    explicit SilentAfterUpgradeServer()
     {
         m_acceptor.open(asio::ip::tcp::v4());
         m_acceptor.set_option(asio::ip::tcp::acceptor::reuse_address(true));
-        m_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port));
+        m_acceptor.bind(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 0));
         m_acceptor.listen();
+    }
+
+    uint16_t port() const
+    {
+        return m_acceptor.local_endpoint().port();
     }
 
     ~SilentAfterUpgradeServer() { stop(); }
@@ -545,8 +551,9 @@ private:
 
 TEST(TransportDisconnectTimeoutComponentTest, DisconnectDoesNotHangWhenServerIgnoresCloseHandshake)
 {
-    SilentAfterUpgradeServer silentServer(9005);
+    SilentAfterUpgradeServer silentServer;
     silentServer.start();
+    const uint16_t port = silentServer.port();
 
     Transport transport;
     std::promise<bool> connectionPromise;
@@ -561,7 +568,7 @@ TEST(TransportDisconnectTimeoutComponentTest, DisconnectDoesNotHangWhenServerIgn
     };
     auto onMessage = [](const nlohmann::json& /*msg*/) {};
 
-    ASSERT_EQ(transport.connect("ws://localhost:9005", onMessage, onConnectionChange), Firebolt::Error::None);
+    ASSERT_EQ(transport.connect("ws://localhost:" + std::to_string(port), onMessage, onConnectionChange), Firebolt::Error::None);
 
     auto connStatus = connectionFuture.wait_for(std::chrono::seconds(3));
     ASSERT_EQ(connStatus, std::future_status::ready) << "Transport never connected to silent server";
