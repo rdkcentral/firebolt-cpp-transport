@@ -138,7 +138,7 @@ TEST_F(TransportIntegrationUTest, ConnectAndDisconnect)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
     EXPECT_TRUE(connectionFuture.get());
 
@@ -167,7 +167,7 @@ TEST_F(TransportIntegrationUTest, SendAndReceiveMessage)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
     ASSERT_TRUE(connectionFuture.get());
 
@@ -176,7 +176,7 @@ TEST_F(TransportIntegrationUTest, SendAndReceiveMessage)
     err = transport.send("test.method", params, msgId);
     EXPECT_EQ(err, Firebolt::Error::None);
 
-    auto msgStatus = messageFuture.wait_for(std::chrono::seconds(2));
+    auto msgStatus = messageFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(msgStatus, std::future_status::ready) << "Message response timed out";
 
     nlohmann::json receivedMsg = messageFuture.get();
@@ -216,12 +216,12 @@ TEST_F(TransportUTest, ConnectionFailure)
     Firebolt::Error err = transport.connect("ws://localhost:49151", onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = connectedFuture.wait_for(std::chrono::seconds(3));
+    auto status = connectedFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "onConnectionChange callback timed out";
 
     EXPECT_FALSE(connectedFuture.get());
 
-    auto errorStatus = errorFuture.wait_for(std::chrono::seconds(1));
+    auto errorStatus = errorFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(errorStatus, std::future_status::ready) << "Error promise timed out";
 
     EXPECT_NE(errorFuture.get(), Firebolt::Error::None);
@@ -251,7 +251,7 @@ TEST_F(TransportIntegrationUTest, ConnectWhenAlreadyConnected)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = firstConnectionFuture.wait_for(std::chrono::seconds(2));
+    auto status = firstConnectionFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "Initial connection timed out";
     ASSERT_EQ(connectionChangeCount, 1);
 
@@ -354,10 +354,10 @@ TEST_F(TransportCustomServerUTest, ServerClosesConnection)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto openStatus = connectionOpenedFuture.wait_for(std::chrono::seconds(2));
+    auto openStatus = connectionOpenedFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(openStatus, std::future_status::ready) << "onOpen event timed out";
 
-    auto closeStatus = connectionClosedFuture.wait_for(std::chrono::seconds(2));
+    auto closeStatus = connectionClosedFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(closeStatus, std::future_status::ready) << "onClose event timed out";
 }
 
@@ -405,7 +405,7 @@ TEST_F(TransportCustomServerUTest, SendAfterServerDisconnect)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    ASSERT_EQ(connectionOpenedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready)
+    ASSERT_EQ(connectionOpenedFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
         << "Client connection timed out";
 
     nlohmann::json params;
@@ -413,10 +413,10 @@ TEST_F(TransportCustomServerUTest, SendAfterServerDisconnect)
     err = transport.send("test.method", params, transport.getNextMessageID());
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    ASSERT_EQ(messageReceivedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready)
+    ASSERT_EQ(messageReceivedFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
         << "Server did not receive the message in time";
 
-    ASSERT_EQ(connectionClosedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready)
+    ASSERT_EQ(connectionClosedFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
         << "Client did not detect server-initiated disconnection";
 
     err = transport.send("test.method.fail", params, transport.getNextMessageID());
@@ -568,7 +568,7 @@ TEST(TransportDisconnectTimeoutComponentTest, DisconnectDoesNotHangWhenServerIgn
     ASSERT_EQ(transport.connect("ws://localhost:" + std::to_string(port), onMessage, onConnectionChange),
               Firebolt::Error::None);
 
-    auto connStatus = connectionFuture.wait_for(std::chrono::seconds(3));
+    auto connStatus = connectionFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(connStatus, std::future_status::ready) << "Transport never connected to silent server";
     ASSERT_TRUE(connectionFuture.get());
 
@@ -606,7 +606,7 @@ TEST_F(TransportIntegrationUTest, SendWithEmptyParams)
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    auto status = connectionFuture.wait_for(std::chrono::milliseconds(200));
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
     ASSERT_TRUE(connectionFuture.get());
 
@@ -615,7 +615,7 @@ TEST_F(TransportIntegrationUTest, SendWithEmptyParams)
     err = transport.send("test.method.empty", emptyParams, msgId);
     EXPECT_EQ(err, Firebolt::Error::None);
 
-    auto msgStatus = messageFuture.wait_for(std::chrono::milliseconds(200));
+    auto msgStatus = messageFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(msgStatus, std::future_status::ready) << "Message response timed out";
 
     nlohmann::json receivedMsg = messageFuture.get();
@@ -671,13 +671,13 @@ TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
 
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
-    ASSERT_EQ(connectionFuture.wait_for(std::chrono::milliseconds(200)), std::future_status::ready)
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
         << "Connection timed out";
 
     err = transport.send("test.method", {}, transport.getNextMessageID());
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    ASSERT_EQ(malformedMessageSentFuture.wait_for(std::chrono::milliseconds(200)), std::future_status::ready)
+    ASSERT_EQ(malformedMessageSentFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
         << "Server did not send malformed message in time";
 
     nlohmann::json params = {{"key", "value"}};
@@ -685,7 +685,7 @@ TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
     err = transport.send("test.method.valid", params, validMsgId);
     EXPECT_EQ(err, Firebolt::Error::None);
 
-    auto msgStatus = validMessageFuture.wait_for(std::chrono::milliseconds(200));
+    auto msgStatus = validMessageFuture.wait_for(std::chrono::milliseconds(150));
     ASSERT_EQ(msgStatus, std::future_status::ready)
         << "Did not receive the valid message. The transport may have crashed or closed.";
 

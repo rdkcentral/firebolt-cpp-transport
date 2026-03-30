@@ -12,7 +12,7 @@ if ! docker image inspect "$IMAGE" &>/dev/null; then
     docker build -t "$IMAGE" -f "$SCRIPT_DIR/.github/Dockerfile" "$SCRIPT_DIR"
 fi
 
-RUN="docker run --rm -v $SCRIPT_DIR:/workspace $IMAGE bash -c"
+RUN="docker run --rm --user $(id -u):$(id -g) -v $SCRIPT_DIR:/workspace $IMAGE bash -c"
 
 if [[ "${1:-}" == "--fix" ]]; then
     $RUN "git config --global --add safe.directory /workspace && git ls-files -- '*.cpp' '*.h' | xargs clang-format -i"
