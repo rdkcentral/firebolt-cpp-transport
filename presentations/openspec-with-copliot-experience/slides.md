@@ -39,10 +39,10 @@ flowchart LR
   subgraph Spec_and_Planning["(Requirements +  Architecture)"]
     A[Explore]
     B[Propose]
-    A --> B
+    A <--> B
   end
   
-  B --> C
+  B <--> C
   subgraph Implementation["(Code + Tests)"]
     C[Apply]
   end
@@ -196,10 +196,16 @@ https://github.com/rdkcentral/firebolt-cpp-transport/tree/feature/openspec
 - AI accelerates structured change management
 - OpenSpec ensures traceability and review
 - AI agents improve productivity and documentation
-- AI + Openspec also powers Slidev for presentations (Thanks to #comcast-ai-community
+- AI + Openspec also powers Slidev for presentations(Thanks to #comcast-ai-community
 )
   - Current slides are Auto Generated from OpenSpec and Copilot chat conversations.
   - Multiple Reusable Skills generated for creating slides based on the effort
+   ```sh
+    $ /init-slidev-presentation "openspec-with-copliot-experience" --content "slides.md"
+    $ /add-slide "openspec-with-copliot-experience" --content "slides.md" --slideTitle "Slide Title"
+    $ /add-diagram "openspec-with-copliot-experience" --content "slides.md" --diagramCode "mermaid code here"
+    $ /export-slidev-presentation "openspec-with-copliot-experience" --format pdf
+  ```
 
 ---
 
@@ -207,7 +213,7 @@ https://github.com/rdkcentral/firebolt-cpp-transport/tree/feature/openspec
 
 - Share learning with team.
 - RDK-E Middleware Crews will expand usage of OpenSpec.
-- Continue integrating AI into other repositories and workflows
+- Continue integrating SDD into other repositories and workflows
 
 
 # Q&A
