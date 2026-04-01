@@ -34,7 +34,7 @@ if $use_docker; then
     _cache="$SCRIPT_DIR/$_bdir/CMakeCache.txt"
     if [[ -f "$_cache" ]]; then
       _cached=$(grep '^CMAKE_HOME_DIRECTORY' "$_cache" 2>/dev/null | cut -d= -f2 || true)
-      if [[ -n "$_cached" && "$_cached" != "/workspace" ]]; then
+      if [[ -n "$_cached" && "$_cached" != "$SCRIPT_DIR" ]]; then
         echo "Wiping stale $_bdir (configured at $_cached)..."
         rm -rf "$SCRIPT_DIR/$_bdir"
       fi
@@ -86,7 +86,16 @@ SYSROOT_PATH="${SYSROOT_PATH:-/}"
 
 $cleanFirst && rm -rf $bdir
 
-if [[ ! -e "$bdir" || -n "$@" ]]; then
+_cache="$SCRIPT_DIR/$bdir/CMakeCache.txt"
+if [[ -f "$_cache" ]]; then
+  _cached=$(grep '^CMAKE_HOME_DIRECTORY' "$_cache" 2>/dev/null | cut -d= -f2 || true)
+  if [[ -n "$_cached" && "$_cached" != "$SCRIPT_DIR" ]]; then
+    echo "Wiping stale $bdir (configured at $_cached, now at $SCRIPT_DIR)..."
+    rm -rf "$SCRIPT_DIR/$bdir"
+  fi
+fi
+
+if [[ ! -f "$bdir/CMakeCache.txt" || -n "$@" ]]; then
   params+=" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
   command -v ccache >/dev/null 2>&1 && params+=" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
   cmake -B $bdir \

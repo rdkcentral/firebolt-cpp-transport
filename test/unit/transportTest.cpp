@@ -696,3 +696,217 @@ TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
     err = transport.disconnect();
     EXPECT_EQ(err, Firebolt::Error::None);
 }
+
+// Regression test for RDKEMW-16441: connecting via a numeric loopback IP
+// (e.g. ws://127.0.0.1) must succeed even when external network interfaces
+// are all down (no eth0/wifi).
+//
+// Root cause: websocketpp's resolver::query used default flags which include
+// AI_ADDRCONFIG.  On RDK STBs with no active external interface,
+// getaddrinfo("127.0.0.1") returned HOST_NOT_FOUND because AI_ADDRCONFIG
+// requires at least one configured non-loopback interface.
+//
+// Fix: src/vendor/websocketpp/transport/asio/endpoint.hpp detects numeric-IP
+// hosts via asio::ip::address::from_string() and passes
+// resolver::query::numeric_host (AI_NUMERICHOST), which bypasses AI_ADDRCONFIG.
+//
+// This test uses ws://127.0.0.1 (not "localhost") to exercise the numeric
+// resolver path.  In CI (Docker, loopback always up) it passes either way.
+// To reproduce the original STB failure, run under
+// test/integration/test-no-network.sh which uses `unshare --net`.
+class TransportNumericIPUTest : public ::testing::Test
+{
+protected:
+    using server = websocketpp::server<websocketpp::config::asio>;
+    using connection_hdl = websocketpp::connection_hdl;
+
+    server m_server;
+    std::unique_ptr<std::thread> m_serverThread;
+    const std::string m_uri = "ws://127.0.0.1:9005";
+
+    void SetUp() override
+    {
+        m_server.init_asio();
+        m_server.set_reuse_addr(true);
+        m_server.clear_access_channels(websocketpp::log::alevel::all);
+        m_server.set_message_handler(
+            [this](connection_hdl hdl, server::message_ptr msg)
+            {
+                try { m_server.send(hdl, msg->get_payload(), msg->get_opcode()); }
+                catch (...) {}
+            });
+        m_server.listen(websocketpp::lib::asio::ip::tcp::endpoint(
+            websocketpp::lib::asio::ip::address::from_string("127.0.0.1"), 9005));
+        m_server.start_accept();
+        m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+    }
+
+    void TearDown() override
+    {
+        m_server.stop_listening();
+        m_server.stop();
+        if (m_serverThread && m_serverThread->joinable())
+        {
+            m_serverThread->join();
+        }
+    }
+};
+
+TEST_F(TransportNumericIPUTest, ConnectViaNumericLoopbackIP)
+{
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+    std::atomic<bool> promiseSet{false};
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (!promiseSet.exchange(true))
+        {
+            connectionPromise.set_value(connected);
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& /*msg*/) {};
+
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(500));
+    ASSERT_EQ(status, std::future_status::ready)
+        << "Connection to ws://127.0.0.1 timed out -- "
+           "AI_ADDRCONFIG bypass may be missing (see RDKEMW-16441)";
+    EXPECT_TRUE(connectionFuture.get());
+
+    err = transport.disconnect();
+    EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+// Full data round-trip over a numeric IP.  The existing ConnectViaNumericLoopbackIP
+// test only checks connection establishment; this one also exercises send/receive.
+TEST_F(TransportNumericIPUTest, SendAndReceiveViaNumericIP)
+{
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+    std::promise<nlohmann::json> messagePromise;
+    auto messageFuture = messagePromise.get_future();
+    std::atomic<bool> connPromiseSet{false};
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (!connPromiseSet.exchange(true))
+            connectionPromise.set_value(connected);
+    };
+    auto onMessage = [&](const nlohmann::json& msg) { messagePromise.set_value(msg); };
+
+    ASSERT_EQ(transport.connect(m_uri, onMessage, onConnectionChange), Firebolt::Error::None);
+
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
+        << "Connection to ws://127.0.0.1 timed out (RDKEMW-16441)";
+    ASSERT_TRUE(connectionFuture.get());
+
+    nlohmann::json params = {{"key", "value"}};
+    unsigned msgId = transport.getNextMessageID();
+    ASSERT_EQ(transport.send("test.method", params, msgId), Firebolt::Error::None);
+
+    ASSERT_EQ(messageFuture.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
+        << "Echo reply timed out";
+    nlohmann::json received = messageFuture.get();
+    EXPECT_EQ(received["id"], msgId);
+    EXPECT_EQ(received["method"], "test.method");
+    EXPECT_EQ(received["params"]["key"], "value");
+
+    EXPECT_EQ(transport.disconnect(), Firebolt::Error::None);
+}
+
+// Error path: onConnectionChange(false) must fire promptly when nothing is listening
+// on the numeric IP — verifies the resolver error path through numeric_host flag.
+TEST(TransportNumericIPResolverTest, ConnectFailureViaNumericIP)
+{
+    Transport transport;
+    std::promise<bool> connectedPromise;
+    auto connectedFuture = connectedPromise.get_future();
+    std::promise<Firebolt::Error> errorPromise;
+    auto errorFuture = errorPromise.get_future();
+    std::atomic<bool> promiseSet{false};
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& err)
+    {
+        if (!promiseSet.exchange(true))
+        {
+            connectedPromise.set_value(connected);
+            if (!connected)
+                errorPromise.set_value(err);
+        }
+    };
+    auto onMessage = [](const nlohmann::json& /*msg*/)
+    { FAIL() << "Should not receive a message on a failed connection"; };
+
+    ASSERT_EQ(transport.connect("ws://127.0.0.1:49152", onMessage, onConnectionChange),
+              Firebolt::Error::None);
+
+    ASSERT_EQ(connectedFuture.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
+        << "onConnectionChange callback timed out";
+    EXPECT_FALSE(connectedFuture.get());
+
+    ASSERT_EQ(errorFuture.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+    EXPECT_NE(errorFuture.get(), Firebolt::Error::None);
+}
+
+// IPv6 loopback: ws://[::1]:9006
+// asio::ip::address::from_string("::1") succeeds, so numeric_host is used and
+// AI_ADDRCONFIG is bypassed — same fix path as 127.0.0.1 but exercising IPv6.
+class TransportIPv6UTest : public ::testing::Test
+{
+protected:
+    using server = websocketpp::server<websocketpp::config::asio>;
+    using connection_hdl = websocketpp::connection_hdl;
+
+    server m_server;
+    std::unique_ptr<std::thread> m_serverThread;
+    const std::string m_uri = "ws://[::1]:9006";
+
+    void SetUp() override
+    {
+        m_server.init_asio();
+        m_server.set_reuse_addr(true);
+        m_server.clear_access_channels(websocketpp::log::alevel::all);
+        m_server.listen(websocketpp::lib::asio::ip::tcp::endpoint(
+            websocketpp::lib::asio::ip::address::from_string("::1"), 9006));
+        m_server.start_accept();
+        m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+    }
+
+    void TearDown() override
+    {
+        m_server.stop_listening();
+        m_server.stop();
+        if (m_serverThread && m_serverThread->joinable())
+            m_serverThread->join();
+    }
+};
+
+TEST_F(TransportIPv6UTest, ConnectViaIPv6LoopbackIP)
+{
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+    std::atomic<bool> promiseSet{false};
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (!promiseSet.exchange(true))
+            connectionPromise.set_value(connected);
+    };
+    auto onMessage = [](const nlohmann::json& /*msg*/) {};
+
+    ASSERT_EQ(transport.connect(m_uri, onMessage, onConnectionChange), Firebolt::Error::None);
+
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
+        << "Connection to ws://[::1] timed out -- "
+           "AI_ADDRCONFIG bypass may be missing for IPv6 numeric addresses (RDKEMW-16441)";
+    EXPECT_TRUE(connectionFuture.get());
+
+    EXPECT_EQ(transport.disconnect(), Firebolt::Error::None);
+}

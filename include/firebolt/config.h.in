@@ -73,6 +73,22 @@ struct Config
 
     /** Watchdog polling cycle in milliseconds. Default: 500. */
     unsigned watchdogCycle_ms = 500;
+
+    /**
+     * @brief Retry policy for the initial gateway connection.
+     *
+     * On embedded devices the Firebolt client may start before the gateway
+     * daemon is ready (poor systemd ordering) or before the loopback interface
+     * has an IPv4 address assigned.  Setting reconnect_max_attempts > 0 causes
+     * connect() to retry up to that many times, waiting reconnect_delay_ms
+     * between each attempt, before returning an error to the caller.
+     *
+     * Default: 0 (no retry, preserves the previous behaviour).
+     */
+    unsigned reconnect_max_attempts = 0;
+
+    /** Milliseconds to wait between reconnect attempts. Default: 1000. */
+    unsigned reconnect_delay_ms = 1000;
 };
 
 } // namespace Firebolt
