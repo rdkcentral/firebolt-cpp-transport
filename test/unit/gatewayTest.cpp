@@ -17,6 +17,7 @@
  */
 
 #include "firebolt/gateway.h"
+#include "firebolt/logger.h"
 #include "utils.h"
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -152,7 +153,7 @@ protected:
     {
         Firebolt::Config cfg;
         cfg.wsUrl = m_uri;
-        cfg.log.level = Firebolt::LogLevel::Error;
+        cfg.log.level = Firebolt::LogLevel::Debug;
         cfg.waitTime_ms = 1000;
         return cfg;
     }
@@ -591,4 +592,109 @@ TEST_F(GatewayUTest, UnsubscribeFromCallbackDoesNotDeadlock)
 
     auto status = doneFuture.wait_for(std::chrono::seconds(2));
     EXPECT_EQ(status, std::future_status::ready) << "Callback blocked (possible deadlock)";
+}
+
+// ---------------------------------------------------------------------------
+// Regression test: disconnect() must return quickly even when the server dies
+// while active subscriptions are held.
+//
+// Repro scenario (RDKEMW-16573):
+//   1. Client subscribes to an event (gateway sends subscribe ACK)
+//   2. Server disappears abruptly (no WS close handshake, no unsubscribe ACK)
+//   3. Client calls disconnect()
+//
+// Before the fix: disconnect() blocked for ~waitTime_ms per subscription
+// (request(...).get() inside unsubscribe() held the calling thread).
+//
+// After the fix: disconnect() uses wait_for(50ms) ceilings and returns in
+// well under 500ms regardless of server responsiveness.
+//
+// The test asserts disconnect() completes within 500ms (generous allowance).
+// On an unpatched build it will take >= waitTime_ms (1000ms default) and fail.
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, DisconnectDoesNotHangWhenServerDisappearsWithActiveSubscription)
+{
+    // Use a silent message handler so subscribe ACK is sent but unsubscribe ACK
+    // is intentionally never sent (simulates server dying after the subscription).
+    bool subscribeAckSent = false;
+    m_messageHandler = [this, &subscribeAckSent](connection_hdl hdl, server::message_ptr msg)
+    {
+        auto request = nlohmann::json::parse(msg->get_payload());
+        const std::string method = request.value("method", "");
+
+        // Ack the subscribe so the client considers it active.
+        if (!subscribeAckSent && method.find(".on") != std::string::npos)
+        {
+            nlohmann::json ack;
+            ack["jsonrpc"] = "2.0";
+            ack["id"] = request["id"];
+            ack["result"] = {{"listening", true}};
+            m_server.send(hdl, ack.dump(), msg->get_opcode());
+            subscribeAckSent = true;
+            return;
+        }
+        // All subsequent messages (including the unsubscribe request) get no reply.
+        // This simulates a dead server.
+    };
+
+    // Connect with a callback that mirrors the Sky app's log output.
+    // On device these appear as:
+    //   [Firebolt] FireboltService uninitialize
+    //   [Firebolt] Connection state changed: Disconnected, error=2
+    //   [Firebolt] Connection state changed: Disconnected end
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+    auto connectionFuture = m_connectionPromise.get_future();
+
+    Firebolt::Error err =
+        gateway.connect(getTestConfig(),
+                        [this](bool connected, const Firebolt::Error& error)
+                        {
+                            if (connected)
+                            {
+                                onConnectionChange(connected, error);
+                            }
+                            else
+                            {
+                                FIREBOLT_LOG_INFO("FireboltApp", "Connection state changed: Disconnected, error=%d",
+                                                  static_cast<int>(error));
+                                FIREBOLT_LOG_INFO("FireboltApp", "Connection state changed: Disconnected end");
+                            }
+                        });
+    ASSERT_EQ(err, Firebolt::Error::None);
+    connectionFuture.wait_for(std::chrono::seconds(2));
+
+    std::promise<nlohmann::json> eventPromise;
+    auto onEvent = [](void* usercb, const nlohmann::json& params)
+    { static_cast<std::promise<nlohmann::json>*>(usercb)->set_value(params); };
+
+    Firebolt::Error subErr = gateway.subscribe("test.onStateChanged", onEvent, &eventPromise);
+    ASSERT_EQ(subErr, Firebolt::Error::None) << "subscribe() failed";
+
+    // Give the subscribe ACK time to arrive.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Switch to a silent handler: server keeps the TCP connection open but
+    // never replies to anything (including unsubscribe ACKs).
+    // This is the on-device scenario: WPEFramework plugin stops responding
+    // without closing the socket.  The bug is in unsubscribe(): pre-fix calls
+    // request().get() which blocks indefinitely waiting for the ACK.
+    m_messageHandler = [](connection_hdl, server::message_ptr) { /* drop everything */ };
+
+    // Time unsubscribe() + disconnect() together.
+    // The hang is in unsubscribe(): pre-fix calls request().get() which blocks
+    // indefinitely waiting for the server's unsubscribe ACK (which never comes).
+    // With the bug: unsubscribe() blocks >= waitTime_ms (1000 ms).
+    // With the fix: unsubscribe() returns in <= 50 ms (wait_for ceiling).
+    FIREBOLT_LOG_INFO("FireboltApp", "FireboltService uninitialize");
+    auto t0 = std::chrono::steady_clock::now();
+    gateway.unsubscribe("test.onStateChanged", &eventPromise);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+
+    std::cout << "[timing] unsubscribe() took " << elapsed.count() << " ms\n";
+
+    gateway.disconnect();
+
+    EXPECT_LT(elapsed.count(), 200) << "unsubscribe() took " << elapsed.count()
+                                    << " ms — blocked waiting for ACK from silent server (bug reproduced)";
 }

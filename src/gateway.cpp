@@ -461,19 +461,36 @@ public:
 
     virtual Firebolt::Error disconnect() override
     {
+        FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() start");
+        auto t0_disc = std::chrono::steady_clock::now();
         Firebolt::Error status = transport.disconnect();
+        FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() done in %ld ms, status=%d",
+                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_disc)
+                              .count(),
+                          static_cast<int>(status));
         if (status != Firebolt::Error::None)
         {
             return status;
         }
         if (watchdogRunning.exchange(false))
         {
+            FIREBOLT_LOG_INFO("Gateway", "[disconnect] waiting for watchdog thread join...");
+            auto t0_wdog = std::chrono::steady_clock::now();
             if (watchdogThread.joinable())
             {
                 watchdogThread.join();
             }
+            FIREBOLT_LOG_INFO("Gateway", "[disconnect] watchdog joined in %ld ms",
+                              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                                    t0_wdog)
+                                  .count());
         }
+        FIREBOLT_LOG_INFO("Gateway", "[disconnect] stopping notification worker...");
+        auto t0_nw = std::chrono::steady_clock::now();
         server.stopNotificationWorker();
+        FIREBOLT_LOG_INFO("Gateway", "[disconnect] notification worker stopped in %ld ms",
+                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_nw)
+                              .count());
         return Error::None;
     }
 
@@ -512,7 +529,12 @@ public:
         nlohmann::json params;
         params["listen"] = true;
 
+        FIREBOLT_LOG_INFO("Gateway", "[subscribe] waiting for subscribe ACK for '%s'...", event.c_str());
+        auto t0_sub = std::chrono::steady_clock::now();
         auto result = request(event, params, id).get();
+        FIREBOLT_LOG_INFO("Gateway", "[subscribe] ACK for '%s' received in %ld ms", event.c_str(),
+                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_sub)
+                              .count());
 
         if (!result)
         {
@@ -533,9 +555,12 @@ public:
 
     Firebolt::Error unsubscribe(const std::string& event, void* usercb) override
     {
+        FIREBOLT_LOG_DEBUG("Gateway", "Unsubscribe called for event '%s'", event.c_str());
         Firebolt::Error status = server.unsubscribe(event, usercb);
+
         if (status != Firebolt::Error::None)
         {
+            FIREBOLT_LOG_DEBUG("Gateway", "Unsubscribe failed for event '%s'", event.c_str());
             return status;
         }
 
@@ -563,7 +588,13 @@ public:
 
         nlohmann::json params;
         params["listen"] = false;
+        FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] sending unsubscribe for '%s', waiting for ACK (waitTime_ms=%u)...",
+                          event.c_str(), runtime_waitTime_ms);
+        auto t0_unsub = std::chrono::steady_clock::now();
         auto result = request(event, params).get();
+        auto unsub_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
+        FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] ACK received after %ld ms", unsub_ms);
 
         if (!result)
         {
