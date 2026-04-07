@@ -612,6 +612,67 @@ TEST_F(GatewayUTest, UnsubscribeFromCallbackDoesNotDeadlock)
 // The test asserts disconnect() completes within 500ms (generous allowance).
 // On an unpatched build it will take >= waitTime_ms (1000ms default) and fail.
 // ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, SubscribeDoesNotHangWhenServerIgnoresSubscribeAck)
+{
+    // If the server never sends the subscribe ACK, subscribe() calls
+    // request().get() which blocks until checkPromises() fires the timeout
+    // after waitTime_ms (1000ms).  Pre-fix: FAILS with ~1000-1500ms.
+    // Post-fix (wait_for 50ms): PASSES with ~50ms.
+    //
+    // Setup: server drops all messages — it never replies to anything,
+    // including the subscribe frame.
+    m_messageHandler = [](connection_hdl, server::message_ptr) { /* drop everything */ };
+
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+    // Connection itself is at the WebSocket level (HTTP upgrade) — the server
+    // doesn't need to send a JSON-RPC message for connect() to succeed.
+    auto connectionFuture = m_connectionPromise.get_future();
+    Firebolt::Error err = gateway.connect(getTestConfig(), [this](bool connected, const Firebolt::Error& connErr)
+                                          { onConnectionChange(connected, connErr); });
+    ASSERT_EQ(err, Firebolt::Error::None);
+    connectionFuture.wait_for(std::chrono::seconds(2));
+
+    std::promise<nlohmann::json> eventPromise;
+    auto onEvent = [](void* usercb, const nlohmann::json& params)
+    { static_cast<std::promise<nlohmann::json>*>(usercb)->set_value(params); };
+
+    auto t0 = std::chrono::steady_clock::now();
+    Firebolt::Error subErr = gateway.subscribe("test.onStateChanged", onEvent, &eventPromise);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+
+    std::cout << "[timing] subscribe() (no ACK from server) took " << elapsed.count() << " ms\n";
+
+    // subscribe() should return error (no ACK) quickly, not hang for 1000ms.
+    EXPECT_NE(subErr, Firebolt::Error::None) << "subscribe() should fail when server ignores ACK";
+    EXPECT_LT(elapsed.count(), 200) << "subscribe() blocked for " << elapsed.count()
+                                    << " ms — waiting for ACK that never came (bug reproduced)";
+}
+
+TEST_F(GatewayUTest, WatchdogDoesNotHangOnDisconnect)
+{
+    // The watchdog thread loops with sleep_for(500ms) on the pre-fix baseline.
+    // When disconnect() sets watchdogRunning=false the thread is mid-sleep and
+    // takes up to 500ms to notice.  On hardware (Sky app) this shows as 312-416ms.
+    //
+    // This test verifies that disconnect() completes in < 100ms even when the
+    // watchdog is running.  Pre-fix: FAILS (~0-500ms, typically ~250ms).
+    // Post-fix (condition_variable): PASSES (< 5ms).
+    IGateway& gateway = connectAndWait();
+
+    // Ensure the watchdog is well into its sleep cycle before we disconnect.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    auto t0 = std::chrono::steady_clock::now();
+    gateway.disconnect();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+
+    std::cout << "[timing] disconnect() (watchdog running) took " << elapsed.count() << " ms\n";
+
+    EXPECT_LT(elapsed.count(), 100) << "disconnect() took " << elapsed.count()
+                                    << " ms — watchdog sleep_for(500ms) is blocking join (bug reproduced)";
+}
+
 TEST_F(GatewayUTest, DisconnectDoesNotHangWhenServerDisappearsWithActiveSubscription)
 {
     // Use a silent message handler so subscribe ACK is sent but unsubscribe ACK

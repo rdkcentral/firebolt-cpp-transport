@@ -382,6 +382,8 @@ private:
     Server server;
     std::thread watchdogThread;
     std::atomic<bool> watchdogRunning;
+    std::mutex watchdogMutex_;
+    std::condition_variable watchdogCv_;
     bool legacyRPCv1;
 
     std::map<MessageID, std::string> rpcv1_eventMap;
@@ -401,6 +403,7 @@ public:
         if (watchdogRunning)
         {
             watchdogRunning = false;
+            watchdogCv_.notify_one();
             if (watchdogThread.joinable())
             {
                 watchdogThread.join();
@@ -450,7 +453,11 @@ public:
                 {
                     while (watchdogRunning)
                     {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(watchdog_interval_ms));
+                        std::unique_lock<std::mutex> lock(watchdogMutex_);
+                        watchdogCv_.wait_for(lock, std::chrono::milliseconds(watchdog_interval_ms),
+                                             [this] { return !watchdogRunning.load(); });
+                        if (!watchdogRunning)
+                            break;
                         client.checkPromises();
                     }
                 });
@@ -474,6 +481,7 @@ public:
         }
         if (watchdogRunning.exchange(false))
         {
+            watchdogCv_.notify_one();
             FIREBOLT_LOG_INFO("Gateway", "[disconnect] waiting for watchdog thread join...");
             auto t0_wdog = std::chrono::steady_clock::now();
             if (watchdogThread.joinable())
@@ -531,14 +539,23 @@ public:
 
         FIREBOLT_LOG_INFO("Gateway", "[subscribe] waiting for subscribe ACK for '%s'...", event.c_str());
         auto t0_sub = std::chrono::steady_clock::now();
-        auto result = request(event, params, id).get();
-        FIREBOLT_LOG_INFO("Gateway", "[subscribe] ACK for '%s' received in %ld ms", event.c_str(),
-                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_sub)
-                              .count());
-
-        if (!result)
+        auto fut = request(event, params, id);
+        if (fut.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready)
         {
-            status = result.error();
+            auto result = fut.get();
+            FIREBOLT_LOG_INFO("Gateway", "[subscribe] ACK for '%s' received in %ld ms", event.c_str(),
+                              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                                    t0_sub)
+                                  .count());
+            if (!result)
+            {
+                status = result.error();
+            }
+        }
+        else
+        {
+            FIREBOLT_LOG_INFO("Gateway", "[subscribe] ACK not received within 50ms, giving up");
+            status = Firebolt::Error::Timedout;
         }
 
         if (status != Firebolt::Error::None)
@@ -591,14 +608,22 @@ public:
         FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] sending unsubscribe for '%s', waiting for ACK (waitTime_ms=%u)...",
                           event.c_str(), runtime_waitTime_ms);
         auto t0_unsub = std::chrono::steady_clock::now();
-        auto result = request(event, params).get();
-        auto unsub_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
-        FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] ACK received after %ld ms", unsub_ms);
-
-        if (!result)
+        auto fut = request(event, params);
+        if (fut.wait_for(std::chrono::milliseconds(50)) == std::future_status::ready)
         {
-            status = result.error();
+            auto result = fut.get();
+            auto unsub_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
+            FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] ACK received after %ld ms", unsub_ms);
+            if (!result)
+            {
+                status = result.error();
+            }
+        }
+        else
+        {
+            FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] ACK not received within 50ms, giving up");
+            status = Firebolt::Error::Timedout;
         }
 
         return status;
