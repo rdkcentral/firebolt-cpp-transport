@@ -1,3 +1,13 @@
+## [1.1.8](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.7...v1.1.8)
+
+### Added
+- Timing and diagnostic log messages throughout `disconnect()`, `subscribe()`, and `unsubscribe()` in Gateway and Transport to aid debugging of latency issues
+
+## [1.1.7](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.6...v1.1.7)
+
+### Fixed
+- `disconnect()` could block callers for up to ~5 seconds when the gateway was unresponsive but the TCP connection remained open; the WebSocket close-handshake timeout is now capped at 100 ms via `set_close_handshake_timeout()` before calling `close()`
+
 ## [1.1.6](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.5...v1.1.6)
 
 ### Changed
