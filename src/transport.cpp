@@ -250,17 +250,17 @@ Firebolt::Error Transport::disconnect()
         connectionThread_->join();
     }
     FIREBOLT_LOG_INFO("Transport", "[disconnect] connectionThread joined in %ld ms",
-                      static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                            std::chrono::steady_clock::now() - t0_ct)
-                                            .count()));
+                      static_cast<long>(
+                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_ct)
+                              .count()));
 
     FIREBOLT_LOG_INFO("Transport", "[disconnect] stopping message worker...");
     auto t0_mw = std::chrono::steady_clock::now();
     stopMessageWorker();
     FIREBOLT_LOG_INFO("Transport", "[disconnect] message worker stopped in %ld ms",
-                      static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                            std::chrono::steady_clock::now() - t0_mw)
-                                            .count()));
+                      static_cast<long>(
+                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_mw)
+                              .count()));
 
     client_ = std::make_unique<client>();
     connectionStatus_ = TransportState::NotStarted;

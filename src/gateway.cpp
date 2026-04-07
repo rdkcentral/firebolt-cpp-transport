@@ -533,9 +533,9 @@ public:
         auto t0_sub = std::chrono::steady_clock::now();
         auto result = request(event, params, id).get();
         FIREBOLT_LOG_INFO("Gateway", "[subscribe] ACK for '%s' received in %lld ms", event.c_str(),
-                          static_cast<long long>(
-                              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_sub)
-                                  .count()));
+                          static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                     std::chrono::steady_clock::now() - t0_sub)
+                                                     .count()));
 
         if (!result)
         {
