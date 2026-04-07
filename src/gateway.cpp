@@ -461,7 +461,7 @@ public:
 
     virtual Firebolt::Error disconnect() override
     {
-        FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() start");
+        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] transport.disconnect() start");
         auto t0_disc = std::chrono::steady_clock::now();
         Firebolt::Error status = transport.disconnect();
         FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() done in %ld ms, status=%d",
@@ -474,23 +474,23 @@ public:
         }
         if (watchdogRunning.exchange(false))
         {
-            FIREBOLT_LOG_INFO("Gateway", "[disconnect] waiting for watchdog thread join...");
+            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] waiting for watchdog thread join...");
             auto t0_wdog = std::chrono::steady_clock::now();
             if (watchdogThread.joinable())
             {
                 watchdogThread.join();
             }
-            FIREBOLT_LOG_INFO("Gateway", "[disconnect] watchdog joined in %ld ms",
-                              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                                                    t0_wdog)
-                                  .count());
+            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %ld ms",
+                               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                                                     t0_wdog)
+                                   .count());
         }
-        FIREBOLT_LOG_INFO("Gateway", "[disconnect] stopping notification worker...");
+        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] stopping notification worker...");
         auto t0_nw = std::chrono::steady_clock::now();
         server.stopNotificationWorker();
-        FIREBOLT_LOG_INFO("Gateway", "[disconnect] notification worker stopped in %ld ms",
-                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_nw)
-                              .count());
+        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %ld ms",
+                           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_nw)
+                               .count());
         return Error::None;
     }
 
@@ -529,24 +529,24 @@ public:
         nlohmann::json params;
         params["listen"] = true;
 
-        FIREBOLT_LOG_INFO("Gateway", "[subscribe] waiting for subscribe ACK for '%s'...", event.c_str());
+        FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] waiting for subscribe ACK for '%s'...", event.c_str());
         auto t0_sub = std::chrono::steady_clock::now();
         auto future_sub = request(event, params, id);
         constexpr auto kSubscribeAckTimeout = std::chrono::milliseconds(50);
         if (future_sub.wait_for(kSubscribeAckTimeout) != std::future_status::ready)
         {
-            FIREBOLT_LOG_INFO("Gateway", "[subscribe] ACK for '%s' timed out after %lld ms", event.c_str(),
-                              static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                         std::chrono::steady_clock::now() - t0_sub)
-                                                         .count()));
+            FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' timed out after %lld ms", event.c_str(),
+                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                          std::chrono::steady_clock::now() - t0_sub)
+                                                          .count()));
             status = Firebolt::Error::Timedout;
         }
         else
         {
-            FIREBOLT_LOG_INFO("Gateway", "[subscribe] ACK for '%s' received in %lld ms", event.c_str(),
-                              static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                         std::chrono::steady_clock::now() - t0_sub)
-                                                         .count()));
+            FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' received in %lld ms", event.c_str(),
+                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                          std::chrono::steady_clock::now() - t0_sub)
+                                                          .count()));
             auto result = future_sub.get();
             if (!result)
             {
@@ -601,8 +601,8 @@ public:
 
         nlohmann::json params;
         params["listen"] = false;
-        FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] sending unsubscribe for '%s', waiting for ACK (waitTime_ms=%u)...",
-                          event.c_str(), runtime_waitTime_ms);
+        FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] sending unsubscribe for '%s', waiting for ACK (waitTime_ms=%u)...",
+                           event.c_str(), runtime_waitTime_ms);
         auto t0_unsub = std::chrono::steady_clock::now();
         auto future_unsub = request(event, params);
         constexpr auto kUnsubscribeAckTimeout = std::chrono::milliseconds(50);
@@ -611,7 +611,7 @@ public:
         {
             unsub_ms = static_cast<long>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count());
-            FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] ACK received after %ld ms", unsub_ms);
+            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK received after %ld ms", unsub_ms);
             auto result = future_unsub.get();
             if (!result)
             {
@@ -622,7 +622,7 @@ public:
         {
             unsub_ms = static_cast<long>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count());
-            FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] ACK timed out after %ld ms (server unresponsive)", unsub_ms);
+            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK timed out after %ld ms (server unresponsive)", unsub_ms);
         }
 
         return status;
