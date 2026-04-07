@@ -592,8 +592,8 @@ public:
                           event.c_str(), runtime_waitTime_ms);
         auto t0_unsub = std::chrono::steady_clock::now();
         auto result = request(event, params).get();
-        auto unsub_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
+        long unsub_ms = static_cast<long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count());
         FIREBOLT_LOG_INFO("Gateway", "[unsubscribe] ACK received after %ld ms", unsub_ms);
 
         if (!result)
