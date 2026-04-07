@@ -465,8 +465,9 @@ public:
         auto t0_disc = std::chrono::steady_clock::now();
         Firebolt::Error status = transport.disconnect();
         FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() done in %ld ms, status=%d",
-                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_disc)
-                              .count(),
+                          static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                std::chrono::steady_clock::now() - t0_disc)
+                                                .count()),
                           static_cast<int>(status));
         if (status != Firebolt::Error::None)
         {
@@ -481,16 +482,17 @@ public:
                 watchdogThread.join();
             }
             FIREBOLT_LOG_INFO("Gateway", "[disconnect] watchdog joined in %ld ms",
-                              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                                                    t0_wdog)
-                                  .count());
+                              static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                    std::chrono::steady_clock::now() - t0_wdog)
+                                                    .count()));
         }
         FIREBOLT_LOG_INFO("Gateway", "[disconnect] stopping notification worker...");
         auto t0_nw = std::chrono::steady_clock::now();
         server.stopNotificationWorker();
         FIREBOLT_LOG_INFO("Gateway", "[disconnect] notification worker stopped in %ld ms",
-                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_nw)
-                              .count());
+                          static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                std::chrono::steady_clock::now() - t0_nw)
+                                                .count()));
         return Error::None;
     }
 
