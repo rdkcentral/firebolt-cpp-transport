@@ -698,3 +698,126 @@ TEST_F(GatewayUTest, DisconnectDoesNotHangWhenServerDisappearsWithActiveSubscrip
     EXPECT_LT(elapsed.count(), 200) << "unsubscribe() took " << elapsed.count()
                                     << " ms — blocked waiting for ACK from silent server (bug reproduced)";
 }
+
+// ---------------------------------------------------------------------------
+// Retry tests — verify reconnect_max_attempts / reconnect_delay_ms behaviour.
+// Uses port 9008 to avoid conflict with GatewayUTest (9003).
+// ---------------------------------------------------------------------------
+
+class GatewayRetryUTest : public ::testing::Test
+{
+protected:
+    using server = websocketpp::server<websocketpp::config::asio>;
+    using connection_hdl = websocketpp::connection_hdl;
+
+    server m_server;
+    std::unique_ptr<std::thread> m_serverThread;
+    bool m_serverStarted = false;
+    const std::string m_uri = "ws://127.0.0.1:9008";
+
+    void startServer()
+    {
+        m_server.init_asio();
+        m_server.set_reuse_addr(true);
+        m_server.clear_access_channels(websocketpp::log::alevel::all);
+        m_server.listen(
+            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("127.0.0.1"),
+                                                      9008));
+        m_server.start_accept();
+        m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+        m_serverStarted = true;
+    }
+
+    void TearDown() override
+    {
+        GetGatewayInstance().disconnect();
+        if (m_serverStarted)
+        {
+            m_server.stop_listening();
+            m_server.stop();
+            if (m_serverThread && m_serverThread->joinable())
+                m_serverThread->join();
+        }
+    }
+
+    Firebolt::Config retryConfig(unsigned maxAttempts, unsigned delayMs = 50)
+    {
+        Firebolt::Config cfg{};
+        cfg.wsUrl = m_uri;
+        cfg.reconnect_max_attempts = maxAttempts;
+        cfg.reconnect_delay_ms = delayMs;
+        return cfg;
+    }
+};
+
+// Server starts listening only after 2 retry delays have elapsed.
+// connect() should keep retrying and ultimately return Error::None.
+TEST_F(GatewayRetryUTest, RetryConnectsWhenServerDelayed)
+{
+    std::thread serverStarter(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            startServer();
+        });
+
+    IGateway& gateway = GetGatewayInstance();
+    std::promise<bool> connectedPromise;
+    auto connectedFuture = connectedPromise.get_future();
+    std::atomic<bool> promiseSet{false};
+
+    Firebolt::Error err = gateway.connect(retryConfig(5, 50),
+                                          [&](bool connected, const Firebolt::Error& /*error*/)
+                                          {
+                                              if (!promiseSet.exchange(true))
+                                                  connectedPromise.set_value(connected);
+                                          });
+
+    serverStarter.join();
+
+    ASSERT_EQ(err, Firebolt::Error::None) << "connect() should succeed after retries";
+    ASSERT_EQ(connectedFuture.wait_for(std::chrono::milliseconds(100)), std::future_status::ready);
+    EXPECT_TRUE(connectedFuture.get());
+}
+
+// connect() with reconnect_max_attempts=0 (no retries) should return
+// NotConnected immediately when the server is not listening.
+TEST_F(GatewayRetryUTest, NoRetryFailsFast)
+{
+    IGateway& gateway = GetGatewayInstance();
+    std::atomic<int> callbackCount{0};
+
+    auto t0 = std::chrono::steady_clock::now();
+    Firebolt::Error err =
+        gateway.connect(retryConfig(0), [&](bool /*connected*/, const Firebolt::Error& /*error*/) { ++callbackCount; });
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+
+    EXPECT_EQ(err, Firebolt::Error::NotConnected);
+    EXPECT_EQ(callbackCount.load(), 1);
+    EXPECT_LT(elapsed.count(), 5000) << "No-retry connect should fail quickly";
+}
+
+// disconnect() called from another thread while the retry loop is sleeping
+// between attempts.  connect() must return promptly (not after the full delay).
+TEST_F(GatewayRetryUTest, DisconnectAbortsRetryDelay)
+{
+    IGateway& gateway = GetGatewayInstance();
+
+    // 3 attempts with 500 ms delay — without the abort fix this would take ~1500 ms.
+    auto cfg = retryConfig(3, 500);
+
+    std::thread disconnecter(
+        [&gateway]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            gateway.disconnect();
+        });
+
+    auto t0 = std::chrono::steady_clock::now();
+    gateway.connect(cfg, [](bool, const Firebolt::Error&) {});
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+
+    disconnecter.join();
+    EXPECT_LT(elapsed.count(), 800) << "connect() took " << elapsed.count()
+                                    << " ms — retry delay was not aborted by disconnect()";
+}

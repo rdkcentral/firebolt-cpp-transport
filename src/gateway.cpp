@@ -397,6 +397,11 @@ private:
     bool connectResultOk{false};
     Firebolt::Error connectResultError{Firebolt::Error::None};
 
+    // Guards connectionChangeListener against concurrent reads (IO thread) and
+    // writes (main thread).  Always acquire connectionListenerMtx BEFORE
+    // connectResultMtx to avoid inversion.
+    std::mutex connectionListenerMtx;
+
     // Set to true when disconnect() is called so a retry loop in connect()
     // aborts early instead of sleeping out the full reconnect_delay_ms.
     std::atomic<bool> disconnectRequested_{false};
@@ -492,6 +497,7 @@ public:
                 std::lock_guard<std::mutex> lk(connectResultMtx);
                 connectResultReady = false;
                 connectResultOk = false;
+                connectResultError = Firebolt::Error::None;
             }
 
             FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s (attempt %u/%u)", url.c_str(), attempt, maxAttempts);
@@ -518,6 +524,14 @@ public:
             if (disconnectRequested_)
                 break;
 
+            if (!connectResultReady)
+            {
+                // 10-second timeout: async connect callback never fired.  Tear down
+                // the in-flight attempt so it cannot race with the next retry.
+                FIREBOLT_LOG_WARNING("Gateway", "Connect attempt %u/%u timed out; aborting", attempt, maxAttempts);
+                transport.disconnect();
+            }
+
             if (connectResultOk)
             {
                 status = Firebolt::Error::None;
@@ -532,13 +546,19 @@ public:
         {
             // Restore the plain user callback so subsequent events (if any) are
             // forwarded directly without the condvar logic.
-            connectionChangeListener = onConnectionChange;
+            {
+                std::lock_guard<std::mutex> lk(connectionListenerMtx);
+                connectionChangeListener = onConnectionChange;
+            }
             onConnectionChange(false, connectResultError);
             return status;
         }
 
         // Swap the wrapper out for the plain user callback now that we're connected.
-        connectionChangeListener = onConnectionChange;
+        {
+            std::lock_guard<std::mutex> lk(connectionListenerMtx);
+            connectionChangeListener = onConnectionChange;
+        }
         onConnectionChange(true, Firebolt::Error::None);
 
         if (!watchdogRunning.exchange(true))
@@ -767,7 +787,15 @@ private:
         FIREBOLT_LOG_ERROR("Gateway", "Invalid payload received: %s", message.dump().c_str());
     }
 
-    void onConnectionChange(const bool connected, Firebolt::Error error) { connectionChangeListener(connected, error); }
+    void onConnectionChange(const bool connected, Firebolt::Error error)
+    {
+        ConnectionChangeCallback cb;
+        {
+            std::lock_guard<std::mutex> lk(connectionListenerMtx);
+            cb = connectionChangeListener;
+        }
+        cb(connected, error);
+    }
 
     MessageID getNextMessageID() override { return transport.getNextMessageID(); }
 

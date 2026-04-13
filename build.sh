@@ -34,8 +34,10 @@ if $use_docker; then
     _cache="$SCRIPT_DIR/$_bdir/CMakeCache.txt"
     if [[ -f "$_cache" ]]; then
       _cached=$(grep '^CMAKE_HOME_DIRECTORY' "$_cache" 2>/dev/null | cut -d= -f2 || true)
-      if [[ -n "$_cached" && "$_cached" != "$SCRIPT_DIR" ]]; then
-        echo "Wiping stale $_bdir (configured at $_cached)..."
+      # In Docker, the workspace is mounted at /workspace.  Only wipe if the
+      # cache was configured for a different environment (e.g. a native host build).
+      if [[ -n "$_cached" && "$_cached" != "/workspace" ]]; then
+        echo "Wiping stale $_bdir (configured at $_cached, expected /workspace)..."
         rm -rf "$SCRIPT_DIR/$_bdir"
       fi
     fi

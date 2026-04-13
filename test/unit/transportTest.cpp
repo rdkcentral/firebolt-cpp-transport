@@ -736,8 +736,9 @@ protected:
                 {
                     m_server.send(hdl, msg->get_payload(), msg->get_opcode());
                 }
-                catch (...)
+                catch (const std::exception& ex)
                 {
+                    ADD_FAILURE() << "Server echo send failed: " << ex.what();
                 }
             });
         m_server.listen(
