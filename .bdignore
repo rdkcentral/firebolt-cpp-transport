@@ -1,0 +1,3 @@
+# BlackDuck scan exclusions
+# Vendored third-party source — attributed in NOTICE and LICENSE files
+src/vendor/
