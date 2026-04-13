@@ -728,26 +728,26 @@ protected:
     {
         try
         {
-        m_server.init_asio();
-        m_server.set_reuse_addr(true);
-        m_server.clear_access_channels(websocketpp::log::alevel::all);
-        m_server.set_message_handler(
-            [this](connection_hdl hdl, server::message_ptr msg)
-            {
-                try
+            m_server.init_asio();
+            m_server.set_reuse_addr(true);
+            m_server.clear_access_channels(websocketpp::log::alevel::all);
+            m_server.set_message_handler(
+                [this](connection_hdl hdl, server::message_ptr msg)
                 {
-                    m_server.send(hdl, msg->get_payload(), msg->get_opcode());
-                }
-                catch (const std::exception& ex)
-                {
-                    ADD_FAILURE() << "Server echo send failed: " << ex.what();
-                }
-            });
-        m_server.listen(
-            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("127.0.0.1"),
-                                                      9005));
-        m_server.start_accept();
-        m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+                    try
+                    {
+                        m_server.send(hdl, msg->get_payload(), msg->get_opcode());
+                    }
+                    catch (const std::exception& ex)
+                    {
+                        ADD_FAILURE() << "Server echo send failed: " << ex.what();
+                    }
+                });
+            m_server.listen(
+                websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("127.0.0.1"),
+                                                          9005));
+            m_server.start_accept();
+            m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
         }
         catch (const websocketpp::exception& ex)
         {
@@ -883,13 +883,13 @@ protected:
     {
         try
         {
-        m_server.init_asio();
-        m_server.set_reuse_addr(true);
-        m_server.clear_access_channels(websocketpp::log::alevel::all);
-        m_server.listen(
-            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("::1"), 9006));
-        m_server.start_accept();
-        m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+            m_server.init_asio();
+            m_server.set_reuse_addr(true);
+            m_server.clear_access_channels(websocketpp::log::alevel::all);
+            m_server.listen(
+                websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("::1"), 9006));
+            m_server.start_accept();
+            m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
         }
         catch (const websocketpp::exception& ex)
         {
