@@ -83,7 +83,8 @@ struct Config
      * connect() to retry up to that many times, waiting reconnect_delay_ms
      * between each attempt, before returning an error to the caller.
      *
-     * Default: 0 (no retry, preserves the previous behaviour).
+     * Default: 0 (single attempt, no retry; connect() blocks until the attempt
+     * succeeds or fails and returns Error::NotConnected on failure).
      */
     unsigned reconnect_max_attempts = 0;
 

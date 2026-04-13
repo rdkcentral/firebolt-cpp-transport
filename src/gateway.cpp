@@ -473,12 +473,6 @@ public:
         const unsigned maxAttempts = 1 + cfg.reconnect_max_attempts;
         Firebolt::Error status = Firebolt::Error::NotConnected;
 
-        // Local copies of the per-attempt result; updated under connectResultMtx
-        // and used for all decisions after the lock is released.
-        bool resultReady = false;
-        bool resultOk = false;
-        Firebolt::Error resultError = Firebolt::Error::None;
-
         for (unsigned attempt = 1; attempt <= maxAttempts; ++attempt)
         {
             if (disconnectRequested_)
@@ -523,65 +517,50 @@ public:
             }
 
             // Wait for the async open/fail callback (with a generous ceiling).
-            // Copy the result fields to locals while still holding the mutex so
-            // that subsequent reads are never racy with the IO thread's callback.
+            bool attemptReady = false, attemptOk = false;
+            Firebolt::Error attemptError = Firebolt::Error::NotConnected;
             {
                 constexpr auto kConnectTimeout = std::chrono::seconds(10);
+                // Snapshot result fields while the mutex is held: the IO-thread
+                // callback can write to these fields after wait_for releases the
+                // lock, so reading them outside the scope is a data race.
                 std::unique_lock<std::mutex> lk(connectResultMtx);
                 connectResultCv.wait_for(lk, kConnectTimeout,
                                          [this] { return connectResultReady || disconnectRequested_.load(); });
-                resultReady = connectResultReady;
-                resultOk = connectResultOk;
-                resultError = connectResultError;
+                attemptReady  = connectResultReady;
+                attemptOk     = connectResultOk;
+                attemptError  = connectResultError;
             }
 
             if (disconnectRequested_)
-            {
-                // Ensure any in-flight async connect attempt is closed before
-                // leaving the retry loop so a later connect/disconnect does not
-                // race with a stale websocket handle.
-                transport.disconnect();
                 break;
-            }
 
-            if (!resultReady)
-            {
-                // 10-second timeout: async connect callback never fired.  Tear down
-                // the in-flight attempt so it cannot race with the next retry.
-                FIREBOLT_LOG_WARNING("Gateway", "Connect attempt %u/%u timed out; aborting", attempt, maxAttempts);
-                transport.disconnect();
-            }
-
-            if (resultOk)
+            if (attemptOk)
             {
                 status = Firebolt::Error::None;
                 break;
             }
 
-            // The async connect either failed or timed out. Explicitly close the
-            // current attempt before retrying so we do not create overlapping
-            // websocketpp connection attempts.
+            // Connection failed or timed out.  Close the in-flight attempt before
+            // the next retry iteration so there are no overlapping websocket handles.
+            if (!attemptReady)
+            {
+                FIREBOLT_LOG_WARNING("Gateway", "Connect attempt %u/%u timed out; aborting", attempt, maxAttempts);
+                attemptError = Firebolt::Error::NotConnected;
+            }
             transport.disconnect();
-            status = Firebolt::Error::NotConnected;
+            status = (attemptError != Firebolt::Error::None) ? attemptError : Firebolt::Error::NotConnected;
         }
 
         if (status != Firebolt::Error::None)
         {
-            // Use the async callback error if available; fall back to the
-            // synchronous status (e.g. bad URL) or a timeout sentinel.
-            Firebolt::Error failureError = resultError;
-            if (failureError == Firebolt::Error::None)
-            {
-                failureError = status;
-            }
-
             // Restore the plain user callback so subsequent events (if any) are
             // forwarded directly without the condvar logic.
             {
                 std::lock_guard<std::mutex> lk(connectionListenerMtx);
                 connectionChangeListener = onConnectionChange;
             }
-            onConnectionChange(false, failureError);
+            onConnectionChange(false, status);
             return status;
         }
 
