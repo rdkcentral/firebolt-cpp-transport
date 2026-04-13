@@ -527,9 +527,9 @@ public:
                 std::unique_lock<std::mutex> lk(connectResultMtx);
                 connectResultCv.wait_for(lk, kConnectTimeout,
                                          [this] { return connectResultReady || disconnectRequested_.load(); });
-                attemptReady  = connectResultReady;
-                attemptOk     = connectResultOk;
-                attemptError  = connectResultError;
+                attemptReady = connectResultReady;
+                attemptOk = connectResultOk;
+                attemptError = connectResultError;
             }
 
             if (disconnectRequested_)
