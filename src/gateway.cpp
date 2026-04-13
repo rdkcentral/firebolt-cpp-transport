@@ -441,14 +441,14 @@ public:
             {
                 std::lock_guard<std::mutex> lk(connectResultMtx);
                 connectResultReady = true;
-                connectResultOk    = connected;
+                connectResultOk = connected;
                 connectResultError = error;
             }
             connectResultCv.notify_one();
         };
 
         runtime_waitTime_ms = cfg.waitTime_ms;
-        legacyRPCv1  = cfg.legacyRPCv1;
+        legacyRPCv1 = cfg.legacyRPCv1;
         disconnectRequested_ = false;
 
         std::string url = buildGatewayUrl(cfg.wsUrl, legacyRPCv1);
@@ -463,7 +463,7 @@ public:
         }
 
         const unsigned maxAttempts = 1 + cfg.reconnect_max_attempts;
-        Firebolt::Error status     = Firebolt::Error::NotConnected;
+        Firebolt::Error status = Firebolt::Error::NotConnected;
 
         for (unsigned attempt = 1; attempt <= maxAttempts; ++attempt)
         {
@@ -474,17 +474,15 @@ public:
 
             if (attempt > 1)
             {
-                FIREBOLT_LOG_NOTICE("Gateway", "Reconnect attempt %u/%u in %u ms ...",
-                                    attempt, maxAttempts, cfg.reconnect_delay_ms);
+                FIREBOLT_LOG_NOTICE("Gateway", "Reconnect attempt %u/%u in %u ms ...", attempt, maxAttempts,
+                                    cfg.reconnect_delay_ms);
                 // Sleep in reconnect_delay_ms increments so disconnect() can
                 // abort the wait early by setting disconnectRequested_.
                 constexpr unsigned kSliceMs = 50;
-                for (unsigned elapsed = 0;
-                     elapsed < cfg.reconnect_delay_ms && !disconnectRequested_;
-                     elapsed += kSliceMs)
+                for (unsigned elapsed = 0; elapsed < cfg.reconnect_delay_ms && !disconnectRequested_; elapsed += kSliceMs)
                 {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(
-                        std::min(kSliceMs, cfg.reconnect_delay_ms - elapsed)));
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(std::min(kSliceMs, cfg.reconnect_delay_ms - elapsed)));
                 }
                 if (disconnectRequested_)
                     break;
@@ -493,11 +491,10 @@ public:
             {
                 std::lock_guard<std::mutex> lk(connectResultMtx);
                 connectResultReady = false;
-                connectResultOk    = false;
+                connectResultOk = false;
             }
 
-            FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s (attempt %u/%u)",
-                                url.c_str(), attempt, maxAttempts);
+            FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s (attempt %u/%u)", url.c_str(), attempt, maxAttempts);
 
             status = transport.connect(
                 url, [this](const nlohmann::json& message) { this->onMessage(message); },
@@ -566,7 +563,7 @@ public:
     virtual Firebolt::Error disconnect() override
     {
         disconnectRequested_ = true;
-        connectResultCv.notify_all();  // wake any in-progress retry wait
+        connectResultCv.notify_all(); // wake any in-progress retry wait
         FIREBOLT_LOG_INFO("Gateway", "[shutdown] transport.disconnect() start");
         Firebolt::Error status = transport.disconnect();
         FIREBOLT_LOG_INFO("Gateway", "[shutdown] transport.disconnect() done, status=%d", static_cast<int>(status));
