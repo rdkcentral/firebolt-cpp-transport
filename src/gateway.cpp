@@ -441,8 +441,10 @@ public:
         // Do NOT forward to onConnectionChange here — connect() fires it once
         // with the final result after the loop, so callers never see partial
         // failure callbacks from intermediate retry attempts.
+        ConnectionChangeCallback previousListener;
         {
             std::lock_guard<std::mutex> listenerLock(connectionListenerMtx);
+            previousListener = connectionChangeListener;
             connectionChangeListener = [this](bool connected, Firebolt::Error error)
             {
                 {
@@ -554,6 +556,15 @@ public:
 
         if (status != Firebolt::Error::None)
         {
+            if (status == Firebolt::Error::AlreadyConnected)
+            {
+                // Transport is already connected — restore the pre-existing listener
+                // so the live connection is not disrupted, and do NOT emit a false
+                // "disconnected" event to the caller.
+                std::lock_guard<std::mutex> lk(connectionListenerMtx);
+                connectionChangeListener = previousListener;
+                return status;
+            }
             // Restore the plain user callback so subsequent events (if any) are
             // forwarded directly without the condvar logic.
             {

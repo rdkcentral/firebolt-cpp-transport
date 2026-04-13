@@ -828,3 +828,29 @@ TEST_F(GatewayRetryUTest, DisconnectAbortsRetryDelay)
     EXPECT_LT(elapsed.count(), 800) << "connect() took " << elapsed.count()
                                     << " ms — retry delay was not aborted by disconnect()";
 }
+
+// A second connect() while already connected must return AlreadyConnected and
+// must NOT invoke the new callback with (false, ...) — doing so would be a
+// spurious "disconnected" event to the caller.
+TEST_F(GatewayRetryUTest, AlreadyConnectedNoFalseDisconnect)
+{
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+
+    // First connect — must succeed.
+    std::atomic<int> firstCallbacks{0};
+    Firebolt::Error firstErr = gateway.connect(retryConfig(0), [&](bool, const Firebolt::Error&) { ++firstCallbacks; });
+    ASSERT_EQ(firstErr, Firebolt::Error::None) << "first connect() should succeed";
+
+    // Second connect() while already connected.
+    std::atomic<int> falseDisconnects{0};
+    Firebolt::Error secondErr = gateway.connect(retryConfig(0),
+                                                [&](bool connected, const Firebolt::Error&)
+                                                {
+                                                    if (!connected)
+                                                        ++falseDisconnects;
+                                                });
+
+    EXPECT_EQ(secondErr, Firebolt::Error::AlreadyConnected);
+    EXPECT_EQ(falseDisconnects.load(), 0) << "second connect() must not emit a false disconnect event";
+}
