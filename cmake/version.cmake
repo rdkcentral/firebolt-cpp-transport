@@ -21,26 +21,26 @@ endif ()
 if (NOT PROJECT_VERSION)
     set(VERSION_STRING "0.1.0-unknown")
 
-    find_package(Git QUIET)
-
-    if (GIT_FOUND)
-        execute_process(
-            COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 --match "v[0-9]*.[0-9]*.[0-9]*"
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-            OUTPUT_VARIABLE GIT_VERSION
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            ERROR_QUIET
-        )
-    endif ()
-
-    if (GIT_VERSION)
-        string(REGEX REPLACE "^v" "" VERSION_STRING "${GIT_VERSION}")
-    endif ()
-
-    if(VERSION_STRING STREQUAL "0.1.0-unknown" AND EXISTS "${CMAKE_SOURCE_DIR}/.version")
+    if (EXISTS "${CMAKE_SOURCE_DIR}/.version")
         file(READ "${CMAKE_SOURCE_DIR}/.version" VERSION_STRING)
         string(STRIP "${VERSION_STRING}" VERSION_STRING)
-    endif()
+    else ()
+        find_package(Git QUIET)
+
+        if (GIT_FOUND)
+            execute_process(
+                COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 --match "v[0-9]*.[0-9]*.[0-9]*"
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                OUTPUT_VARIABLE GIT_VERSION
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+            )
+        endif ()
+
+        if (GIT_VERSION)
+            string(REGEX REPLACE "^v" "" VERSION_STRING "${GIT_VERSION}")
+        endif ()
+    endif ()
 
     set(PROJECT_VERSION "${VERSION_STRING}" CACHE STRING "Project version string")
     set(PROJECT_VERSION "${VERSION_STRING}")
