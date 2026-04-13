@@ -553,13 +553,19 @@ public:
 
         if (status != Firebolt::Error::None)
         {
+            Firebolt::Error failureError = connectResultError;
+            if (failureError == Firebolt::Error::None)
+            {
+                failureError = status;
+            }
+
             // Restore the plain user callback so subsequent events (if any) are
             // forwarded directly without the condvar logic.
             {
                 std::lock_guard<std::mutex> lk(connectionListenerMtx);
                 connectionChangeListener = onConnectionChange;
             }
-            onConnectionChange(false, connectResultError);
+            onConnectionChange(false, failureError);
             return status;
         }
 
