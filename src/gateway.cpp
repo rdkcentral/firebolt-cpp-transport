@@ -473,6 +473,12 @@ public:
         const unsigned maxAttempts = 1 + cfg.reconnect_max_attempts;
         Firebolt::Error status = Firebolt::Error::NotConnected;
 
+        // Local copies of the per-attempt result; updated under connectResultMtx
+        // and used for all decisions after the lock is released.
+        bool resultReady = false;
+        bool resultOk = false;
+        Firebolt::Error resultError = Firebolt::Error::None;
+
         for (unsigned attempt = 1; attempt <= maxAttempts; ++attempt)
         {
             if (disconnectRequested_)
@@ -517,11 +523,16 @@ public:
             }
 
             // Wait for the async open/fail callback (with a generous ceiling).
+            // Copy the result fields to locals while still holding the mutex so
+            // that subsequent reads are never racy with the IO thread's callback.
             {
                 constexpr auto kConnectTimeout = std::chrono::seconds(10);
                 std::unique_lock<std::mutex> lk(connectResultMtx);
                 connectResultCv.wait_for(lk, kConnectTimeout,
                                          [this] { return connectResultReady || disconnectRequested_.load(); });
+                resultReady = connectResultReady;
+                resultOk = connectResultOk;
+                resultError = connectResultError;
             }
 
             if (disconnectRequested_)
@@ -533,7 +544,7 @@ public:
                 break;
             }
 
-            if (!connectResultReady)
+            if (!resultReady)
             {
                 // 10-second timeout: async connect callback never fired.  Tear down
                 // the in-flight attempt so it cannot race with the next retry.
@@ -541,7 +552,7 @@ public:
                 transport.disconnect();
             }
 
-            if (connectResultOk)
+            if (resultOk)
             {
                 status = Firebolt::Error::None;
                 break;
@@ -556,7 +567,9 @@ public:
 
         if (status != Firebolt::Error::None)
         {
-            Firebolt::Error failureError = connectResultError;
+            // Use the async callback error if available; fall back to the
+            // synchronous status (e.g. bad URL) or a timeout sentinel.
+            Firebolt::Error failureError = resultError;
             if (failureError == Firebolt::Error::None)
             {
                 failureError = status;
