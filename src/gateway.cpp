@@ -441,16 +441,19 @@ public:
         // Do NOT forward to onConnectionChange here — connect() fires it once
         // with the final result after the loop, so callers never see partial
         // failure callbacks from intermediate retry attempts.
-        connectionChangeListener = [this](bool connected, Firebolt::Error error)
         {
+            std::lock_guard<std::mutex> listenerLock(connectionListenerMtx);
+            connectionChangeListener = [this](bool connected, Firebolt::Error error)
             {
-                std::lock_guard<std::mutex> lk(connectResultMtx);
-                connectResultReady = true;
-                connectResultOk = connected;
-                connectResultError = error;
-            }
-            connectResultCv.notify_one();
-        };
+                {
+                    std::lock_guard<std::mutex> lk(connectResultMtx);
+                    connectResultReady = true;
+                    connectResultOk = connected;
+                    connectResultError = error;
+                }
+                connectResultCv.notify_one();
+            };
+        }
 
         runtime_waitTime_ms = cfg.waitTime_ms;
         legacyRPCv1 = cfg.legacyRPCv1;
