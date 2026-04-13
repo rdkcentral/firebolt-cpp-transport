@@ -522,7 +522,13 @@ public:
             }
 
             if (disconnectRequested_)
+            {
+                // Ensure any in-flight async connect attempt is closed before
+                // leaving the retry loop so a later connect/disconnect does not
+                // race with a stale websocket handle.
+                transport.disconnect();
                 break;
+            }
 
             if (!connectResultReady)
             {
@@ -538,7 +544,10 @@ public:
                 break;
             }
 
-            // Connection failed — transport is back to Disconnected; loop to retry.
+            // The async connect either failed or timed out. Explicitly close the
+            // current attempt before retrying so we do not create overlapping
+            // websocketpp connection attempts.
+            transport.disconnect();
             status = Firebolt::Error::NotConnected;
         }
 
