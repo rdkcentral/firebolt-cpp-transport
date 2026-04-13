@@ -560,6 +560,10 @@ public:
                 std::lock_guard<std::mutex> lk(connectionListenerMtx);
                 connectionChangeListener = onConnectionChange;
             }
+            // NOTE: this final result callback fires on the connect() calling
+            // thread.  Post-connect state-change callbacks (disconnect, watchdog
+            // reconnect) fire on the websocketpp IO thread.  Callers must be
+            // prepared to receive callbacks on either thread.
             onConnectionChange(false, status);
             return status;
         }
@@ -569,6 +573,7 @@ public:
             std::lock_guard<std::mutex> lk(connectionListenerMtx);
             connectionChangeListener = onConnectionChange;
         }
+        // See NOTE above about callback thread.
         onConnectionChange(true, Firebolt::Error::None);
 
         if (!watchdogRunning.exchange(true))

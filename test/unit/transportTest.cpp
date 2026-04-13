@@ -726,6 +726,8 @@ protected:
 
     void SetUp() override
     {
+        try
+        {
         m_server.init_asio();
         m_server.set_reuse_addr(true);
         m_server.clear_access_channels(websocketpp::log::alevel::all);
@@ -746,6 +748,11 @@ protected:
                                                       9005));
         m_server.start_accept();
         m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+        }
+        catch (const websocketpp::exception& ex)
+        {
+            FAIL() << "TransportNumericIPUTest: server startup failed: " << ex.what();
+        }
     }
 
     void TearDown() override
@@ -874,6 +881,8 @@ protected:
 
     void SetUp() override
     {
+        try
+        {
         m_server.init_asio();
         m_server.set_reuse_addr(true);
         m_server.clear_access_channels(websocketpp::log::alevel::all);
@@ -881,6 +890,11 @@ protected:
             websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("::1"), 9006));
         m_server.start_accept();
         m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+        }
+        catch (const websocketpp::exception& ex)
+        {
+            FAIL() << "TransportIPv6UTest: server startup failed: " << ex.what();
+        }
     }
 
     void TearDown() override

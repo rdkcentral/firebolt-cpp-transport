@@ -717,15 +717,22 @@ protected:
 
     void startServer()
     {
-        m_server.init_asio();
-        m_server.set_reuse_addr(true);
-        m_server.clear_access_channels(websocketpp::log::alevel::all);
-        m_server.listen(
-            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("127.0.0.1"),
-                                                      9008));
-        m_server.start_accept();
-        m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
-        m_serverStarted = true;
+        try
+        {
+            m_server.init_asio();
+            m_server.set_reuse_addr(true);
+            m_server.clear_access_channels(websocketpp::log::alevel::all);
+            m_server.listen(
+                websocketpp::lib::asio::ip::tcp::endpoint(
+                    websocketpp::lib::asio::ip::address::from_string("127.0.0.1"), 9008));
+            m_server.start_accept();
+            m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+            m_serverStarted = true;
+        }
+        catch (const websocketpp::exception& ex)
+        {
+            FAIL() << "GatewayRetryUTest: server startup failed: " << ex.what();
+        }
     }
 
     void TearDown() override
