@@ -723,6 +723,7 @@ protected:
 
     server m_server;
     std::unique_ptr<std::thread> m_serverThread;
+    bool m_serverStarted = false;
     const std::string m_uri = "ws://127.0.0.1:9005";
 
     void SetUp() override
@@ -749,6 +750,7 @@ protected:
                                                           9005));
             m_server.start_accept();
             m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+            m_serverStarted = true;
         }
         catch (const websocketpp::exception& ex)
         {
@@ -758,11 +760,12 @@ protected:
 
     void TearDown() override
     {
-        m_server.stop_listening();
-        m_server.stop();
-        if (m_serverThread && m_serverThread->joinable())
+        if (m_serverStarted)
         {
-            m_serverThread->join();
+            m_server.stop_listening();
+            m_server.stop();
+            if (m_serverThread && m_serverThread->joinable())
+                m_serverThread->join();
         }
     }
 };
@@ -878,6 +881,7 @@ protected:
 
     server m_server;
     std::unique_ptr<std::thread> m_serverThread;
+    bool m_serverStarted = false;
     const std::string m_uri = "ws://[::1]:9006";
 
     void SetUp() override
@@ -891,6 +895,7 @@ protected:
                 websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("::1"), 9006));
             m_server.start_accept();
             m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
+            m_serverStarted = true;
         }
         catch (const websocketpp::exception& ex)
         {
@@ -900,10 +905,13 @@ protected:
 
     void TearDown() override
     {
-        m_server.stop_listening();
-        m_server.stop();
-        if (m_serverThread && m_serverThread->joinable())
-            m_serverThread->join();
+        if (m_serverStarted)
+        {
+            m_server.stop_listening();
+            m_server.stop();
+            if (m_serverThread && m_serverThread->joinable())
+                m_serverThread->join();
+        }
     }
 };
 

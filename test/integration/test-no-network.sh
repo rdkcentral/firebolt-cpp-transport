@@ -47,7 +47,13 @@ if [[ ! -x "$BINARY" ]]; then
     exit 1
 fi
 
-# Path of the binary relative to REPO_ROOT (used for Docker volume mount)
+# Path of the binary relative to REPO_ROOT (used for Docker volume mount).
+# If the binary is outside REPO_ROOT the Docker mount won't reach it — fall back
+# to the default build-dev path which is always under REPO_ROOT.
+if [[ "$BINARY" != "$REPO_ROOT"/* ]]; then
+    echo "warning: binary '$BINARY' is outside REPO_ROOT — using default build-dev/test/utApp for Docker mode" >&2
+    BINARY="$REPO_ROOT/build-dev/test/utApp"
+fi
 REL_BIN="${BINARY#"$REPO_ROOT"/}"
 
 run_in_docker() {
