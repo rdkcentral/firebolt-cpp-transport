@@ -473,7 +473,9 @@ public:
             FIREBOLT_LOG_NOTICE("Transport", "Legacy RPCv1");
         }
 
-        const unsigned maxAttempts = 1 + cfg.reconnect_max_attempts;
+        // Cap to avoid unsigned overflow when reconnect_max_attempts is very large.
+        constexpr unsigned kMaxRetries = 100u;
+        const unsigned maxAttempts = 1 + std::min(cfg.reconnect_max_attempts, kMaxRetries);
         Firebolt::Error status = Firebolt::Error::NotConnected;
 
         for (unsigned attempt = 1; attempt <= maxAttempts; ++attempt)
@@ -523,7 +525,7 @@ public:
             bool attemptReady = false, attemptOk = false;
             Firebolt::Error attemptError = Firebolt::Error::NotConnected;
             {
-                constexpr auto kConnectTimeout = std::chrono::seconds(10);
+                const auto kConnectTimeout = std::chrono::milliseconds(cfg.connect_attempt_timeout_ms);
                 // Snapshot result fields while the mutex is held: the IO-thread
                 // callback can write to these fields after wait_for releases the
                 // lock, so reading them outside the scope is a data race.
