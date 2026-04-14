@@ -19,6 +19,7 @@
 #include "firebolt/gateway.h"
 #include "firebolt/logger.h"
 #include "utils.h"
+#include <atomic>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <thread>
