@@ -22,6 +22,7 @@
 #include "firebolt/types.h"
 #include "transport.h"
 #include "utils.h"
+#include <algorithm>
 #include <assert.h>
 #include <chrono>
 #include <condition_variable>
