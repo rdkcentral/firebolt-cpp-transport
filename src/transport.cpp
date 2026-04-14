@@ -32,6 +32,7 @@ using message_ptr = websocketpp::config::asio_client::message_type::ptr;
 enum class Transport::TransportState
 {
     NotStarted,
+    Connecting, // client_->connect() queued; onOpen/onFail not yet fired
     Connected,
     Disconnected,
 };
@@ -204,6 +205,7 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     con->set_message_handler(websocketpp::lib::bind(&Transport::onMessage, this, websocketpp::lib::placeholders::_1,
                                                     websocketpp::lib::placeholders::_2));
 
+    connectionStatus_ = TransportState::Connecting;
     client_->connect(con);
 
     return Firebolt::Error::None;
@@ -217,7 +219,18 @@ Firebolt::Error Transport::disconnect()
     }
     client_->stop_perpetual();
 
-    if (connectionStatus_ == TransportState::Connected)
+    if (connectionStatus_ == TransportState::Connecting)
+    {
+        // A connect attempt is in-flight (DNS / TCP / WS handshake).  stop_perpetual()
+        // alone does not cancel pending async operations; client_->stop() forces the
+        // asio io_service to exit run() immediately so connectionThread_ can be joined
+        // without waiting for the full OS-level TCP timeout.
+        // onFail will not fire after stop(), but the gateway's condvar is already
+        // woken by disconnectRequested_ so no callback is needed here.
+        FIREBOLT_LOG_DEBUG("Transport", "[disconnect] aborting in-progress connect attempt via stop()");
+        client_->stop();
+    }
+    else if (connectionStatus_ == TransportState::Connected)
     {
         // Shorten the close-handshake timeout so that join() below does not block
         // for the full websocketpp default (5 s) if the gateway is unresponsive.
