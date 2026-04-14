@@ -443,18 +443,18 @@ public:
         // with the final result after the loop, so callers never see partial
         // failure callbacks from intermediate retry attempts.
         ConnectionChangeCallback previousListener;
-        // When transport.connect() returns AlreadyConnected, the wrapper stays
-        // briefly installed while we detect the error and restore the listener.
-        // An IO-thread event arriving during that window must not be silently
-        // discarded — it should reach the previously-registered listener.
-        // skipPrevForward is set to true as soon as a new connection attempt is
-        // actually queued (transport.connect() returns None), so that real
-        // new-attempt events are not erroneously forwarded to the old callback.
-        auto skipPrevForward = std::make_shared<std::atomic<bool>>(false);
+        // NOTE: the wrapper intentionally does NOT forward events to the
+        // previous listener.  Forwarding only during an AlreadyConnected window
+        // requires a flag set after transport.connect() returns, but the IO
+        // thread can fire onOpen/onFail between client_->connect() being queued
+        // and that flag being set — a race that triggers a spurious callback on
+        // the old session.  The AlreadyConnected window is a few microseconds
+        // (synchronous return) and the listener is restored before connect()
+        // returns, so the theoretical one-event loss is preferable to the race.
         {
             std::lock_guard<std::mutex> listenerLock(connectionListenerMtx);
             previousListener = connectionChangeListener;
-            connectionChangeListener = [this, previousListener, skipPrevForward](bool connected, Firebolt::Error error)
+            connectionChangeListener = [this](bool connected, Firebolt::Error error)
             {
                 {
                     std::lock_guard<std::mutex> lk(connectResultMtx);
@@ -463,10 +463,6 @@ public:
                     connectResultError = error;
                 }
                 connectResultCv.notify_one();
-                // Forward to the previous listener only if no new attempt has been
-                // queued yet (AlreadyConnected window) so events are not dropped.
-                if (!skipPrevForward->load() && previousListener)
-                    previousListener(connected, error);
             };
         }
 
@@ -532,11 +528,6 @@ public:
                 // Synchronous error from transport (e.g. bad URL) — no point retrying.
                 break;
             }
-
-            // A new connection attempt was successfully queued.  Disable the
-            // previousListener forward path in the wrapper so that this attempt's
-            // onOpen/onFail events are not spuriously delivered to the old callback.
-            skipPrevForward->store(true);
 
             // Wait for the async open/fail callback (with a generous ceiling).
             bool attemptReady = false, attemptOk = false;
