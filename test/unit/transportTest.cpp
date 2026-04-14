@@ -17,8 +17,8 @@
  */
 
 #include "transport.h"
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <gtest/gtest.h>
