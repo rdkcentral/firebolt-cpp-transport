@@ -785,6 +785,9 @@ TEST_F(GatewayRetryUTest, RetryConnectsWhenServerDelayed)
     ASSERT_EQ(err, Firebolt::Error::None) << "connect() should succeed after retries";
     ASSERT_EQ(connectedFuture.wait_for(std::chrono::milliseconds(100)), std::future_status::ready);
     EXPECT_TRUE(connectedFuture.get());
+    // Disconnect before locals go out of scope so TearDown's disconnect() is a
+    // no-op and cannot invoke this callback after the frame is gone.
+    gateway.disconnect();
 }
 
 // connect() with reconnect_max_attempts=0 (no retries) should return
@@ -853,4 +856,6 @@ TEST_F(GatewayRetryUTest, AlreadyConnectedNoFalseDisconnect)
 
     EXPECT_EQ(secondErr, Firebolt::Error::AlreadyConnected);
     EXPECT_EQ(falseDisconnects.load(), 0) << "second connect() must not emit a false disconnect event";
+    // Disconnect before locals go out of scope (same reasoning as RetryConnectsWhenServerDelayed).
+    gateway.disconnect();
 }
