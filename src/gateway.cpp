@@ -536,7 +536,15 @@ public:
             }
 
             if (disconnectRequested_)
+            {
+                // Abort the in-flight transport connection so the socket is
+                // cleaned up, and force a failure status so the post-loop code
+                // does not falsely report success, install the user listener, or
+                // start the watchdog.
+                transport.disconnect();
+                status = Firebolt::Error::NotConnected;
                 break;
+            }
 
             if (attemptOk)
             {

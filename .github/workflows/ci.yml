@@ -229,6 +229,7 @@ jobs:
           docker run --rm --network none \
             --user "$(id -u):$(id -g)" \
             -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
             ${{ needs.build_docker.outputs.image_tag }} \
             bash -c " \
               build/test/utApp \
