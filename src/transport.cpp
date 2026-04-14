@@ -80,7 +80,7 @@ void Transport::start()
 
     connectionThread_.reset(new websocketpp::lib::thread(&client::run, client_.get()));
     startMessageWorker();
-    connectionStatus_ = TransportState::Disconnected;
+    connectionStatus_.store(TransportState::Disconnected);
 }
 
 void Transport::startMessageWorker()
@@ -145,13 +145,13 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
                                    std::optional<unsigned> transportLoggingInclude,
                                    std::optional<unsigned> transportLoggingExclude)
 {
-    if (connectionStatus_ == TransportState::Connected)
+    if (connectionStatus_.load() == TransportState::Connected)
     {
         FIREBOLT_LOG_WARNING("Transport", "Connect called when already connected. Ignoring");
         return Firebolt::Error::AlreadyConnected;
     }
 
-    if (connectionStatus_ == TransportState::NotStarted)
+    if (connectionStatus_.load() == TransportState::NotStarted)
     {
         debugEnabled_ = Logger::isLogLevelEnabled(Firebolt::LogLevel::Debug);
         start();
@@ -205,7 +205,7 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     con->set_message_handler(websocketpp::lib::bind(&Transport::onMessage, this, websocketpp::lib::placeholders::_1,
                                                     websocketpp::lib::placeholders::_2));
 
-    connectionStatus_ = TransportState::Connecting;
+    connectionStatus_.store(TransportState::Connecting);
     client_->connect(con);
 
     return Firebolt::Error::None;
@@ -213,13 +213,13 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
 
 Firebolt::Error Transport::disconnect()
 {
-    if (connectionStatus_ == TransportState::NotStarted)
+    if (connectionStatus_.load() == TransportState::NotStarted)
     {
         return Firebolt::Error::None;
     }
     client_->stop_perpetual();
 
-    if (connectionStatus_ == TransportState::Connecting)
+    if (connectionStatus_.load() == TransportState::Connecting)
     {
         // A connect attempt is in-flight (DNS / TCP / WS handshake).  stop_perpetual()
         // alone does not cancel pending async operations; client_->stop() forces the
@@ -230,7 +230,7 @@ Firebolt::Error Transport::disconnect()
         FIREBOLT_LOG_DEBUG("Transport", "[disconnect] aborting in-progress connect attempt via stop()");
         client_->stop();
     }
-    else if (connectionStatus_ == TransportState::Connected)
+    else if (connectionStatus_.load() == TransportState::Connected)
     {
         // Shorten the close-handshake timeout so that join() below does not block
         // for the full websocketpp default (5 s) if the gateway is unresponsive.
@@ -276,7 +276,7 @@ Firebolt::Error Transport::disconnect()
                                              .count()));
 
     client_ = std::make_unique<client>();
-    connectionStatus_ = TransportState::NotStarted;
+    connectionStatus_.store(TransportState::NotStarted);
     return Firebolt::Error::None;
 }
 
@@ -287,7 +287,7 @@ unsigned Transport::getNextMessageID()
 
 Firebolt::Error Transport::send(const std::string& method, const nlohmann::json& params, const unsigned id)
 {
-    if (connectionStatus_ != TransportState::Connected)
+    if (connectionStatus_.load() != TransportState::Connected)
     {
         return Firebolt::Error::NotConnected;
     }
@@ -345,7 +345,7 @@ void Transport::onMessage(websocketpp::connection_hdl /* hdl */,
 
 void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
-    connectionStatus_ = TransportState::Connected;
+    connectionStatus_.store(TransportState::Connected);
 
     client::connection_ptr con = c->get_con_from_hdl(hdl);
     connectionReceiver_(true, Firebolt::Error::None);
@@ -353,14 +353,14 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
 
 void Transport::onClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
-    connectionStatus_ = TransportState::Disconnected;
+    connectionStatus_.store(TransportState::Disconnected);
     client::connection_ptr con = c->get_con_from_hdl(hdl);
     connectionReceiver_(false, mapError(con->get_ec()));
 }
 
 void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
-    connectionStatus_ = TransportState::Disconnected;
+    connectionStatus_.store(TransportState::Disconnected);
     client::connection_ptr con = c->get_con_from_hdl(hdl);
     connectionReceiver_(false, mapError(con->get_ec()));
 }
