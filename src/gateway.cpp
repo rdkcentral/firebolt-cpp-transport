@@ -595,9 +595,8 @@ public:
                     while (watchdogRunning)
                     {
                         std::unique_lock<std::mutex> lk(watchdogMtx);
-                        bool timedOut = !watchdogCv.wait_for(
-                            lk, std::chrono::milliseconds(watchdog_interval_ms),
-                            [this] { return !watchdogRunning.load(); });
+                        bool timedOut = !watchdogCv.wait_for(lk, std::chrono::milliseconds(watchdog_interval_ms),
+                                                             [this] { return !watchdogRunning.load(); });
                         if (!watchdogRunning)
                             break;
                         if (timedOut)
