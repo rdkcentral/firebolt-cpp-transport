@@ -4,9 +4,10 @@
 
 > A practical guide to using Spec-driven Development (SDD) and AI agents for safe, traceable, and efficient evolution of complex codebases.
 
-_by Sathishkumar Deena Kirupakaran | Mar 2026_
+_by Sathishkumar Deena Kirupakaran | Apr 2026_
 
 ---
+
 
 # What is Spec-driven Development? (SDD)
 
@@ -22,6 +23,52 @@ flowchart LR
 - Ensures code and requirements stay in sync for fewer bugs.
 - Makes changes traceable and collaboration easier.
 - Enables AI agents to assist with clear guidance and feedback loops.
+
+---
+
+
+
+# OpenSpec: What & Where
+
+OpenSpec is an open-source, spec-driven AI management tool for AI coding assistants. It helps you align on requirements, organize changes, and automate workflows for both greenfield and brownfield projects.
+
+**GitHub Repository:**  
+https://github.com/Fission-AI/OpenSpec
+
+**Quick Start:**
+
+- Requires Node.js 20.19.0 or higher.
+- Install OpenSpec globally:
+  ```sh
+  npm install -g @fission-ai/openspec@latest
+  ```
+- Navigate to your project directory and initialize:
+  ```sh
+  cd your-project
+  openspec init
+  ```
+  
+> Also works with pnpm, yarn, bun, and nix. See the repo for more installation options and advanced workflows.
+
+---
+
+# OpenSpec: Non-Interactive Setup for Copilot & Windsurf
+
+For CI/CD or scripted environments, you can configure OpenSpec to set up GitHub Copilot and Windsurf support non-interactively:
+
+**Configure both tools at once:**
+```sh
+openspec init --tools github-copilot,windsurf
+```
+
+**Configure all supported tools:**
+```sh
+openspec init --tools all
+```
+
+> This ensures that OpenSpec generates the necessary skills and command files for GitHub Copilot and Windsurf, enabling seamless integration in both local and automated setups.
+
+See the [Supported Tools documentation](https://github.com/Fission-AI/OpenSpec/blob/main/docs/supported-tools.md) for more details.
 
 ---
 
@@ -59,8 +106,39 @@ flowchart LR
   AI -.-> D
 ```
 
+- Actions, not phases — create, implement, update, archive — do any of them anytime
+- Dependencies are enablers — they show what's possible, not what's required next
 
-https://github.com/Fission-AI/OpenSpec
+---
+
+# OpenSpec Prompts (.github folder)
+
+Prompts = instructions for a single action
+
+| Prompt                | Description                                                      |
+|-----------------------------|------------------------------------------------------------------|
+| opsx-propose.prompt.md      | Propose a new change and generate all planning artifacts at once. |
+| opsx-apply.prompt.md        | Implement tasks from an OpenSpec change, tracking progress.       |
+| opsx-explore.prompt.md      | Enter explore mode to think through ideas and clarify problems.   |
+| opsx-archive.prompt.md      | Archive a completed change after verifying all tasks are done.    |
+
+Each prompt guides Copilot or your agent through a key phase of the OpenSpec workflow, ensuring clarity and traceability.
+
+---
+
+
+# OpenSpec Skills (.github folder)
+
+Skills = packaged workflows or capabilities, often using prompts and additional logic
+
+| Skill                    | Description                                                                 |
+|--------------------------|-----------------------------------------------------------------------------|
+| openspec-propose         | Propose a new change and generate all required artifacts in one step.        |
+| openspec-explore         | Enter explore mode to investigate, clarify, and visualize ideas or problems. |
+| openspec-apply-change    | Implement tasks from an OpenSpec change, tracking progress and completion.   |
+| openspec-archive-change  | Archive a completed change after verifying all tasks and artifacts are done. |
+
+Each skill enables Copilot or your agent to automate and structure key OpenSpec actions for better traceability and collaboration.
 
 ---
 
