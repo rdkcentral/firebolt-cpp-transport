@@ -5,12 +5,25 @@ The Firebolt Transport Layer provides an event-driven interface for connecting, 
 
 ---
 
-## Key Interfaces
-
+## Description
+The transport layer is a standalone C++ library that abstracts WebSocket communication and JSON-RPC message handling. It exposes `IGateway` as the primary public interface for consumers. Internally, a `Transport` class manages the WebSocket connection lifecycle, message dispatching, and callback registration. The library is intentionally decoupled from client business logic and API schemas, enabling reuse across different Firebolt SDK implementations.
 
 ---
 
-## Architectural Sketch
+## Requirements
+- Expose `IGateway` as the sole public interface for consumers.
+- Support connect, disconnect, send, request, subscribe, and unsubscribe operations.
+- Support configurable WebSocket URL, timeouts, watchdog, and logging.
+- Surface connection state changes via `ConnectionChangeCallback`.
+- Handle JSON-RPC requests and responses with unique message IDs.
+- Support legacy RPC v1 event notification format via `legacyRPCv1` config flag.
+- Provide custom response header retrieval after connection.
+
+---
+
+## Architecture / Design
+
+### Architectural Sketch
 
 ```
 ┌───────────────┐
@@ -31,120 +44,137 @@ The Firebolt Transport Layer provides an event-driven interface for connecting, 
 └───────────────┘
 ```
 
----
+- `IGateway` is the public interface — consumers interact only with this.
+- `Transport` (internal, `src/transport.h`) manages the WebSocket connection and message dispatching.
+- `Helpers` / `IHelper` wrap `IGateway` for typed property access, invocation, and subscription management.
 
-## Extensibility
+### Connection Protocol
+
+- **WebSocket Transport**: The client connects to a configurable URL (default: `ws://127.0.0.1:9998`). Connection state is managed via `ConnectionChangeCallback`.
+- **JSON-RPC Messaging**: All requests, responses, and events are encoded as JSON-RPC messages. The transport layer handles serialization/deserialization using nlohmann::json.
+- **Legacy Support**: The `legacyRPCv1` flag enables compatibility with older event notification formats.
+
+```
+┌─────────────┐      WebSocket      ┌─────────────┐
+│   Client    │<------------------->│   Gateway   │
+└─────────────┘     JSON-RPC        └─────────────┘
+```
+
+### Extensibility
 - Callback-based integration for event and connection handling.
 - Template-based notification for property changes.
 - Flexible payloads via native types and JSON serialization.
 
 ---
 
-## Subscription Lifecycle & Integration Points
+## External Interfaces
 
+### Configuration Mapping
 
----
+The `Firebolt::Config` structure defines all options available during connection:
 
-## Unknowns & Gaps
-- Integration points with external systems (e.g., Firebolt SDK) are not yet mapped.
+| Field                | Type               | Default             | Description                        |
+|----------------------|--------------------|---------------------|------------------------------------|
+| wsUrl                | std::string        | ws://127.0.0.1:9998 | WebSocket endpoint                 |
+| waitTime_ms          | unsigned           | 3000                | RPC response timeout (ms)          |
+| legacyRPCv1          | bool               | macro value         | Enable legacy event notification   |
+| log.level            | LogLevel           | Info                | Log verbosity                      |
+| log.transportInclude | optional<unsigned> | n/a                 | Log category include mask          |
+| log.transportExclude | optional<unsigned> | n/a                 | Log category exclude mask          |
+| log.format.ts        | bool               | true                | Timestamp in logs                  |
+| log.format.location  | bool               | false               | Source location in logs            |
+| log.format.function  | bool               | true                | Function name in logs              |
+| log.format.thread    | bool               | true                | Thread id in logs                  |
+| watchdogCycle_ms     | unsigned           | 500                 | Watchdog polling interval (ms)     |
 
-## Event Types & Error Handling
+### Event Types & Error Handling
 
-### Event Types
-- Transport events are surfaced via `EventCallback` and include:
+- Transport events are surfaced via `EventCallback`:
   - Connection state changes (connected, disconnected, failed)
   - Incoming JSON-RPC notifications (custom event types)
   - Property change notifications (via template callbacks)
-- Event types are identified by method names in JSON-RPC messages.
-- Consumers can register callbacks for specific event types.
-
-### Error Handling
 - Errors are surfaced via `ConnectionChangeCallback` and response callbacks.
-- JSON-RPC error responses include an error object with code and message.
-- Transport errors (e.g., connection failures) are mapped to `Firebolt::Error` and passed to callbacks.
-- Timeout and watchdog settings in `Config` provide additional error detection and recovery.
+- JSON-RPC error responses include an error object with code and message mapped to `Firebolt::Error`.
+- Timeout and watchdog settings in `Config` provide additional error detection.
 - Legacy error formats are supported when `legacyRPCv1` is enabled.
 
-**Conclusion:**
-Event types are extensible via JSON-RPC method names, and error handling is integrated into callback flows for both transport and protocol-level failures.
+### Transport Interface (Internal)
 
-## Configuration Mapping
+The `Transport` class is internal (`src/transport.h`) and not exposed via public headers. It provides:
+- `connect(url, onMessage, onConnectionChange, ...)`: Establishes WebSocket connection, registers callbacks.
+- `disconnect()`: Terminates the connection.
+- `getNextMessageID()`: Generates unique message IDs.
+- `send(method, params, id)`: Sends JSON-RPC messages.
+- `getResponseHeader(name)`: Retrieves a response header after connection.
 
-The `Firebolt::Config` structure defines the set of options available during connection:
+---
 
-| Field                | Type         | Default                | Description                                  |
-|----------------------|--------------|------------------------|----------------------------------------------|
-| wsUrl                | std::string  | ws://127.0.0.1:9998    | WebSocket endpoint                           |
-| waitTime_ms          | unsigned     | 3000                   | RPC response timeout (ms)                    |
-| legacyRPCv1          | bool         | macro value            | Enable legacy event notification             |
-| log.level            | LogLevel     | Info                   | Log verbosity                                |
-| log.transportInclude | optional<unsigned> | n/a              | Log category include mask                    |
-| log.transportExclude | optional<unsigned> | n/a              | Log category exclude mask                    |
-| log.format.ts        | bool         | true                   | Timestamp in logs                            |
-| log.format.location  | bool         | false                  | Source location in logs                      |
-| log.format.function  | bool         | true                   | Function name in logs                        |
-| log.format.thread    | bool         | true                   | Thread id in logs                            |
-| watchdogCycle_ms     | unsigned     | 500                    | Watchdog polling interval (ms)               |
+## Performance
+_Not applicable — no performance requirements are defined for this spec. See [transport_recommendations_spec.md](transport_recommendations_spec.md) for performance recommendations._
 
-Log settings are highly configurable, supporting both level and category masks. Legacy RPC support is toggled via macro, suggesting build-time flexibility. Watchdog and timeout values are tunable for performance and reliability.
+---
 
-## Connection Protocol
+## Security
+_Not applicable — security is out of scope for this spec. See [transport_recommendations_spec.md](transport_recommendations_spec.md) for security recommendations._
 
-The Firebolt Transport Layer uses WebSocket as its underlying transport, providing a persistent, bidirectional channel for communication. JSON-RPC is layered on top of WebSocket, enabling structured remote procedure calls and event notifications.
+---
 
-- **WebSocket Transport**
-  - The client connects to a configurable WebSocket URL (default: ws://127.0.0.1:9998).
-  - Connection state is managed via callbacks (e.g., ConnectionChangeCallback).
-  - Transport supports reconnect, disconnect, and error handling.
+## Versioning & Compatibility
+- The `legacyRPCv1` flag enables compatibility with legacy event notification formats.
+- The transport layer is versioned as part of the `FireboltTransport` library (see `cmake/version.cmake`).
+- See [transport_recommendations_spec.md](transport_recommendations_spec.md) for versioning and compatibility recommendations.
 
-- **JSON-RPC Messaging**
-  - All requests, responses, and events are encoded as JSON-RPC messages.
-  - Each message includes method, params, id, and (for responses) result or error.
-  - Event notifications are sent as JSON-RPC messages with specific method names.
-  - The transport layer handles serialization/deserialization using nlohmann::json.
+---
 
-- **Legacy Support**
-  - The `legacyRPCv1` flag enables compatibility with older event notification formats.
+## Conformance Testing & Validation
+_Not applicable — conformance test strategies are defined in [transport_recommendations_spec.md](transport_recommendations_spec.md)._
 
-- **Message Flow**
+---
 
-  ┌─────────────┐      WebSocket      ┌─────────────┐
-  │   Client    │<------------------->│   Gateway   │
-  └─────────────┘     JSON-RPC        └─────────────┘
+## Covered Code
 
-  - Client sends JSON-RPC requests over WebSocket.
-  - Gateway processes requests, sends responses/events.
-  - Both sides can initiate messages (bidirectional).
+- include/firebolt/gateway.h:
+    - IGateway::connect
+    - IGateway::disconnect
+    - IGateway::send
+    - IGateway::request
+    - IGateway::subscribe
+    - IGateway::unsubscribe
+    - IGateway::getResponseHeader
+    - GetGatewayInstance
+- include/firebolt/config.h.in:
+    - Config
+- src/transport.h:
+    - Transport::connect
+    - Transport::disconnect
+    - Transport::send
+    - Transport::getNextMessageID
+    - Transport::getResponseHeader
+- src/gateway.cpp:
+    - Gateway::connect
+    - Gateway::disconnect
+    - Gateway::send
+    - Gateway::request
+    - Gateway::subscribe
+    - Gateway::unsubscribe
+    - Gateway::getResponseHeader
 
-## Transport Interface Clarification
+---
 
-- The `Transport` class is defined internally (src/transport.h) and is not exposed via public headers.
-- Public consumers interact with the transport layer via the `IGateway` interface, which wraps or delegates to a `Transport` instance.
-- The `Transport` class provides:
-  - `connect(url, onMessage, onConnectionChange, transportLoggingInclude, transportLoggingExclude)`: Establishes WebSocket connection, registers callbacks, configures logging.
-  - `disconnect()`: Terminates the connection.
-  - `getNextMessageID()`: Generates unique message IDs.
-  - `send(method, params, id)`: Sends JSON-RPC messages.
-- Integration relies on callback registration for message and connection events.
-- Logging is configurable via include/exclude masks.
+## Open Queries
+- Integration points with external systems (e.g., Firebolt SDK) are not yet mapped — how should `IGateway` initialization be documented for external consumers?
+- Externalized header usage and examples for initializing and configuring `Gateway` are missing — should these be added to this spec or a separate integration guide?
+- `Subscription Lifecycle & Integration Points` was identified as incomplete — what additional integration points need to be documented?
 
-**Conclusion:**
-The transport layer is designed for internal use, with IGateway serving as the public API. Consumers interact with IGateway, which manages transport details and exposes connection, event, and message handling.
+---
 
-## Integration Points
+## References
+- [header_interfaces_spec.md](header_interfaces_spec.md)
+- [cpp_specifics_spec.md](cpp_specifics_spec.md)
+- [transport_recommendations_spec.md](transport_recommendations_spec.md)
+- [json_rpc_handling_spec.md](json_rpc_handling_spec.md)
 
-- The Firebolt Transport Layer is a standalone library focused on converting incoming calls to JSON-RPC for WebSocket transport.
-- It is agnostic to client usage and the underlying WebSocket implementation, enabling flexible integration with various consumers.
-- Actual API schemas and business logic reside in separate repositories (e.g., https://github.com/rdkcentral/firebolt-cpp-client).
-- IGateway and IHelper interfaces are designed for external use, but there are currently no examples or documentation for initializing and configuring Gateway.
-- Building clear initialization and configuration flows for Gateway is an open requirement for the spec.
+---
 
-**Conclusion:**
-The transport library is decoupled from client and schema logic, providing a generic, extensible foundation for JSON-RPC over WebSocket. Integration patterns and initialization flows should be defined to support external consumers and future SDKs.
-
-## Externalized Headers & Usage Findings
-
-
-## Refactoring Note
-
-Header interface details (IHelper, SubscriptionManager, json_types, types.h, logger.h) have been moved to a dedicated spec: `header_interfaces_spec.md`. The transport layer spec now focuses solely on transport mechanics, protocol, and architecture.
+## Change History
+- 2026-04-17 - Restructured to match spec template; moved header interface details to header_interfaces_spec.md.
