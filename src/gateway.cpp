@@ -167,7 +167,7 @@ public:
             }
             else
             {
-                ErrorInfo errorInfo(static_cast<int32_t>(message["error"]["code"]), message["error"]["message"]);
+                Firebolt::ErrorInfo errorInfo(static_cast<int32_t>(message["error"]["code"]), message["error"]["message"]);
                 c->promise.set_value(
                     Result<nlohmann::json>{static_cast<Firebolt::Error>(message["error"]["code"]), errorInfo});
             }
