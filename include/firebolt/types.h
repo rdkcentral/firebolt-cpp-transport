@@ -55,6 +55,11 @@ enum class LogLevel : uint8_t
 class ErrorInfo
 {
     public:
+        ErrorInfo()
+            : error_{0},
+            message_{}
+        {
+        }
         ErrorInfo(int32_t error, const std::string& message)
             : error_{error},
             message_{message}
