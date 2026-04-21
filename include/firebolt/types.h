@@ -52,6 +52,21 @@ enum class LogLevel : uint8_t
     MaxLevel
 };
 
+class ErrorInfo
+{
+    public:
+        ErrorInfo(int32_t error, const std::string& message)
+            : error_{error},
+            message_{message}
+        {
+        }
+        int32_t error() const { return error_; }
+        const std::string& message() const { return message_; }
+    private:
+        int32_t error_;
+        std::string message_;
+};
+
 using SubscriptionId = std::uint64_t;
 
 template <typename T> class Result
@@ -59,12 +74,21 @@ template <typename T> class Result
 public:
     explicit Result(const T& value)
         : value_{value},
-          error_{Error::None}
+        error_{Error::None},
+        errorInfo_{}
     {
     }
     explicit Result(const Error& error)
         : value_{},
-          error_{error}
+        error_{error},
+        errorInfo_{}
+    {
+    }
+
+    explicit Result (const Error& error, const ErrorInfo& errorInfo)
+        : value_{},
+        error_{error},
+        errorInfo_{errorInfo}
     {
     }
 
@@ -79,26 +103,39 @@ public:
     T value_or(T&& defaultValue) const& { return value_.value_or(defaultValue); }
     const Error& error() const& { return error_; }
     Error& error() & { return error_; }
+    const ErrorInfo& errorInfo() const& { return errorInfo_; }
+    ErrorInfo& errorInfo() & { return errorInfo_; }
 
 private:
     std::optional<T> value_;
     Error error_;
+    ErrorInfo errorInfo_;
 };
 
 template <> class Result<void>
 {
 public:
     explicit Result(const Error& error)
-        : error_{error}
+        : error_{error},
+        errorInfo_{}
+    {
+    }
+
+    explicit Result (const Error& error, const ErrorInfo& errorInfo)
+        : error_{error},
+        errorInfo_{errorInfo}
     {
     }
 
     explicit operator bool() const { return Firebolt::Error::None == error_; }
     const Error& error() const& { return error_; }
     Error& error() & { return error_; }
+    const ErrorInfo& errorInfo() const& { return errorInfo_; }
+    ErrorInfo& errorInfo() & { return errorInfo_; }
 
 private:
     Error error_;
+    ErrorInfo errorInfo_;
 };
 
 namespace Types
