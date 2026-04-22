@@ -34,6 +34,10 @@ on:
       GITHUB_TOKENCM:
         required: false
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   coverity_incremental_scan:
     runs-on: comcast-ubuntu-latest
