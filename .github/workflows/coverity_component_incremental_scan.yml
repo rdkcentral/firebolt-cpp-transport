@@ -77,7 +77,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const pull_number = Number('${{ inputs.pullRequestNumber }}');
+            const pull_number = Number(${{ toJSON(inputs.pullRequestNumber) }});
             if (!Number.isInteger(pull_number) || pull_number <= 0) {
               core.setFailed('Invalid pullRequestNumber input.');
               return;
@@ -89,7 +89,7 @@ jobs:
               per_page: 100
             });
             const addedModified = files
-              .filter((file) => file.status === 'added' || file.status === 'modified')
+              .filter((file) => file.status === 'added' || file.status === 'modified' || file.status === 'renamed')
               .map((file) => file.filename)
               .join('\n');
             core.setOutput('added_modified', addedModified);
