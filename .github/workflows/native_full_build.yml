@@ -8,6 +8,9 @@ on:
     branches: [ main, '+([0-9])\.+([0-9])\.x-maintenance' ]
     paths: ['**/*.c', '**/*.cpp', '**/*.cc', '**/*.cxx', '**/*.h', '**/*.hpp', 'CMakeLists.txt', 'cmake/**', 'build_dependencies.sh', 'cov_build.sh']
 
+permissions:
+  contents: read
+
 defaults:
   run:
     shell: bash
