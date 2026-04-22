@@ -28,6 +28,9 @@ on:
       GITHUB_TOKENCM:
         required: false
 
+permissions:
+  contents: read
+
 jobs:
   coverity_full_scan:
     runs-on: comcast-ubuntu-latest
