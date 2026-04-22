@@ -89,7 +89,7 @@ jobs:
               per_page: 100
             });
             const addedModified = files
-              .filter((file) => file.status === 'added' || file.status === 'modified' || file.status === 'renamed')
+              .filter((file) => ['added', 'modified', 'renamed'].includes(file.status))
               .map((file) => file.filename)
               .join('\n');
             core.setOutput('added_modified', addedModified);
