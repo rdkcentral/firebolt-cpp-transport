@@ -75,6 +75,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
 
       - name: Coverity Incremental Analysis Scan
+        id: incremental_scan
         if: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.changeset.outputs.added_modified != '' }}
         env:
           CHANGED_FILES_RAW: ${{ steps.changeset.outputs.added_modified }}
@@ -104,7 +105,7 @@ jobs:
 
       # Post findings as PR comments — raw Coverity output, no custom formatting
       - name: Coverity Pull Request Feedback
-        if: always()
+        if: ${{ always() && hashFiles('coverity_dir/coverity-results.json') != '' }}
         uses: synopsys-sig/coverity-report-output-v7-json@v0.1.1
         with:
           json-file-path: coverity_dir/coverity-results.json
