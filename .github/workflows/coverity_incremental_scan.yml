@@ -2,6 +2,7 @@ name: Coverity Incremental Scan
 
 permissions:
   contents: read
+  pull-requests: write
 
 # Triggers on pull requests targeting primary branches.
 # Scans only changed compilable source files.
