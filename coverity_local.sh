@@ -43,8 +43,8 @@ docker run --rm \
     sh build_dependencies.sh
 
     # Capture build
-    cov-configure --gcc --config config/coverity_config.xml
-    cov-build --dir coverity_dir --config config/coverity_config.xml sh cov_build.sh
+    cov-configure --gcc
+    cov-build --dir coverity_dir sh cov_build.sh
 
     # Analyze — same checker set as CI full scan
     cov-analyze --dir coverity_dir \
