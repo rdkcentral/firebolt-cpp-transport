@@ -1,0 +1,108 @@
+name: Coverity Incremental Analysis Scan
+
+# Reusable workflow — called by coverity_incremental_scan.yml.
+# Runs cov-run-desktop against changed files only and posts findings
+# as pull request comments via synopsys-sig/coverity-report-output-v7-json.
+on:
+  workflow_call:
+    inputs:
+      pullRequestNumber:
+        description: 'Pull Request Number'
+        required: true
+        type: string
+      buildCommand:
+        description: 'Build Command'
+        required: true
+        type: string
+      branchName:
+        description: 'Branch Name (target/base branch)'
+        required: true
+        type: string
+      customSetup:
+        description: 'Custom setup commands'
+        required: false
+        type: string
+    secrets:
+      COVERITY_APIKEY:
+        required: true
+      ARTIFACTORY_USER_APIKEY:
+        required: true
+      # GITHUB_TOKEN: used to post PR feedback comments
+      GITHUB_TOKEN:
+        required: true
+      # GITHUB_TOKENCM: cross-org token — required if customSetup clones private repos
+      GITHUB_TOKENCM:
+        required: false
+
+jobs:
+  coverity_incremental_scan:
+    runs-on: comcast-ubuntu-latest
+    container:
+      # TODO (org admin): provision vars.DOCKER_REGISTRY in rdkcentral org
+      image: ${{ vars.DOCKER_REGISTRY }}/rdk-docker/docker-rdk-coverity:1.0.7
+      credentials:
+        # TODO (org admin): provision vars.ARTIFACTORY_USER in rdkcentral org
+        username: ${{ vars.ARTIFACTORY_USER }}
+        password: ${{ secrets.ARTIFACTORY_USER_APIKEY }}
+
+    env:
+      # TODO (org admin): provision vars.COVERITY_URL and vars.COVERITY_USER in rdkcentral org
+      COVERITY_URL: ${{ vars.COVERITY_URL }}
+      COVERITY_USER: ${{ vars.COVERITY_USER }}
+      COVERITY_APIKEY: ${{ secrets.COVERITY_APIKEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      COVERITY_PROJECT_NAME: ${{ github.event.repository.name }}
+      COVERITY_STREAM_NAME: ${{ github.event.repository.name }}_${{ inputs.branchName }}
+      BUILD_COMMAND: ${{ inputs.buildCommand }}
+      COVERITY_UNSUPPORTED_COMPILER_INVOCATION: 1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Custom setup
+        if: ${{ inputs.customSetup }}
+        run: |
+          echo "customSetup: ${{ inputs.customSetup }}"
+          eval "${{ inputs.customSetup }}"
+
+      - name: Get Pull Request Changeset
+        id: changeset
+        uses: jitterbit/get-changed-files@v1
+        if: ${{ github.event_name == 'pull_request' }}
+
+      - name: Coverity Incremental Analysis Scan
+        if: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.changeset.outputs.added_modified != '' }}
+        run: |
+          export PATH=$PATH:/opt/coverity/bin
+          set -x
+          cd $GITHUB_WORKSPACE
+          echo "Changed files: ${{ steps.changeset.outputs.added_modified }}"
+          # Phase 1: capture build into the coverity_dir intermediate database
+          cov-run-desktop --dir coverity_dir \
+            --url $COVERITY_URL --user $COVERITY_USER --password $COVERITY_APIKEY \
+            --stream $COVERITY_STREAM_NAME \
+            --build $BUILD_COMMAND
+          # Phase 2: analyze changed files only, compare against stream baseline
+          # --exit1-if-defects true: workflow fails on new defects (maintainers can bypass
+          #   via GitHub branch protection "Allow specified actors to bypass required pull requests")
+          cov-run-desktop --dir coverity_dir \
+            --url $COVERITY_URL --user $COVERITY_USER --password $COVERITY_APIKEY \
+            --stream $COVERITY_STREAM_NAME \
+            --present-in-reference false \
+            --ignore-uncapturable-inputs true \
+            --exit1-if-defects true \
+            --json-output-v7 coverity_dir/coverity-results.json \
+            --allow-suffix-match --set-new-defect-owner false \
+            ${{ steps.changeset.outputs.added_modified }}
+
+      # Post findings as PR comments — raw Coverity output, no custom formatting
+      - name: Coverity Pull Request Feedback
+        if: always()
+        uses: synopsys-sig/coverity-report-output-v7-json@v0.1.1
+        with:
+          json-file-path: coverity_dir/coverity-results.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          coverity-url: ${{ vars.COVERITY_URL }}
+          coverity-project-name: ${{ github.event.repository.name }}
+          coverity-username: ${{ vars.COVERITY_USER }}
+          coverity-password: ${{ secrets.COVERITY_APIKEY }}

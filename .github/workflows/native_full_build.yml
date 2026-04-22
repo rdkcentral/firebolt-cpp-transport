@@ -1,0 +1,32 @@
+name: Build Component in Native Environment
+
+on:
+  push:
+    branches: [ main, '+([0-9])\.+([0-9])\.x-maintenance' ]
+    paths: ['**/*.c', '**/*.cpp', '**/*.cc', '**/*.cxx', '**/*.h', '**/*.hpp']
+  pull_request:
+    branches: [ main, '+([0-9])\.+([0-9])\.x-maintenance' ]
+    paths: ['**/*.c', '**/*.cpp', '**/*.cc', '**/*.cxx', '**/*.h', '**/*.hpp']
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  native-build:
+    name: Build firebolt-cpp-transport in native environment
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/rdkcentral/docker-rdk-ci:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sh -x build_dependencies.sh
+
+      - name: Build
+        run: sh -x cov_build.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.RDKCM_RDKE }}
