@@ -65,6 +65,7 @@ jobs:
           export PATH=$PATH:/opt/coverity/bin
           set -x
           cd $GITHUB_WORKSPACE
+          mkdir -p config
           cov-configure --gcc
           cov-build --dir coverity_dir $BUILD_COMMAND
           cov-analyze --dir coverity_dir --one-tu-per-psf false --disable-spotbugs --aggressiveness-level low --enable DC.STRING_BUFFER --all
