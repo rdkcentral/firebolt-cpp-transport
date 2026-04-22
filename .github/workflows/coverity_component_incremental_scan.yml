@@ -72,11 +72,14 @@ jobs:
 
       - name: Coverity Incremental Analysis Scan
         if: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.changeset.outputs.added_modified != '' }}
+        env:
+          CHANGED_FILES_RAW: ${{ steps.changeset.outputs.added_modified }}
         run: |
           export PATH=$PATH:/opt/coverity/bin
           set -x
           cd $GITHUB_WORKSPACE
-          echo "Changed files: ${{ steps.changeset.outputs.added_modified }}"
+          echo "Changed files: $CHANGED_FILES_RAW"
+          mapfile -t changed_files <<< "$CHANGED_FILES_RAW"
           # Phase 1: capture build into the coverity_dir intermediate database
           cov-run-desktop --dir coverity_dir \
             --url $COVERITY_URL --user $COVERITY_USER --password $COVERITY_APIKEY \
@@ -93,7 +96,7 @@ jobs:
             --exit1-if-defects true \
             --json-output-v7 coverity_dir/coverity-results.json \
             --allow-suffix-match --set-new-defect-owner false \
-            ${{ steps.changeset.outputs.added_modified }}
+            "${changed_files[@]}"
 
       # Post findings as PR comments — raw Coverity output, no custom formatting
       - name: Coverity Pull Request Feedback
