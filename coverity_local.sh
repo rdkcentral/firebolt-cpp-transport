@@ -10,8 +10,8 @@
 #   docker pull <DOCKER_REGISTRY>/rdk-docker/docker-rdk-coverity:1.0.7
 #
 # Usage:
-#   sh coverity_local.sh
-#   sh coverity_local.sh --image <full-image-ref>   # override image
+#   bash coverity_local.sh
+#   ./coverity_local.sh --image <full-image-ref>   # override image
 set -e
 
 IMAGE="${COVERITY_IMAGE:-}"
