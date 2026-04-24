@@ -51,12 +51,22 @@ For each section in the template:
 - **If the content is unclear, incomplete, or ambiguous**, add an entry under `## Open Queries` describing what needs clarification.
 - **Never delete existing content** — always preserve and reorganize it.
 
-### Step 4: Ensure Covered Code Section
-- If a `## Covered Code` section exists, preserve it as-is.
-- If it is missing, add a placeholder:
+
+### Step 4: Generate Covered Code Section
+- Scan the codebase for all relevant files and methods (e.g., in `src/`, `include/`, and `test/` directories).
+- For each spec, identify code files and methods that are related to the spec (using naming, comments, or code references if available).
+- Generate a `## Covered Code` section listing the files and methods covered by the spec, using the following format:
   ```markdown
   ## Covered Code
-  _Not yet mapped. Add file and method references here._
+  - src/example.cpp:
+      - ExampleClass::exampleMethod
+  - include/example.h:
+      - ExampleClass::exampleMethod
+  ```
+- If no code can be mapped to the spec, add a placeholder:
+  ```markdown
+  ## Covered Code
+  _No code mapping found. Add file and method references here._
   ```
 
 ### Step 5: Add Open Queries
@@ -69,9 +79,11 @@ For each section in the template:
   - [YYYY-MM-DD] - openspec-templater - Restructured to match spec template.
   ```
 
+
 ### Step 7: Write the Updated Spec
 - Rewrite the spec file with all sections in the correct template order.
 - Preserve all original content, reorganized as needed.
+- The `## Covered Code` section should now be generated automatically based on the codebase scan, not copied from the previous spec content.
 
 ---
 
