@@ -133,10 +133,18 @@ def has_keywords(text, patterns):
 # ---------------------------------------------------------------------------
 
 def parse_covered_code_section(spec_path):
-    """Parse the '## Covered Code' section. Returns {filepath: set(methods)}."""
+    """Parse the '## Covered Code' section. Returns {filepath: set(methods)}.
+
+    File entries must look like a path — they contain '/' or '.' (e.g.
+    'src/foo.h', 'include/bar/baz.h').  This prevents method names that
+    contain '::' (e.g. 'IGateway::connect') from being mistaken for file
+    entries, which happened because '::' contains ':'.
+    """
     covered = defaultdict(set)
     in_section = False
     current_file = None
+    # A valid file path entry: must contain at least one '/' or a '.' before ':'
+    file_entry_pattern = re.compile(r'^-\s+([\w/\\][^:]*[/\\.][^:]*):\s*$')
     with open(spec_path, encoding="utf-8", errors="ignore") as f:
         for line in f:
             stripped = line.strip()
@@ -146,9 +154,9 @@ def parse_covered_code_section(spec_path):
             if in_section:
                 if stripped.startswith("##"):
                     break
-                file_match = re.match(r'-\s+([\w/\\.]+):', stripped)
+                file_match = file_entry_pattern.match(stripped)
                 if file_match:
-                    current_file = file_match.group(1)
+                    current_file = file_match.group(1).strip()
                     continue
                 method_match = re.match(r'\s*-\s*([\w:~]+)', line)
                 if current_file and method_match:
@@ -445,9 +453,11 @@ def main():
     comment_boost = 0  # methods additionally covered via // Spec: comments
     for f, methods in code_methods.items():
         covered_by_spec = spec_coverage.get(f, set())
+        # Build a set of unqualified names from spec entries (e.g. "Transport::disconnect" -> "disconnect")
+        unqualified_spec = {m.split("::")[-1] for m in covered_by_spec}
         file_has_comment = f in files_with_spec_comment
         for m in methods:
-            if m in covered_by_spec:
+            if m in covered_by_spec or m in unqualified_spec:
                 # Covered by primary source (Covered Code section)
                 covered_methods += 1
             elif file_has_comment:
