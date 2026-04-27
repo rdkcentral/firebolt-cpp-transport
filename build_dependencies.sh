@@ -27,7 +27,11 @@ apt-get install -y --no-install-recommends --fix-missing \
     curl wget git \
     python3-pip
 
-python3 -m pip install --break-system-packages gcovr
+if python3 -m pip help install | grep -q -- '--break-system-packages'; then
+    python3 -m pip install --break-system-packages gcovr
+else
+    python3 -m pip install gcovr
+fi
 
 # ---------------------------------------------------------------------------
 # 2. googletest
