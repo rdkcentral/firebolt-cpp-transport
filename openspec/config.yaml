@@ -1,20 +1,29 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+# Project context
+context: |
+  Tech stack: C++17, CMake, websocketpp, nlohmann::json
+  Transport library for Firebolt SDK — abstracts WebSocket and JSON-RPC communication.
+  Specs live in openspec/specs/ (canonical) and openspec/changes/archive/<change>/specs/ (archived).
+  All spec files must follow the standard template defined in
+  .github/skills/openspec-templater/spec_template.md.
+  Coverage is tracked via .github/skills/openspec-coverage/openspec_coverage.py.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+# Per-artifact rules
+rules:
+  proposal:
+    - Keep proposals concise — focus on what and why, not how.
+    - Always include a "Non-goals" section.
+  specs:
+    - Every spec file MUST follow the standard template at .github/skills/openspec-templater/spec_template.md.
+    - Required sections in order: Overview, Description, Requirements, Architecture / Design,
+      External Interfaces, Performance, Security, Versioning & Compatibility,
+      Conformance Testing & Validation, Covered Code, Open Queries, References, Change History.
+    - Sections that are not applicable must be present with the note:
+      "_Not applicable — [brief reason]._"
+    - The Covered Code section must list relevant src/ and include/ files and methods.
+    - Open Queries must always be present, even if empty (_No open queries._).
+    - Change History must include an entry for the current date.
+  tasks:
+    - Break tasks into chunks of max 2-4 hours.
+    - Each task should reference the relevant spec section it implements.

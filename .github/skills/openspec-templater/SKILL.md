@@ -98,11 +98,26 @@ For each section in the template:
 
 ---
 
+## Workflow for Archived Proposals
+
+When a change has been archived (moved to `openspec/changes/archive/`), use this workflow to generate a properly formatted spec file that will be picked up by `openspec-coverage`:
+
+1. **Locate the archived proposal** — find the change folder under `openspec/changes/archive/<date>-<name>/`.
+2. **Read the proposal and design documents** — read `proposal.md`, `design.md`, and any existing spec files inside the `specs/` subfolder of the archive.
+3. **Apply the template** — follow Steps 1–7 above to produce a fully templated spec file inside the archive's `specs/` subfolder (e.g. `openspec/changes/archive/<date>-<name>/specs/<name>_spec.md`).
+4. **Generate the Covered Code section** — scan the codebase for files and methods introduced or modified by the archived change and populate the `## Covered Code` section.
+5. **Do not move the spec to `openspec/specs/`** — archive specs live inside the archive folder; `openspec-coverage` scans both locations automatically.
+
+> **Note:** Only archived changes are templated and included in coverage. Pending proposals in `openspec/changes/` (non-archived) should not be templated until the change is complete and archived.
+
+---
+
 ## Example Usage
 
 - "Apply the spec template to `openspec/specs/transport_layer_spec.md`."
 - "Update all specs in `openspec/specs/` to match the new template."
 - "Reformat `my_feature_spec.md` using the openspec-templater skill."
+- "Apply the spec template to the archived change at `openspec/changes/archive/2026-03-16-add-header-support/specs/header_support_spec.md`."
 
 ---
 

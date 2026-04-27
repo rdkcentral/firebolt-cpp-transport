@@ -11,6 +11,9 @@ from collections import defaultdict
 
 CODE_DIRS = ["src", "include", "test"]
 SPEC_DIR = os.path.join("openspec", "specs")
+# Archived change specs (completed proposals) are included in coverage.
+# Pending proposals under openspec/changes/ (non-archived) are excluded.
+ARCHIVE_SPEC_GLOB = os.path.join("openspec", "changes", "archive")
 
 # Core required sections — mapped to the actual ## headings used in the spec template.
 # The template uses # [Title] (H1), ## Overview, ## Description, ## Requirements.
@@ -32,12 +35,35 @@ def find_code_files():
 
 
 def find_spec_files():
+    """Find all spec markdown files.
+
+    Scans two locations:
+    - ``openspec/specs/``                          — canonical specs
+    - ``openspec/changes/archive/<change>/specs/`` — specs from completed/archived proposals
+
+    Only the ``specs/`` subdirectory inside each archived change is scanned.
+    Proposal, design, and task documents at the archive root are excluded.
+    Pending proposals under ``openspec/changes/`` (non-archived) are also excluded.
+    """
     specs = {}
-    for root, _, filenames in os.walk(SPEC_DIR):
-        for f in filenames:
-            if f.endswith(".md"):
-                name = os.path.splitext(f)[0]
-                specs[name] = os.path.join(root, f)
+
+    def _scan(directory):
+        for root, _, filenames in os.walk(directory):
+            for f in filenames:
+                if f.endswith(".md"):
+                    rel = os.path.relpath(os.path.join(root, f))
+                    specs[rel] = os.path.join(root, f)
+
+    # Canonical specs
+    _scan(SPEC_DIR)
+
+    # Archived change specs — only the specs/ subdirectory within each archive entry
+    if os.path.isdir(ARCHIVE_SPEC_GLOB):
+        for change_name in os.listdir(ARCHIVE_SPEC_GLOB):
+            archive_specs_dir = os.path.join(ARCHIVE_SPEC_GLOB, change_name, "specs")
+            if os.path.isdir(archive_specs_dir):
+                _scan(archive_specs_dir)
+
     return specs
 
 
