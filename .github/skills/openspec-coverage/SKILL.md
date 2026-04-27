@@ -88,13 +88,14 @@ Each sub-criterion is scored individually and summed for the total 10%.
 ### Code to Spec Coverage (40%) Breakdown
 
 1. **Reference Coverage (20%)**
-  - Percentage of code modules/classes/functions that reference a spec (using the standard comment format).
+  - Primary measure: percentage of code methods covered by the `## Covered Code` sections declared in specs.
+  - Supplementary measure: if `// Spec: <spec_name>` comments are present in code files, they are counted as additional coverage on top of the spec-driven mapping. The final score is the union of both signals, capped at 100%.
 2. **Spec Existence (10%)**
   - Percentage of referenced specs that actually exist in the `openspec/specs/` directory.
 3. **Spec Completeness (5%)**
-  - Percentage of referenced specs that have all required sections (title, description, requirements).
+  - Percentage of specs that have all required sections (overview, description, requirements).
 4. **No Orphaned Code (5%)**
-  - Percentage of code modules with no missing or outdated spec references.
+  - Percentage of code methods covered by at least one spec (via Covered Code or Spec comment).
 
 Each sub-criterion is scored individually and summed for the total 40%.
 # openspec-coverage Skill
@@ -120,22 +121,24 @@ Automate the process of checking code-to-spec coverage in projects using Openspe
 - **Conformance Testing Automation and Validation:** 10%
 
 ## Workflow
-1. Scan codebase for modules/classes/functions.
-2. Detect references to Openspec specs (e.g., via comments like `// Spec: <spec_name>`).
-3. Verify referenced specs exist in the `openspec/specs/` directory.
-4. Identify code without spec references and specs not referenced by code.
-5. Calculate a coverage score for each category above based on guidelines.
-6. Output a report with:
+1. Scan specs for `## Covered Code` sections — this is the **primary source** of code-to-spec mapping.
+2. Scan code files for `// Spec: <spec_name>` comments as a **supplementary signal** to boost coverage.
+3. Compute reference coverage as the union of methods covered by either signal.
+4. Verify referenced spec files exist in the `openspec/specs/` directory.
+5. Identify code methods not covered by any spec (orphaned) and specs missing required sections.
+6. Calculate a coverage score for each category above based on guidelines.
+7. Output a report with:
   - Total score and per-category breakdown
   - Coverage percentage
   - Missing/mismatched specs
-  - Orphaned code/specs
+  - Orphaned code/methods
   - Suggestions for improvement
 
 ## Conventions
-- Code should reference specs using a standard comment format: `// Spec: <spec_name>`
+- The **primary** way to declare coverage is via the `## Covered Code` section in each spec file, listing files and methods.
+- Optionally, code files may include `// Spec: <spec_name>` comments as an additional traceability signal.
 - All specs must be in `openspec/specs/`
-- Specs should have required sections: Title, Description, Requirements
+- Specs should have required sections: Overview, Description, Requirements
 
 ## Example Usage
 - Run the skill to generate a compliance report:

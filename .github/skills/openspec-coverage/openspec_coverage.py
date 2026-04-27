@@ -157,11 +157,36 @@ def parse_covered_code_section(spec_path):
 
 
 def scan_all_specs_for_coverage(spec_files):
+    """Primary source: scan all spec '## Covered Code' sections."""
     coverage = defaultdict(set)
     for spec_path in spec_files.values():
         for f, methods in parse_covered_code_section(spec_path).items():
             coverage[f].update(methods)
     return coverage
+
+
+def scan_code_for_spec_comments(code_files):
+    """Supplementary source: scan code files for '// Spec: <spec_name>' comments.
+
+    Returns a set of (file_path, method_name) pairs that are attributed to at
+    least one spec via an inline comment.  The comment may appear anywhere
+    inside the same file as the method — we attribute every method in the file
+    to the spec when a comment is found, since comment placement varies widely.
+    """
+    spec_comment_pattern = re.compile(
+        r'//\s*[Ss]pec:\s*([\w\-./]+)', re.IGNORECASE
+    )
+    files_with_spec_comment = set()
+    for file_path in code_files:
+        try:
+            with open(file_path, encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if spec_comment_pattern.search(line):
+                        files_with_spec_comment.add(file_path)
+                        break
+        except Exception:
+            pass
+    return files_with_spec_comment
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +426,12 @@ def score_conformance(all_sections_by_spec):
 def main():
     code_files = find_code_files()
     spec_files = find_spec_files()
+
+    # Primary coverage source: ## Covered Code sections in specs
     spec_coverage = scan_all_specs_for_coverage(spec_files)
+
+    # Supplementary coverage source: // Spec: comments in code files
+    files_with_spec_comment = scan_code_for_spec_comments(code_files)
 
     # Parse all spec sections up front
     all_sections_by_spec = {name: parse_spec_sections(path) for name, path in spec_files.items()}
@@ -412,11 +442,18 @@ def main():
 
     covered_methods = 0
     orphaned_methods = []
+    comment_boost = 0  # methods additionally covered via // Spec: comments
     for f, methods in code_methods.items():
-        covered = spec_coverage.get(f, set())
+        covered_by_spec = spec_coverage.get(f, set())
+        file_has_comment = f in files_with_spec_comment
         for m in methods:
-            if m in covered:
+            if m in covered_by_spec:
+                # Covered by primary source (Covered Code section)
                 covered_methods += 1
+            elif file_has_comment:
+                # Covered by supplementary source (// Spec: comment in file)
+                covered_methods += 1
+                comment_boost += 1
             else:
                 orphaned_methods.append((f, m))
 
@@ -452,8 +489,12 @@ def main():
     R.append("")
 
     # Code to Spec
+    spec_driven  = covered_methods - comment_boost
+    comment_only = comment_boost
     R.append(f"## Code to Spec Coverage: {code_to_spec_score:.2f} / 40")
     R.append(f"  - Reference Coverage:  {ref_coverage:.2f} / 20")
+    R.append(f"    - Covered via spec 'Covered Code' sections: {spec_driven} method(s)")
+    R.append(f"    - Additionally covered via '// Spec:' comments: {comment_only} method(s)")
     R.append(f"  - Spec Existence:      {spec_existence:.2f} / 10")
     R.append(f"  - Spec Completeness:   {spec_completeness:.2f} / 5  ({complete_count}/{total_specs} specs have all required sections)")
     R.append(f"  - No Orphaned Code:    {no_orphaned_code:.2f} / 5")
