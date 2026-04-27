@@ -106,7 +106,7 @@ private:
         auto result = gateway_.request(methodName, parameters).get();
         if (!result)
         {
-            return Result<nlohmann::json>{result.error()};
+            return Result<nlohmann::json>{result.error(), result.errorInfo()};
         }
         return Result<nlohmann::json>{*result};
     }

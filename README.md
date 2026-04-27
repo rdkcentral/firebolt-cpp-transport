@@ -22,12 +22,16 @@ All production code is outbound-only. No listening sockets are opened by this li
 ## Public API
 
 ### `Result<T>` — return type for all calls
+
 ```cpp
 auto result = helper.get<MyJsonType, std::string>("module.method");
 if (result) {
     use(*result);          // has a value
 } else {
     auto e = result.error(); // Firebolt::Error enum
+    auto info = result.errorInfo(); // Firebolt::ErrorInfo (code + message)
+    // info.error() gives the error code (int32_t)
+    // info.message() gives the error message (std::string)
 }
 ```
 
