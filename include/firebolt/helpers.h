@@ -87,7 +87,8 @@ public:
             FIREBOLT_LOG_ERROR("Getter", "Cannot parse data for a getter %s, payload: %s", methodName.c_str(),
                                result->dump().c_str());
             return Result<PropertyType>{Firebolt::Error::InvalidParams,
-                                        Firebolt::ErrorInfo(Firebolt::Error::UnSpecified, "Cannot parse response data")};
+                                        Firebolt::ErrorInfo(static_cast<int32_t>(Firebolt::Error::UnSpecified),
+                                                            "Cannot parse response data")};
         }
     }
 
