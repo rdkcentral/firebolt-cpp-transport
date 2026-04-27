@@ -12,8 +12,8 @@ set -e
 GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-${PWD}}"
 cd "${GITHUB_WORKSPACE}"
 
-cmake -B build -S . \
+cmake -B build-dev -S . \
     -DCMAKE_BUILD_TYPE=Debug \
     -DENABLE_TESTS=ON
 
-cmake --build build --parallel
+cmake --build build-dev --parallel

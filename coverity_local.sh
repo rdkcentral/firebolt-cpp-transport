@@ -31,7 +31,8 @@ if [[ -z "$IMAGE" ]]; then
 fi
 
 docker run --rm \
-  --user "$(id -u):$(id -g)" \
+  -e HOST_UID="$(id -u)" \
+  -e HOST_GID="$(id -g)" \
   -v "$(pwd):/workspace" \
   -w /workspace \
   "$IMAGE" \
@@ -60,6 +61,9 @@ docker run --rm \
     # Emit HTML report for browsing
     mkdir -p coverity_html
     cov-format-errors --dir coverity_dir --html-output coverity_html
+
+    # Keep generated outputs writable by the invoking host user
+    chown -R "${HOST_UID}:${HOST_GID}" coverity_dir coverity_html || true
 
     echo ""
     echo "HTML report: coverity_html/index.html"

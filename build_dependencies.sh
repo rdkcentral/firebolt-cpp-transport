@@ -27,7 +27,7 @@ apt-get install -y --no-install-recommends --fix-missing \
     curl wget git \
     python3-pip
 
-pip install gcovr || pip3 install gcovr
+python3 -m pip install --break-system-packages gcovr
 
 # ---------------------------------------------------------------------------
 # 2. googletest
