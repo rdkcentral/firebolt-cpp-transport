@@ -33,7 +33,7 @@ enum class Error : int32_t
     Timedout = 2,
     NotConnected = 3,
     AlreadyConnected = 4,
-    UnSpecified = -32100,
+    Unspecified = -32100,
     InvalidRequest = -32600,
     MethodNotFound = -32601,
     InvalidParams = -32602,

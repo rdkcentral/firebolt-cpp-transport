@@ -168,7 +168,7 @@ public:
             else
             {
                 Firebolt::ErrorInfo errorInfo(static_cast<int32_t>(message["error"]["code"]),
-                                              message["error"]["message"]);
+                                              message["error"]["message"].get<std::string>());
                 c->promise.set_value(
                     Result<nlohmann::json>{static_cast<Firebolt::Error>(message["error"]["code"]), errorInfo});
             }
