@@ -315,6 +315,8 @@ TEST_F(GatewayUTest, RequestWithError)
     auto result = responseFuture.get();
     EXPECT_FALSE(result);
     EXPECT_EQ(result.error(), Firebolt::Error::MethodNotFound);
+    EXPECT_EQ(result.errorInfo().error(), -32601);
+    EXPECT_EQ(result.errorInfo().message(), "Method not found");
 }
 
 TEST_F(GatewayUTest, MultipleSubscriptions)
