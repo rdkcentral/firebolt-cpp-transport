@@ -1,0 +1,87 @@
+name: Coverity Full Analysis Scan
+
+# Reusable workflow — called by coverity_full_scan.yml.
+# Runs a full cov-build + cov-analyze + cov-commit-defects cycle.
+# Results are committed to the Coverity Connect server stream only;
+# nothing is posted back to any pull request.
+on:
+  workflow_call:
+    inputs:
+      buildCommand:
+        description: 'Build Command'
+        required: true
+        type: string
+      branchName:
+        description: 'Branch Name'
+        required: true
+        type: string
+      customSetup:
+        description: 'Custom setup commands'
+        required: false
+        type: string
+    secrets:
+      COVERITY_APIKEY:
+        required: true
+      ARTIFACTORY_USER_APIKEY:
+        required: true
+      # GITHUB_TOKENCM: cross-org token — required if customSetup clones private repos
+      GITHUB_TOKENCM:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  coverity_full_scan:
+    runs-on: comcast-ubuntu-latest
+    container:
+      # TODO (org admin): provision vars.DOCKER_REGISTRY in rdkcentral org
+      image: ${{ vars.DOCKER_REGISTRY }}/rdk-docker/docker-rdk-coverity:1.0.7
+      credentials:
+        # TODO (org admin): provision vars.ARTIFACTORY_USER in rdkcentral org
+        username: ${{ vars.ARTIFACTORY_USER }}
+        password: ${{ secrets.ARTIFACTORY_USER_APIKEY }}
+
+    env:
+      # TODO (org admin): provision vars.COVERITY_URL and vars.COVERITY_USER in rdkcentral org
+      COVERITY_URL: ${{ vars.COVERITY_URL }}
+      COVERITY_USER: ${{ vars.COVERITY_USER }}
+      COVERITY_APIKEY: ${{ secrets.COVERITY_APIKEY }}
+      COVERITY_PROJECT_NAME: ${{ github.event.repository.name }}
+      COVERITY_STREAM_NAME: ${{ github.event.repository.name }}_${{ inputs.branchName }}
+      BUILD_COMMAND: ${{ inputs.buildCommand }}
+      GITHUB_TOKENCM: ${{ secrets.GITHUB_TOKENCM }}
+      COVERITY_UNSUPPORTED_COMPILER_INVOCATION: 1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Custom setup
+        if: ${{ inputs.customSetup }}
+        run: eval "${{ inputs.customSetup }}"
+
+      - name: Coverity Full Analysis Scan
+        run: |
+          export PATH=$PATH:/opt/coverity/bin
+          set -x
+          cd $GITHUB_WORKSPACE
+          mkdir -p config
+          cov-configure --gcc
+          cov-build --dir coverity_dir $BUILD_COMMAND
+          cov-analyze --dir coverity_dir --one-tu-per-psf false --disable-spotbugs --aggressiveness-level low --enable DC.STRING_BUFFER --all
+
+          max_retries=3
+          retries=0
+          retry_timeout_sec=30
+          success=false
+          while [ $retries -lt $max_retries ]; do
+            echo "Attempt $((retries + 1)) of $max_retries for cov-commit-defects"
+            if cov-commit-defects --dir coverity_dir --stream $COVERITY_STREAM_NAME \
+                --url $COVERITY_URL --user $COVERITY_USER --password $COVERITY_APIKEY; then
+              success=true
+              break
+            fi
+            retries=$((retries + 1))
+            sleep $((retries * retry_timeout_sec))
+          done
+          $success || { echo "cov-commit-defects failed after $max_retries attempts"; exit 1; }
