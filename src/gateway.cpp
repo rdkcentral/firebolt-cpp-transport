@@ -91,7 +91,7 @@ public:
             if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
                 runtime_waitTime_ms)
             {
-                FIREBOLT_LOG_WARNING("Gateway", "Request timed out, id: %u", it->second->id);
+                FIREBOLT_LOG_WARNING("Gateway", "Request timed out, id: %u %s", it->second->id);
                 it->second->promise.set_value(Result<nlohmann::json>(Firebolt::Error::Timedout));
                 it = queue.erase(it);
             }

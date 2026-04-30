@@ -40,6 +40,8 @@ add_library(${TARGET}
     ${SOURCES}
 )
 
+target_compile_options(${TARGET} PRIVATE -Wno-error=format)
+
 add_library(${TARGET}::${TARGET} ALIAS ${TARGET})
 
 if(ENABLE_LEGACY_RPC_V1)
