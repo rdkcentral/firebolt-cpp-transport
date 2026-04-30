@@ -1,0 +1,24 @@
+name: Coverity Full Scan
+
+# Triggers on merges to primary branches.
+# Results committed to Coverity Connect server (maintainer-only access).
+# Nothing is posted back to any pull request.
+on:
+  push:
+    branches: [ main, develop, '+([0-9])\.+([0-9])\.x-maintenance' ]
+    paths: ['**/*.c', '**/*.cpp', '**/*.cc', '**/*.cxx', '**/*.h', '**/*.hpp']
+
+permissions:
+  contents: read
+
+jobs:
+  call-coverity-full-scan:
+    uses: ./.github/workflows/coverity_component_full_scan.yml
+    with:
+      branchName: ${{ github.ref_name }}
+      buildCommand: sh cov_build.sh
+      customSetup: sh build_dependencies.sh
+    secrets:
+      COVERITY_APIKEY: ${{ secrets.COVERITY_APIKEY }}
+      ARTIFACTORY_USER_APIKEY: ${{ secrets.ARTIFACTORY_USER_APIKEY }}
+      GITHUB_TOKENCM: ${{ secrets.RDKCM_RDKE }}

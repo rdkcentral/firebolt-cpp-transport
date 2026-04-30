@@ -168,7 +168,10 @@ public:
             }
             else
             {
-                c->promise.set_value(Result<nlohmann::json>{static_cast<Firebolt::Error>(message["error"]["code"])});
+                Firebolt::ErrorInfo errorInfo(static_cast<int32_t>(message["error"]["code"]),
+                                              message["error"]["message"].get<std::string>());
+                c->promise.set_value(
+                    Result<nlohmann::json>{static_cast<Firebolt::Error>(message["error"]["code"]), errorInfo});
             }
         }
         catch (const std::out_of_range& e)

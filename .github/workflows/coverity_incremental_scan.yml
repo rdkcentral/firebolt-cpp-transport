@@ -1,0 +1,34 @@
+name: Coverity Incremental Scan
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Triggers on pull requests targeting primary branches.
+# Scans only changed compilable source files.
+# Findings are posted as pull request comments.
+# Merges are not blocked outright — maintainers can bypass via branch protection.
+on:
+  pull_request:
+    branches: [ main, develop, '+([0-9])\.+([0-9])\.x-maintenance' ]
+    paths: ['**/*.c', '**/*.cpp', '**/*.cc', '**/*.cxx', '**/*.h', '**/*.hpp']
+  workflow_dispatch:
+    inputs:
+      pullRequestNumber:
+        description: 'Pull Request Number'
+        required: true
+        type: string
+
+jobs:
+  call-coverity-incremental-scan:
+    uses: ./.github/workflows/coverity_component_incremental_scan.yml
+    with:
+      pullRequestNumber: ${{ github.event.inputs.pullRequestNumber || github.event.pull_request.number }}
+      branchName: ${{ github.event.pull_request.base.ref || github.ref_name }}
+      buildCommand: sh cov_build.sh
+      customSetup: sh build_dependencies.sh
+    secrets:
+      COVERITY_APIKEY: ${{ secrets.COVERITY_APIKEY }}
+      ARTIFACTORY_USER_APIKEY: ${{ secrets.ARTIFACTORY_USER_APIKEY }}
+      GITHUB_TOKEN: ${{ secrets.RDKCM_RDKE }}
+      GITHUB_TOKENCM: ${{ secrets.RDKCM_RDKE }}
