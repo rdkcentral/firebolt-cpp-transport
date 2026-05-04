@@ -73,6 +73,45 @@ struct Config
 
     /** Watchdog polling cycle in milliseconds. Default: 500. */
     unsigned watchdogCycle_ms = 500;
+
+    /**
+     * @brief Retry policy for the initial gateway connection.
+     *
+     * On embedded devices the Firebolt client may start before the gateway
+     * daemon is ready (poor systemd ordering) or before the loopback interface
+     * has an IPv4 address assigned.  Setting reconnect_max_attempts > 0 causes
+     * connect() to retry up to that many times, waiting reconnect_delay_ms
+     * between each attempt, before returning an error to the caller.
+     *
+     * Each attempt is bounded by connect_attempt_timeout_ms: if the underlying
+     * transport (DNS + TCP + WebSocket handshake) does not complete within that
+     * window, the attempt is aborted and counted as a failure.  connect()
+     * therefore blocks for at most:
+     *   (reconnect_max_attempts + 1) * connect_attempt_timeout_ms
+     *   + reconnect_max_attempts * reconnect_delay_ms
+     *
+     * Capped internally at 100 retries regardless of this value.
+     *
+     * Default: 0 (single attempt, no retry; connect() returns the last
+     * transport error, e.g. Error::NotConnected, Error::Timedout, or
+     * Error::General, or Error::NotConnected on per-attempt timeout).
+     */
+    unsigned reconnect_max_attempts = 0;
+
+    /** Milliseconds to wait between reconnect attempts. Default: 1000. */
+    unsigned reconnect_delay_ms = 1000;
+
+    /**
+     * @brief Per-attempt timeout for the initial connection handshake (ms).
+     *
+     * If DNS resolution + TCP connect + WebSocket handshake do not complete
+     * within this window, the in-flight attempt is aborted and connect()
+     * either retries (if reconnect_max_attempts > 0) or returns
+     * Error::NotConnected to the caller.
+     *
+     * Default: 10000 (10 seconds).
+     */
+    unsigned connect_attempt_timeout_ms = 10000;
 };
 
 } // namespace Firebolt

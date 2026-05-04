@@ -22,6 +22,7 @@
 #include "firebolt/types.h"
 #include "transport.h"
 #include "utils.h"
+#include <algorithm>
 #include <assert.h>
 #include <chrono>
 #include <condition_variable>
@@ -385,17 +386,37 @@ private:
     Server server;
     std::thread watchdogThread;
     std::atomic<bool> watchdogRunning;
+    std::mutex watchdogMtx;
+    std::condition_variable watchdogCv;
     bool legacyRPCv1;
 
     std::map<MessageID, std::string> rpcv1_eventMap;
     std::mutex rpcv1_eventMap_mtx;
+
+    // Synchronisation for the initial connection attempt (and retries).
+    // connectResultMtx / connectResultCv are only used inside connect().
+    std::mutex connectResultMtx;
+    std::condition_variable connectResultCv;
+    bool connectResultReady{false};
+    bool connectResultOk{false};
+    Firebolt::Error connectResultError{Firebolt::Error::None};
+
+    // Guards connectionChangeListener against concurrent reads (IO thread) and
+    // writes (main thread).  Always acquire connectionListenerMtx BEFORE
+    // connectResultMtx to avoid inversion.
+    std::mutex connectionListenerMtx;
+
+    // Set to true when disconnect() is called so a retry loop in connect()
+    // aborts early instead of sleeping out the full reconnect_delay_ms.
+    std::atomic<bool> disconnectRequested_{false};
 
 public:
     GatewayImpl()
         : client(*this),
           server(),
           watchdogRunning(false),
-          legacyRPCv1(false)
+          legacyRPCv1(false),
+          disconnectRequested_(false)
     {
     }
 
@@ -404,6 +425,7 @@ public:
         if (watchdogRunning)
         {
             watchdogRunning = false;
+            watchdogCv.notify_one();
             if (watchdogThread.joinable())
             {
                 watchdogThread.join();
@@ -419,10 +441,37 @@ public:
         Firebolt::Logger::setFormat(cfg.log.format.ts, cfg.log.format.location, cfg.log.format.function,
                                     cfg.log.format.thread);
 
-        connectionChangeListener = onConnectionChange;
+        // Signal the retry-loop condvar when each async open/fail arrives.
+        // Do NOT forward to onConnectionChange here — connect() fires it once
+        // with the final result after the loop, so callers never see partial
+        // failure callbacks from intermediate retry attempts.
+        ConnectionChangeCallback previousListener;
+        // NOTE: the wrapper intentionally does NOT forward events to the
+        // previous listener.  Forwarding only during an AlreadyConnected window
+        // requires a flag set after transport.connect() returns, but the IO
+        // thread can fire onOpen/onFail between client_->connect() being queued
+        // and that flag being set — a race that triggers a spurious callback on
+        // the old session.  The AlreadyConnected window is a few microseconds
+        // (synchronous return) and the listener is restored before connect()
+        // returns, so the theoretical one-event loss is preferable to the race.
+        {
+            std::lock_guard<std::mutex> listenerLock(connectionListenerMtx);
+            previousListener = connectionChangeListener;
+            connectionChangeListener = [this](bool connected, Firebolt::Error error)
+            {
+                {
+                    std::lock_guard<std::mutex> lk(connectResultMtx);
+                    connectResultReady = true;
+                    connectResultOk = connected;
+                    connectResultError = error;
+                }
+                connectResultCv.notify_one();
+            };
+        }
 
         runtime_waitTime_ms = cfg.waitTime_ms;
         legacyRPCv1 = cfg.legacyRPCv1;
+        disconnectRequested_ = false;
 
         std::string url = buildGatewayUrl(cfg.wsUrl, legacyRPCv1);
 
@@ -435,16 +484,130 @@ public:
             FIREBOLT_LOG_NOTICE("Transport", "Legacy RPCv1");
         }
 
-        FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s", url.c_str());
-        Firebolt::Error status = transport.connect(
-            url, [this](const nlohmann::json& message) { this->onMessage(message); },
-            [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
-            transportLoggingInclude, transportLoggingExclude);
+        // Cap to avoid unsigned overflow when reconnect_max_attempts is very large.
+        constexpr unsigned kMaxRetries = 100u;
+        const unsigned maxAttempts = 1 + std::min(cfg.reconnect_max_attempts, kMaxRetries);
+        Firebolt::Error status = Firebolt::Error::NotConnected;
+
+        for (unsigned attempt = 1; attempt <= maxAttempts; ++attempt)
+        {
+            if (disconnectRequested_)
+            {
+                break;
+            }
+
+            if (attempt > 1)
+            {
+                FIREBOLT_LOG_NOTICE("Gateway", "Reconnect attempt %u/%u in %u ms ...", attempt, maxAttempts,
+                                    cfg.reconnect_delay_ms);
+                // Sleep in reconnect_delay_ms increments so disconnect() can
+                // abort the wait early by setting disconnectRequested_.
+                constexpr unsigned kSliceMs = 50;
+                for (unsigned elapsed = 0; elapsed < cfg.reconnect_delay_ms && !disconnectRequested_; elapsed += kSliceMs)
+                {
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(std::min(kSliceMs, cfg.reconnect_delay_ms - elapsed)));
+                }
+                if (disconnectRequested_)
+                    break;
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(connectResultMtx);
+                connectResultReady = false;
+                connectResultOk = false;
+                connectResultError = Firebolt::Error::None;
+            }
+
+            FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s (attempt %u/%u)", url.c_str(), attempt, maxAttempts);
+
+            status = transport.connect(
+                url, [this](const nlohmann::json& message) { this->onMessage(message); },
+                [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
+                transportLoggingInclude, transportLoggingExclude);
+
+            if (status != Firebolt::Error::None)
+            {
+                // Synchronous error from transport (e.g. bad URL) — no point retrying.
+                break;
+            }
+
+            // Wait for the async open/fail callback (with a generous ceiling).
+            bool attemptReady = false, attemptOk = false;
+            Firebolt::Error attemptError = Firebolt::Error::NotConnected;
+            {
+                const auto kConnectTimeout = std::chrono::milliseconds(cfg.connect_attempt_timeout_ms);
+                // Snapshot result fields while the mutex is held: the IO-thread
+                // callback can write to these fields after wait_for releases the
+                // lock, so reading them outside the scope is a data race.
+                std::unique_lock<std::mutex> lk(connectResultMtx);
+                connectResultCv.wait_for(lk, kConnectTimeout,
+                                         [this] { return connectResultReady || disconnectRequested_.load(); });
+                attemptReady = connectResultReady;
+                attemptOk = connectResultOk;
+                attemptError = connectResultError;
+            }
+
+            if (disconnectRequested_)
+            {
+                // Abort the in-flight transport connection so the socket is
+                // cleaned up, and force a failure status so the post-loop code
+                // does not falsely report success, install the user listener, or
+                // start the watchdog.
+                transport.disconnect();
+                status = Firebolt::Error::NotConnected;
+                break;
+            }
+
+            if (attemptOk)
+            {
+                status = Firebolt::Error::None;
+                break;
+            }
+
+            // Connection failed or timed out.  Close the in-flight attempt before
+            // the next retry iteration so there are no overlapping websocket handles.
+            if (!attemptReady)
+            {
+                FIREBOLT_LOG_WARNING("Gateway", "Connect attempt %u/%u timed out; aborting", attempt, maxAttempts);
+                attemptError = Firebolt::Error::NotConnected;
+            }
+            transport.disconnect();
+            status = (attemptError != Firebolt::Error::None) ? attemptError : Firebolt::Error::NotConnected;
+        }
 
         if (status != Firebolt::Error::None)
         {
+            if (status == Firebolt::Error::AlreadyConnected)
+            {
+                // Transport is already connected — restore the pre-existing listener
+                // so the live connection is not disrupted, and do NOT emit a false
+                // "disconnected" event to the caller.
+                std::lock_guard<std::mutex> lk(connectionListenerMtx);
+                connectionChangeListener = previousListener;
+                return status;
+            }
+            // Restore the plain user callback so subsequent events (if any) are
+            // forwarded directly without the condvar logic.
+            {
+                std::lock_guard<std::mutex> lk(connectionListenerMtx);
+                connectionChangeListener = onConnectionChange;
+            }
+            // NOTE: this final result callback fires on the connect() calling
+            // thread.  Post-connect state-change callbacks (disconnect, watchdog
+            // reconnect) fire on the websocketpp IO thread.  Callers must be
+            // prepared to receive callbacks on either thread.
+            onConnectionChange(false, status);
             return status;
         }
+
+        // Swap the wrapper out for the plain user callback now that we're connected.
+        {
+            std::lock_guard<std::mutex> lk(connectionListenerMtx);
+            connectionChangeListener = onConnectionChange;
+        }
+        // See NOTE above about callback thread.
+        onConnectionChange(true, Firebolt::Error::None);
 
         if (!watchdogRunning.exchange(true))
         {
@@ -453,8 +616,13 @@ public:
                 {
                     while (watchdogRunning)
                     {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(watchdog_interval_ms));
-                        client.checkPromises();
+                        std::unique_lock<std::mutex> lk(watchdogMtx);
+                        bool timedOut = !watchdogCv.wait_for(lk, std::chrono::milliseconds(watchdog_interval_ms),
+                                                             [this] { return !watchdogRunning.load(); });
+                        if (!watchdogRunning)
+                            break;
+                        if (timedOut)
+                            client.checkPromises();
                     }
                 });
         }
@@ -464,36 +632,28 @@ public:
 
     virtual Firebolt::Error disconnect() override
     {
-        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] transport.disconnect() start");
-        auto t0_disc = std::chrono::steady_clock::now();
+        disconnectRequested_ = true;
+        connectResultCv.notify_all(); // wake any in-progress retry wait
+        FIREBOLT_LOG_INFO("Gateway", "[shutdown] transport.disconnect() start");
         Firebolt::Error status = transport.disconnect();
-        FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() done in %ld ms, status=%d",
-                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_disc)
-                              .count(),
-                          static_cast<int>(status));
+        FIREBOLT_LOG_INFO("Gateway", "[shutdown] transport.disconnect() done, status=%d", static_cast<int>(status));
         if (status != Firebolt::Error::None)
         {
             return status;
         }
         if (watchdogRunning.exchange(false))
         {
-            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] waiting for watchdog thread join...");
-            auto t0_wdog = std::chrono::steady_clock::now();
+            watchdogCv.notify_one();
+            FIREBOLT_LOG_INFO("Gateway", "[shutdown] waiting for watchdog join...");
             if (watchdogThread.joinable())
             {
                 watchdogThread.join();
             }
-            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %ld ms",
-                               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                                                     t0_wdog)
-                                   .count());
+            FIREBOLT_LOG_INFO("Gateway", "[shutdown] watchdog joined");
         }
-        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] stopping notification worker...");
-        auto t0_nw = std::chrono::steady_clock::now();
+        FIREBOLT_LOG_INFO("Gateway", "[shutdown] stopping notification worker...");
         server.stopNotificationWorker();
-        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %ld ms",
-                           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_nw)
-                               .count());
+        FIREBOLT_LOG_INFO("Gateway", "[shutdown] notification worker stopped");
         return Error::None;
     }
 
@@ -532,25 +692,15 @@ public:
         nlohmann::json params;
         params["listen"] = true;
 
-        FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] waiting for subscribe ACK for '%s'...", event.c_str());
-        auto t0_sub = std::chrono::steady_clock::now();
-        auto future_sub = request(event, params, id);
+        auto future = request(event, params, id);
         constexpr auto kSubscribeAckTimeout = std::chrono::milliseconds(50);
-        if (future_sub.wait_for(kSubscribeAckTimeout) != std::future_status::ready)
+        if (future.wait_for(kSubscribeAckTimeout) != std::future_status::ready)
         {
-            FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' timed out after %lld ms", event.c_str(),
-                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                          std::chrono::steady_clock::now() - t0_sub)
-                                                          .count()));
             status = Firebolt::Error::Timedout;
         }
         else
         {
-            FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' received in %lld ms", event.c_str(),
-                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                          std::chrono::steady_clock::now() - t0_sub)
-                                                          .count()));
-            auto result = future_sub.get();
+            auto result = future.get();
             if (!result)
             {
                 status = result.error();
@@ -573,7 +723,6 @@ public:
     {
         FIREBOLT_LOG_DEBUG("Gateway", "Unsubscribe called for event '%s'", event.c_str());
         Firebolt::Error status = server.unsubscribe(event, usercb);
-
         if (status != Firebolt::Error::None)
         {
             FIREBOLT_LOG_DEBUG("Gateway", "Unsubscribe failed for event '%s'", event.c_str());
@@ -688,7 +837,15 @@ private:
         FIREBOLT_LOG_ERROR("Gateway", "Invalid payload received: %s", message.dump().c_str());
     }
 
-    void onConnectionChange(const bool connected, Firebolt::Error error) { connectionChangeListener(connected, error); }
+    void onConnectionChange(const bool connected, Firebolt::Error error)
+    {
+        ConnectionChangeCallback cb;
+        {
+            std::lock_guard<std::mutex> lk(connectionListenerMtx);
+            cb = connectionChangeListener;
+        }
+        cb(connected, error);
+    }
 
     MessageID getNextMessageID() override { return transport.getNextMessageID(); }
 

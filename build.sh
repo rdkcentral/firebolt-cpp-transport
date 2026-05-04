@@ -18,6 +18,39 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE="firebolt-cpp-transport-ci:local"
+
+# Pre-scan for --docker before arg parsing so forwarded args are preserved
+use_docker=false
+_forward_args=()
+for _arg in "$@"; do
+  [[ "$_arg" == "--docker" ]] && { use_docker=true; continue; }
+  _forward_args+=("$_arg")
+done
+
+if $use_docker; then
+  for _bdir in build build-dev; do
+    _cache="$SCRIPT_DIR/$_bdir/CMakeCache.txt"
+    if [[ -f "$_cache" ]]; then
+      _cached=$(grep '^CMAKE_HOME_DIRECTORY' "$_cache" 2>/dev/null | cut -d= -f2 || true)
+      # In Docker, the workspace is mounted at /workspace.  Only wipe if the
+      # cache was configured for a different environment (e.g. a native host build).
+      if [[ -n "$_cached" && "$_cached" != "/workspace" ]]; then
+        echo "Wiping stale $_bdir (configured at $_cached, expected /workspace)..."
+        rm -rf "$SCRIPT_DIR/$_bdir"
+      fi
+    fi
+  done
+  if ! docker image inspect "$IMAGE" &>/dev/null; then
+    echo "Building CI Docker image (one-time)..."
+    docker build -t "$IMAGE" -f "$SCRIPT_DIR/.github/Dockerfile" "$SCRIPT_DIR"
+  fi
+  exec docker run --rm --user "$(id -u):$(id -g)" \
+    -v "$SCRIPT_DIR:/workspace" -w /workspace \
+    "$IMAGE" ./build.sh "${_forward_args[@]}"
+fi
+
 bdir="build"
 do_install=false
 params=
@@ -50,12 +83,21 @@ while [[ ! -z $1 ]]; do
   esac; shift
 done
 
-[[ ! -z $SYSROOT_PATH ]] || { echo "SYSROOT_PATH not set" >/dev/stderr; exit 1; }
-[[ -e $SYSROOT_PATH ]] || { echo "SYSROOT_PATH not exist ($SYSROOT_PATH)" >/dev/stderr; exit 1; }
+SYSROOT_PATH="${SYSROOT_PATH:-/}"
+[[ -e $SYSROOT_PATH ]] || { echo "SYSROOT_PATH does not exist ($SYSROOT_PATH)" >/dev/stderr; exit 1; }
 
 $cleanFirst && rm -rf $bdir
 
-if [[ ! -e "$bdir" || -n "$@" ]]; then
+_cache="$SCRIPT_DIR/$bdir/CMakeCache.txt"
+if [[ -f "$_cache" ]]; then
+  _cached=$(grep '^CMAKE_HOME_DIRECTORY' "$_cache" 2>/dev/null | cut -d= -f2 || true)
+  if [[ -n "$_cached" && "$_cached" != "$SCRIPT_DIR" ]]; then
+    echo "Wiping stale $bdir (configured at $_cached, now at $SCRIPT_DIR)..."
+    rm -rf "$SCRIPT_DIR/$bdir"
+  fi
+fi
+
+if [[ ! -f "$bdir/CMakeCache.txt" || $# -gt 0 ]]; then
   params+=" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
   command -v ccache >/dev/null 2>&1 && params+=" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
   cmake -B $bdir \
