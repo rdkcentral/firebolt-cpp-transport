@@ -1,5 +1,6 @@
 # Firebolt C++ Transport
 
+
 A C++17 WebSocket + JSON-RPC 2.0 transport library shared by all Firebolt C++ SDKs. It handles connection management, request/response correlation, and event subscriptions — so higher-level SDKs only deal with typed method calls.
 
 ## Architecture
