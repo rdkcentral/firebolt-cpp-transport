@@ -27,9 +27,6 @@ on:
         required: true
       ARTIFACTORY_USER_APIKEY:
         required: true
-      # GITHUB_TOKEN: used to post PR feedback comments
-      GITHUB_TOKEN:
-        required: true
       # GITHUB_TOKENCM: cross-org token — required if customSetup clones private repos
       GITHUB_TOKENCM:
         required: false
