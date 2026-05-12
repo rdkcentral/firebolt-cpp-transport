@@ -27,8 +27,4 @@ jobs:
       branchName: ${{ github.event.pull_request.base.ref || github.ref_name }}
       buildCommand: sh cov_build.sh
       customSetup: sh build_dependencies.sh
-    secrets:
-      COVERITY_APIKEY: ${{ secrets.COVERITY_APIKEY }}
-      ARTIFACTORY_USER_APIKEY: ${{ secrets.ARTIFACTORY_USER_APIKEY }}
-      GITHUB_TOKEN: ${{ secrets.RDKCM_RDKE }}
-      GITHUB_TOKENCM: ${{ secrets.RDKCM_RDKE }}
+    secrets: inherit
