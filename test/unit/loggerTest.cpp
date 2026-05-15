@@ -17,6 +17,7 @@
  */
 
 #include "firebolt/logger.h"
+#include <algorithm>
 #include <gtest/gtest.h>
 #include <regex>
 #include <string>
@@ -46,9 +47,20 @@ protected:
     {
         // Redirect stderr to a pipe
         fflush(stderr);
-        int pipefd[2];
-        EXPECT_EQ(pipe(pipefd), 0);
+        int pipefd[2] = {-1, -1};
+        if (pipe(pipefd) != 0)
+        {
+            ADD_FAILURE() << "pipe() failed while capturing logger output";
+            return std::string();
+        }
         int savedStderr = dup(STDERR_FILENO);
+        if (savedStderr < 0)
+        {
+            close(pipefd[0]);
+            close(pipefd[1]);
+            ADD_FAILURE() << "dup(STDERR_FILENO) failed while capturing logger output";
+            return std::string();
+        }
         dup2(pipefd[1], STDERR_FILENO);
 
         Logger::log(level, module, __FILE__, __func__, __LINE__, "%s", msg);
@@ -266,9 +278,13 @@ TEST_F(LoggerFormatUTest, MessageTruncation)
     // Generate a message larger than MaxBufSize (1024)
     std::string longMsg(2000, 'X');
     std::string output = captureLogCall(LogLevel::Error, "Test", longMsg.c_str());
-    // Should still produce output (truncated) without crashing
-    EXPECT_FALSE(output.empty());
     EXPECT_NE(output.find("[Firebolt|Test|Error]"), std::string::npos);
+    // The raw message is truncated to MaxBufSize-1 chars, and the formatted
+    // output buffer (also MaxBufSize) further limits it because the prefix
+    // consumes space.  Verify truncation actually occurred:
+    size_t xCount = std::count(output.begin(), output.end(), 'X');
+    EXPECT_GT(xCount, 0u) << "Truncated output should still contain message characters";
+    EXPECT_LT(xCount, longMsg.size()) << "Message should have been truncated to fit MaxBufSize";
 }
 
 // ---------------------------------------------------------------------------
@@ -282,11 +298,13 @@ TEST_F(LoggerFormatUTest, MessageWithTrailingNewline)
 
     // The logger strips trailing newlines from the message
     std::string output = captureLogCall(LogLevel::Error, "Test", "trailing newline\n");
-    // The output should end with the message text (not double newline)
-    EXPECT_NE(output.find("trailing newline"), std::string::npos);
-    // There should be exactly one newline at the end (from fprintf)
+    // The output should contain the message text
     size_t msgPos = output.find("trailing newline");
-    EXPECT_NE(msgPos, std::string::npos);
+    ASSERT_NE(msgPos, std::string::npos);
+    // After stripping the user's \n, only fprintf's \n should remain:
+    // the text "trailing newline" should be followed by exactly "\n" (end of output)
+    std::string afterMsg = output.substr(msgPos + strlen("trailing newline"));
+    EXPECT_EQ(afterMsg, "\n") << "Expected exactly one trailing newline. Got: [" << afterMsg << "]";
 }
 
 // ---------------------------------------------------------------------------
@@ -315,17 +333,49 @@ TEST_F(LoggerFormatUTest, LogLevelNames)
 }
 
 // ---------------------------------------------------------------------------
-// ⚠️  PRODUCTION CODE FLAG
-// File:     src/logger.cpp:123
-// Symptom:  strrchr(file.c_str(), '/') returns nullptr when file has no '/',
-//           and assigning nullptr to std::string via operator=(const char*) is
-//           undefined behavior (crash/segfault in libstdc++).
-// Expected: Should check for nullptr before assigning to std::string.
-// Risk:     Crash when formatter_addLocation=true and __FILE__ has no slash
-//           (unlikely in production Docker builds, but possible in unit tests
-//           or embedded builds with relative paths).
-// Action:   Review before test is written.
+// Test name: LoggerFormatUTest.LocationWithoutSlashInPath
+// Covers: src/logger.cpp:123 (strrchr returns nullptr → use file as-is)
+// Regression: previously assigned nullptr to std::string (UB / crash)
+// Scenario type: edge case
 // ---------------------------------------------------------------------------
+TEST_F(LoggerFormatUTest, LocationWithoutSlashInPath)
+{
+    Logger::setFormat(false, true, false, false);
+
+    // Redirect stderr
+    fflush(stderr);
+    int pipefd[2] = {-1, -1};
+    if (pipe(pipefd) != 0)
+    {
+        ADD_FAILURE() << "pipe() failed while capturing logger output";
+        return;
+    }
+    int savedStderr = dup(STDERR_FILENO);
+    if (savedStderr < 0)
+    {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        ADD_FAILURE() << "dup(STDERR_FILENO) failed while capturing logger output";
+        return;
+    }
+    dup2(pipefd[1], STDERR_FILENO);
+
+    // Pass a file path WITHOUT a slash — previously caused nullptr UB
+    Logger::log(LogLevel::Error, "Test", "noSlashFile.cpp", "testFunc", 42, "msg");
+
+    fflush(stderr);
+    dup2(savedStderr, STDERR_FILENO);
+    close(savedStderr);
+    close(pipefd[1]);
+
+    char buf[2048] = {0};
+    ssize_t n = read(pipefd[0], buf, sizeof(buf) - 1);
+    close(pipefd[0]);
+
+    std::string output(buf, n > 0 ? n : 0);
+    // Should use the bare filename as-is
+    EXPECT_NE(output.find("noSlashFile.cpp:42"), std::string::npos) << "Output: " << output;
+}
 
 // ---------------------------------------------------------------------------
 // Branch-coverage tests
@@ -348,6 +398,13 @@ TEST_F(LoggerFormatUTest, LocationWithSlashInPath)
     int pipefd[2];
     ASSERT_EQ(pipe(pipefd), 0);
     int savedStderr = dup(STDERR_FILENO);
+    if (savedStderr < 0)
+    {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        ADD_FAILURE() << "dup(STDERR_FILENO) failed while capturing logger output";
+        return;
+    }
     dup2(pipefd[1], STDERR_FILENO);
 
     // Pass a file path WITH a slash — triggers the substr(1) branch

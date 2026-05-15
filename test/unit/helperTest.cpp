@@ -440,7 +440,9 @@ TEST_F(HelperUTest, UnsubscribeAllNoMatch)
     IHelper& ihelper = helper;
     ihelper.subscribe(owner, "event", std::move(notification), onPropertyChangedCallback<TestJson, int>);
 
-    // Unsubscribe all for a different owner — no calls to gateway.unsubscribe
+    // Unsubscribe all for a different owner — no immediate calls to gateway.unsubscribe.
+    // The original subscription remains active and is cleaned up by the HelperImpl destructor.
+    EXPECT_CALL(mockGateway, unsubscribe("event", _)).WillOnce(Return(Error::None));
     helper.unsubscribeAll(otherOwner);
 }
 
@@ -454,7 +456,7 @@ struct TestMultiArgJson
     {
         vals = std::make_tuple(json.at("num").get<int>(), json.at("str").get<std::string>());
     }
-    auto value() const { return vals; }
+    const auto& value() const { return vals; }
 };
 
 // ---------------------------------------------------------------------------

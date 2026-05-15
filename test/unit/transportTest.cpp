@@ -17,6 +17,7 @@
  */
 
 #include "transport.h"
+#include "firebolt/logger.h"
 #include <array>
 #include <chrono>
 #include <future>
@@ -27,7 +28,6 @@
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
 #include <websocketpp/sha1/sha1.hpp>
-#include "firebolt/logger.h"
 
 using namespace Firebolt::Transport;
 
@@ -950,6 +950,10 @@ TEST_F(TransportIntegrationUTest, DebugLoggingOnSendAndReceive)
 {
     // Set log level to Debug so debugEnabled_ is true when connect() is called
     Firebolt::Logger::setLogLevel(Firebolt::LogLevel::Debug);
+    struct LogLevelGuard
+    {
+        ~LogLevelGuard() { Firebolt::Logger::setLogLevel(Firebolt::LogLevel::Error); }
+    } logGuard;
 
     Transport transport;
     std::promise<bool> connectionPromise;
@@ -985,7 +989,6 @@ TEST_F(TransportIntegrationUTest, DebugLoggingOnSendAndReceive)
     EXPECT_EQ(received["id"], msgId);
 
     transport.disconnect();
-    Firebolt::Logger::setLogLevel(Firebolt::LogLevel::Error);
 }
 
 // ---------------------------------------------------------------------------

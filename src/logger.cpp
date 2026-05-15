@@ -120,14 +120,14 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
     std::string fileName;
     if (formatter_addLocation)
     {
-        fileName = strrchr(file.c_str(), '/');
-        if (fileName.empty())
+        const char* slash = strrchr(file.c_str(), '/');
+        if (slash != nullptr)
         {
-            fileName = file;
+            fileName = slash + 1;
         }
         else
         {
-            fileName = fileName.substr(1);
+            fileName = file;
         }
     }
 

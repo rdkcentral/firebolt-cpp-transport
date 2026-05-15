@@ -1042,8 +1042,8 @@ TEST_F(GatewayUTest, SubscribeErrorFromServer)
     int dummyCb = 0;
 
     Firebolt::Error err = gateway.subscribe("test.onInvalid", onEvent, &dummyCb);
-    // The error from the server should be propagated, and the local subscription cleaned up
-    EXPECT_NE(err, Firebolt::Error::None);
+    // The server's JSON-RPC error (-32601) should be propagated as MethodNotFound
+    EXPECT_EQ(err, Firebolt::Error::MethodNotFound);
 }
 
 // ---------------------------------------------------------------------------
