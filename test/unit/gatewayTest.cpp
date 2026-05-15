@@ -700,3 +700,686 @@ TEST_F(GatewayUTest, DisconnectDoesNotHangWhenServerDisappearsWithActiveSubscrip
     EXPECT_LT(elapsed.count(), 200) << "unsubscribe() took " << elapsed.count()
                                     << " ms — blocked waiting for ACK from silent server (bug reproduced)";
 }
+
+// ---------------------------------------------------------------------------
+// Additional gateway tests for coverage gaps
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.ConnectAlreadyConnected
+// Covers: src/gateway.cpp (transport returns AlreadyConnected)
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, ConnectAlreadyConnected)
+{
+    IGateway& gateway = connectAndWait();
+
+    // Try to connect again
+    Firebolt::Error err = gateway.connect(getTestConfig(), [](bool, const Firebolt::Error&) {});
+    EXPECT_EQ(err, Firebolt::Error::AlreadyConnected);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.DuplicateSubscribeToSameEvent
+// Covers: src/gateway.cpp:server.subscribe returns Error::General on dup usercb
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, DuplicateSubscribeToSameEvent)
+{
+    IGateway& gateway = connectAndWait();
+
+    auto onEvent = [](void*, const nlohmann::json&) {};
+    int dummyCb = 0;
+
+    Firebolt::Error err = gateway.subscribe("test.onDup", onEvent, &dummyCb);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Duplicate subscribe with same usercb should fail
+    err = gateway.subscribe("test.onDup", onEvent, &dummyCb);
+    EXPECT_EQ(err, Firebolt::Error::General);
+
+    gateway.unsubscribe("test.onDup", &dummyCb);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.UnsubscribeNonexistentEvent
+// Covers: src/gateway.cpp:server.unsubscribe returns General when not found
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, UnsubscribeNonexistentEvent)
+{
+    IGateway& gateway = connectAndWait();
+
+    int dummyCb = 0;
+    Firebolt::Error err = gateway.unsubscribe("nonexistent.event", &dummyCb);
+    EXPECT_EQ(err, Firebolt::Error::General);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.NotificationWithValueWrapping
+// Covers: src/gateway.cpp:325-340 (notify with "value" key unwrapping)
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, NotificationWithValueWrapping)
+{
+    IGateway& gateway = connectAndWait();
+
+    std::promise<nlohmann::json> eventPromise;
+    auto eventFuture = eventPromise.get_future();
+
+    auto onEvent = [](void* usercb, const nlohmann::json& params)
+    { static_cast<std::promise<nlohmann::json>*>(usercb)->set_value(params); };
+
+    Firebolt::Error err = gateway.subscribe("test.onValue", onEvent, &eventPromise);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Server sends notification with params: {"value": 42} (scalar → unwrapped)
+    m_onMessageAction = [](server* s, connection_hdl hdl)
+    {
+        nlohmann::json eventMsg;
+        eventMsg["jsonrpc"] = "2.0";
+        eventMsg["method"] = "test.onValue";
+        eventMsg["params"] = {{"value", 42}};
+        s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
+    };
+    gateway.send("dummy", {});
+
+    auto status = eventFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready);
+
+    // When params has a single "value" key with non-object value, it's unwrapped
+    nlohmann::json received = eventFuture.get();
+    EXPECT_EQ(received, 42);
+
+    gateway.unsubscribe("test.onValue", &eventPromise);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.NotificationWithValueObjectNotUnwrapped
+// Covers: src/gateway.cpp:330-336 (value IS object → keep full params)
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, NotificationWithValueObjectNotUnwrapped)
+{
+    IGateway& gateway = connectAndWait();
+
+    std::promise<nlohmann::json> eventPromise;
+    auto eventFuture = eventPromise.get_future();
+
+    auto onEvent = [](void* usercb, const nlohmann::json& params)
+    { static_cast<std::promise<nlohmann::json>*>(usercb)->set_value(params); };
+
+    Firebolt::Error err = gateway.subscribe("test.onObjValue", onEvent, &eventPromise);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Server sends notification with params: {"value": {"nested": true}} (object → NOT unwrapped)
+    m_onMessageAction = [](server* s, connection_hdl hdl)
+    {
+        nlohmann::json eventMsg;
+        eventMsg["jsonrpc"] = "2.0";
+        eventMsg["method"] = "test.onObjValue";
+        eventMsg["params"] = {{"value", {{"nested", true}}}};
+        s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
+    };
+    gateway.send("dummy", {});
+
+    auto status = eventFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready);
+
+    // When value is an object, params are kept as-is
+    nlohmann::json received = eventFuture.get();
+    EXPECT_TRUE(received.contains("value"));
+    EXPECT_TRUE(received["value"]["nested"].get<bool>());
+
+    gateway.unsubscribe("test.onObjValue", &eventPromise);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.NotificationNoSubscribers
+// Covers: src/gateway.cpp:350-353 (no subscribers for event → warning log)
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, NotificationNoSubscribers)
+{
+    IGateway& gateway = connectAndWait();
+
+    // Server sends a notification for an event nobody subscribed to
+    m_onMessageAction = [](server* s, connection_hdl hdl)
+    {
+        nlohmann::json eventMsg;
+        eventMsg["jsonrpc"] = "2.0";
+        eventMsg["method"] = "test.onNobodyListens";
+        eventMsg["params"] = {{"data", true}};
+        s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
+    };
+    gateway.send("dummy", {});
+
+    // Give time for the notification to be processed (it should just log a warning)
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Verify the gateway still works after the orphan notification
+    auto responseFuture = gateway.request("test.method", {{"key", "val"}});
+    auto responseStatus = responseFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(responseStatus, std::future_status::ready);
+    EXPECT_TRUE(responseFuture.get());
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.ResponseWithNoReceiver
+// Covers: src/gateway.cpp: Client::response out_of_range catch
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, ResponseWithNoReceiver)
+{
+    IGateway& gateway = connectAndWait();
+
+    // Server sends a response with an id nobody is waiting for
+    m_onMessageAction = [](server* s, connection_hdl hdl)
+    {
+        nlohmann::json orphanResponse;
+        orphanResponse["jsonrpc"] = "2.0";
+        orphanResponse["id"] = 99999;
+        orphanResponse["result"] = {{"orphan", true}};
+        s->send(hdl, orphanResponse.dump(), websocketpp::frame::opcode::text);
+    };
+    gateway.send("dummy", {});
+
+    // Give time for the orphan to be processed
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Gateway should still function normally
+    auto responseFuture = gateway.request("test.method", {{"key", "val"}});
+    auto responseStatus = responseFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(responseStatus, std::future_status::ready);
+    EXPECT_TRUE(responseFuture.get());
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.SubscribeTimeout
+// Covers: src/gateway.cpp:subscribe ACK timeout path
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, SubscribeTimeout)
+{
+    // Use a message handler that never responds to subscribe requests
+    m_messageHandler = [](connection_hdl, server::message_ptr) { /* drop everything */ };
+
+    IGateway& gateway = connectAndWait();
+
+    auto onEvent = [](void*, const nlohmann::json&) {};
+    int dummyCb = 0;
+
+    Firebolt::Error err = gateway.subscribe("test.onTimeout", onEvent, &dummyCb);
+    // Subscribe should return Timedout because the ACK never arrives
+    EXPECT_EQ(err, Firebolt::Error::Timedout);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.SendNotConnected
+// Covers: src/gateway.cpp:Client::send → transport.send NotConnected
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, SendNotConnected)
+{
+    // Don't start the server — connect will fail
+    IGateway& gateway = GetGatewayInstance();
+    // Don't connect, just try to send on a fresh instance (already disconnected from TearDown)
+    // The gateway instance is a singleton, so we need to rely on the state being disconnected
+    // after TearDown was called in a previous test
+    // Instead, let's connect to a non-existent server and verify send after connection failure
+    std::promise<bool> connPromise;
+    auto connFuture = connPromise.get_future();
+    std::atomic<bool> promiseSet{false};
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.wsUrl = "ws://localhost:49199"; // No server here
+
+    Firebolt::Error err =
+        gateway.connect(cfg,
+                        [&](bool connected, const Firebolt::Error&)
+                        {
+                            bool expected = false;
+                            if (promiseSet.compare_exchange_strong(expected, true))
+                            {
+                                connPromise.set_value(connected);
+                            }
+                        });
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    // Wait for connection failure
+    auto status = connFuture.wait_for(std::chrono::milliseconds(500));
+    if (status == std::future_status::ready)
+    {
+        EXPECT_FALSE(connFuture.get());
+    }
+
+    // Send should fail with NotConnected
+    err = gateway.send("test.method", {});
+    EXPECT_EQ(err, Firebolt::Error::NotConnected);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.DisconnectWithoutConnect
+// Covers: src/gateway.cpp:disconnect when transport is in NotStarted state
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, DisconnectWithoutConnect)
+{
+    // After TearDown resets the gateway, calling disconnect again should be safe
+    // The singleton is already disconnected after the preceding test's TearDown
+    IGateway& gateway = GetGatewayInstance();
+    Firebolt::Error err = gateway.disconnect();
+    EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.NotificationMultipleParams
+// Covers: src/gateway.cpp:340-344 (params with multiple keys → pass as-is)
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, NotificationMultipleParams)
+{
+    IGateway& gateway = connectAndWait();
+
+    std::promise<nlohmann::json> eventPromise;
+    auto eventFuture = eventPromise.get_future();
+
+    auto onEvent = [](void* usercb, const nlohmann::json& params)
+    { static_cast<std::promise<nlohmann::json>*>(usercb)->set_value(params); };
+
+    Firebolt::Error err = gateway.subscribe("test.onMultiParam", onEvent, &eventPromise);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Server sends notification with multiple params (not just "value")
+    m_onMessageAction = [](server* s, connection_hdl hdl)
+    {
+        nlohmann::json eventMsg;
+        eventMsg["jsonrpc"] = "2.0";
+        eventMsg["method"] = "test.onMultiParam";
+        eventMsg["params"] = {{"key1", "val1"}, {"key2", "val2"}};
+        s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
+    };
+    gateway.send("dummy", {});
+
+    auto status = eventFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready);
+
+    nlohmann::json received = eventFuture.get();
+    EXPECT_EQ(received["key1"], "val1");
+    EXPECT_EQ(received["key2"], "val2");
+
+    gateway.unsubscribe("test.onMultiParam", &eventPromise);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.SubscribeErrorFromServer
+// Covers: src/gateway.cpp:subscribe → server returns error → unsubscribe
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, SubscribeErrorFromServer)
+{
+    // Server responds to subscribe with an error
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        try
+        {
+            auto request = nlohmann::json::parse(msg->get_payload());
+            nlohmann::json response;
+            response["jsonrpc"] = "2.0";
+            response["id"] = request["id"];
+            response["error"]["code"] = -32601;
+            response["error"]["message"] = "Method not found";
+            m_server.send(hdl, response.dump(), msg->get_opcode());
+        }
+        catch (...)
+        {
+        }
+    };
+
+    IGateway& gateway = connectAndWait();
+
+    auto onEvent = [](void*, const nlohmann::json&) {};
+    int dummyCb = 0;
+
+    Firebolt::Error err = gateway.subscribe("test.onInvalid", onEvent, &dummyCb);
+    // The error from the server should be propagated, and the local subscription cleaned up
+    EXPECT_NE(err, Firebolt::Error::None);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.LegacyRPCv1UnsubscribeCleanup
+// Covers: src/gateway.cpp:unsubscribe legacy RPC v1 event map cleanup
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, LegacyRPCv1UnsubscribeCleanup)
+{
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        auto request = nlohmann::json::parse(msg->get_payload());
+        if (request.contains("params") && request["params"].contains("listen"))
+        {
+            nlohmann::json response;
+            response["jsonrpc"] = "2.0";
+            response["id"] = request["id"];
+            response["result"]["listening"] = request["params"]["listen"];
+            m_server.send(hdl, response.dump(), msg->get_opcode());
+        }
+    };
+
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+    auto connectionFuture = m_connectionPromise.get_future();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.legacyRPCv1 = true;
+    Firebolt::Error connectErr = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& err)
+                                                 { onConnectionChange(connected, err); });
+    ASSERT_EQ(connectErr, Firebolt::Error::None);
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    auto onEvent = [](void*, const nlohmann::json&) {};
+    int dummyCb = 0;
+
+    Firebolt::Error err = gateway.subscribe("test.onLegacyEvent", onEvent, &dummyCb);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Unsubscribe should clean up the rpcv1_eventMap entry
+    err = gateway.unsubscribe("test.onLegacyEvent", &dummyCb);
+    EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.LegacyRPCv1NonEventResult
+// Covers: src/gateway.cpp:655-665 (legacy: result is present but id NOT in eventMap)
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, LegacyRPCv1NonEventResult)
+{
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        auto request = nlohmann::json::parse(msg->get_payload());
+        nlohmann::json response;
+        response["jsonrpc"] = "2.0";
+        response["id"] = request["id"];
+        response["result"] = {{"data", "not_listening"}};
+        m_server.send(hdl, response.dump(), msg->get_opcode());
+    };
+
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+    auto connectionFuture = m_connectionPromise.get_future();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.legacyRPCv1 = true;
+    Firebolt::Error connectErr = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& err)
+                                                 { onConnectionChange(connected, err); });
+    ASSERT_EQ(connectErr, Firebolt::Error::None);
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    // A normal request in legacy mode — result does NOT have "listening" key
+    // and the id is not in the event map, so it falls through to client.response()
+    auto future = gateway.request("device.name", {});
+    auto status = future.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready);
+
+    auto result = future.get();
+    ASSERT_TRUE(result);
+    EXPECT_EQ((*result)["data"], "not_listening");
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.WaitTimeConfiguration
+// Covers: src/gateway.cpp:runtime_waitTime_ms configuration from Config
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, WaitTimeConfiguration)
+{
+    // Use a handler that never responds
+    m_messageHandler = [](connection_hdl, server::message_ptr) {};
+
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+    auto connectionFuture = m_connectionPromise.get_future();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.waitTime_ms = 200; // Short timeout
+
+    Firebolt::Error err = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& e)
+                                          { onConnectionChange(connected, e); });
+    ASSERT_EQ(err, Firebolt::Error::None);
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    auto start = std::chrono::steady_clock::now();
+    auto future = gateway.request("test.noReply", {});
+    auto status = future.wait_for(std::chrono::milliseconds(1000));
+    ASSERT_EQ(status, std::future_status::ready);
+
+    auto result = future.get();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), Firebolt::Error::Timedout);
+    // Should timeout around waitTime_ms + watchdog interval (200 + 500 = ~700ms max)
+    EXPECT_LT(elapsed.count(), 1500);
+}
+
+// ---------------------------------------------------------------------------
+// Branch-coverage tests
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.SendResponseIsIgnoredByClient
+// Covers: gateway.cpp:153-154 (invokes.find(id) != end → erase + return)
+// The response for a fire-and-forget send() ID should be silently dropped.
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, SendResponseIsIgnoredByClient)
+{
+    // Server echoes back a response for every message (including sends)
+    IGateway& gateway = connectAndWait();
+
+    // send() uses Client::send which adds the ID to the invokes set.
+    // When the echo comes back, client.response() should find it in invokes,
+    // erase it, and return without error.
+    nlohmann::json params = {{"key", "value"}};
+    Firebolt::Error err = gateway.send("test.fire_and_forget", params);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Give time for the echo response to be processed
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Gateway should still be functional — the invoke response was silently dropped
+    auto future = gateway.request("test.method", {{"k", "v"}});
+    auto status = future.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready);
+    EXPECT_TRUE(future.get());
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.RequestFailsWhenSendErrors
+// Covers: gateway.cpp:136-141 (transport_.send returns error → promise set + erase)
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
+{
+    // Don't start server — connect to a port nobody listens on
+    // so transport is in Disconnected state after connection failure
+    IGateway& gateway = GetGatewayInstance();
+    std::promise<bool> connPromise;
+    auto connFuture = connPromise.get_future();
+    std::atomic<bool> pset{false};
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.wsUrl = "ws://localhost:49198";
+
+    Firebolt::Error err =
+        gateway.connect(cfg,
+                        [&](bool connected, const Firebolt::Error&)
+                        {
+                            bool exp = false;
+                            if (pset.compare_exchange_strong(exp, true))
+                                connPromise.set_value(connected);
+                        });
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    connFuture.wait_for(std::chrono::milliseconds(500));
+
+    // Now request — transport.send will fail with NotConnected,
+    // which triggers the error branch in Client::request (lines 136-141)
+    auto future = gateway.request("test.method", {{"k", "v"}});
+    auto status = future.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready);
+
+    auto result = future.get();
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), Firebolt::Error::NotConnected);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.LegacySubscribeFailureCleansEventMap
+// Covers: gateway.cpp:565-567 (legacyRPCv1 && subscribe error → erase rpcv1_eventMap)
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, LegacySubscribeFailureCleansEventMap)
+{
+    // Server never responds to subscribe → timeout
+    m_messageHandler = [](connection_hdl, server::message_ptr) {};
+
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+    auto connectionFuture = m_connectionPromise.get_future();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.legacyRPCv1 = true;
+    Firebolt::Error connectErr = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& err)
+                                                 { onConnectionChange(connected, err); });
+    ASSERT_EQ(connectErr, Firebolt::Error::None);
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    auto onEvent = [](void*, const nlohmann::json&) {};
+    int dummyCb = 0;
+
+    // Subscribe will timeout (50ms ACK timeout), hitting the error cleanup path
+    // that also cleans the rpcv1_eventMap (line 565-567)
+    Firebolt::Error err = gateway.subscribe("test.onLegacyTimeout", onEvent, &dummyCb);
+    EXPECT_EQ(err, Firebolt::Error::Timedout);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.UnsubscribeAckWithError
+// Covers: gateway.cpp:621 (!result → status = result.error() in unsubscribe ACK)
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, UnsubscribeAckWithError)
+{
+    // Server responds to subscribe with success, but to unsubscribe with error
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        try
+        {
+            auto request = nlohmann::json::parse(msg->get_payload());
+            nlohmann::json response;
+            response["jsonrpc"] = "2.0";
+            response["id"] = request["id"];
+
+            if (request.contains("params") && request["params"].contains("listen"))
+            {
+                if (request["params"]["listen"].get<bool>())
+                {
+                    // Subscribe ACK — success
+                    response["result"] = {{"listening", true}};
+                }
+                else
+                {
+                    // Unsubscribe ACK — error
+                    response["error"]["code"] = -32601;
+                    response["error"]["message"] = "Unsubscribe failed";
+                }
+            }
+            else
+            {
+                response["result"] = nlohmann::json::object();
+            }
+            m_server.send(hdl, response.dump(), msg->get_opcode());
+        }
+        catch (...)
+        {
+        }
+    };
+
+    IGateway& gateway = connectAndWait();
+
+    auto onEvent = [](void*, const nlohmann::json&) {};
+    int dummyCb = 0;
+
+    Firebolt::Error err = gateway.subscribe("test.onErrUnsub", onEvent, &dummyCb);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Unsubscribe should get the error from the ACK (line 621)
+    err = gateway.unsubscribe("test.onErrUnsub", &dummyCb);
+    EXPECT_EQ(err, Firebolt::Error::MethodNotFound);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.LegacyUnsubscribeIteratesPastNonMatchingEntry
+// Covers: gateway.cpp:600 (++it in rpcv1_eventMap loop — else branch when
+//         it->second != event, advancing the iterator past non-matching entries)
+// Scenario: In legacy RPC v1 mode, subscribe to two events (eventA gets a
+//           lower message ID, eventB gets a higher one). When unsubscribing
+//           eventB, the loop iterates past eventA's entry (++it) before
+//           finding eventB. This is a real scenario when multiple concurrent
+//           subscriptions exist.
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, LegacyUnsubscribeIteratesPastNonMatchingEntry)
+{
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        try
+        {
+            auto request = nlohmann::json::parse(msg->get_payload());
+            if (request.contains("params") && request["params"].contains("listen"))
+            {
+                nlohmann::json response;
+                response["jsonrpc"] = "2.0";
+                response["id"] = request["id"];
+                response["result"]["listening"] = request["params"]["listen"];
+                m_server.send(hdl, response.dump(), msg->get_opcode());
+            }
+        }
+        catch (...)
+        {
+        }
+    };
+
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+    auto connectionFuture = m_connectionPromise.get_future();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.legacyRPCv1 = true;
+    Firebolt::Error connectErr = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& err)
+                                                 { onConnectionChange(connected, err); });
+    ASSERT_EQ(connectErr, Firebolt::Error::None);
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    auto onEventA = [](void*, const nlohmann::json&) {};
+    auto onEventB = [](void*, const nlohmann::json&) {};
+    int cbA = 0;
+    int cbB = 0;
+
+    // Subscribe to two events — eventA gets a lower message ID in rpcv1_eventMap
+    Firebolt::Error err = gateway.subscribe("test.onEventA", onEventA, &cbA);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    err = gateway.subscribe("test.onEventB", onEventB, &cbB);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Unsubscribe eventB — the loop must skip eventA's entry (++it at line 600)
+    // before finding eventB's entry
+    err = gateway.unsubscribe("test.onEventB", &cbB);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Clean up eventA
+    err = gateway.unsubscribe("test.onEventA", &cbA);
+    EXPECT_EQ(err, Firebolt::Error::None);
+}

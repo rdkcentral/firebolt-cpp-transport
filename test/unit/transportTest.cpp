@@ -27,6 +27,7 @@
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
 #include <websocketpp/sha1/sha1.hpp>
+#include "firebolt/logger.h"
 
 using namespace Firebolt::Transport;
 
@@ -695,4 +696,361 @@ TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
 
     err = transport.disconnect();
     EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+// ---------------------------------------------------------------------------
+// Additional transport tests for coverage gaps
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Test name: TransportCustomServerUTest.NonTextMessageIgnored
+// Covers: src/transport.cpp:305-308 (non-text opcode → warning + ignore)
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(TransportCustomServerUTest, NonTextMessageIgnored)
+{
+    m_server.set_message_handler(
+        [this](connection_hdl hdl, server::message_ptr /*msg*/)
+        {
+            // Send a binary frame instead of text
+            m_server.send(hdl, "binary data", websocketpp::frame::opcode::binary);
+            // Then send a valid text message
+            nlohmann::json response;
+            response["jsonrpc"] = "2.0";
+            response["id"] = 1;
+            response["result"] = {{"ok", true}};
+            m_server.send(hdl, response.dump(), websocketpp::frame::opcode::text);
+        });
+
+    StartServer();
+
+    Transport transport;
+    std::promise<void> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+    std::promise<nlohmann::json> validMessagePromise;
+    auto validMessageFuture = validMessagePromise.get_future();
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (connected)
+        {
+            connectionPromise.set_value();
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& msg) { validMessagePromise.set_value(msg); };
+
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
+    ASSERT_EQ(err, Firebolt::Error::None);
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready)
+        << "Connection timed out";
+
+    // Trigger the server to send a binary + text message
+    err = transport.send("trigger", {}, transport.getNextMessageID());
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    // Only the text message should arrive
+    auto msgStatus = validMessageFuture.wait_for(std::chrono::milliseconds(300));
+    ASSERT_EQ(msgStatus, std::future_status::ready) << "Valid text message not received after binary was ignored";
+
+    nlohmann::json received = validMessageFuture.get();
+    EXPECT_TRUE(received.contains("result"));
+
+    transport.disconnect();
+}
+
+// ---------------------------------------------------------------------------
+// Test name: TransportIntegrationUTest.DisconnectWhileConnected
+// Covers: src/transport.cpp:212-246 (disconnect from Connected state)
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(TransportIntegrationUTest, DisconnectWhileConnected)
+{
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (connected)
+        {
+            connectionPromise.set_value(true);
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& /*msg*/) {};
+
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+
+    // Disconnect and verify state reset is clean
+    err = transport.disconnect();
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // After disconnect, sending should fail with NotConnected
+    err = transport.send("test.method", {}, 1);
+    EXPECT_EQ(err, Firebolt::Error::NotConnected);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: TransportIntegrationUTest.MultipleMessagesInSequence
+// Covers: src/transport.cpp:100-120 (processQueuedMessages loop)
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(TransportIntegrationUTest, MultipleMessagesInSequence)
+{
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+    std::atomic<int> messageCount{0};
+    std::promise<void> allMessagesPromise;
+    auto allMessagesFuture = allMessagesPromise.get_future();
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (connected)
+        {
+            connectionPromise.set_value(true);
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& /*msg*/)
+    {
+        if (++messageCount >= 3)
+        {
+            allMessagesPromise.set_value();
+        }
+    };
+
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+
+    // Send multiple messages
+    for (int i = 0; i < 3; i++)
+    {
+        nlohmann::json params = {{"seq", i}};
+        err = transport.send("test.method", params, transport.getNextMessageID());
+        EXPECT_EQ(err, Firebolt::Error::None);
+    }
+
+    auto msgStatus = allMessagesFuture.wait_for(std::chrono::milliseconds(500));
+    ASSERT_EQ(msgStatus, std::future_status::ready) << "Not all messages were received";
+    EXPECT_EQ(messageCount.load(), 3);
+
+    transport.disconnect();
+}
+
+// ---------------------------------------------------------------------------
+// Test name: TransportIntegrationUTest.ConnectWithTransportLogging
+// Covers: src/transport.cpp:155-173 (transport logging include/exclude params)
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(TransportIntegrationUTest, ConnectWithTransportLogging)
+{
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (connected)
+        {
+            connectionPromise.set_value(true);
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& /*msg*/) {};
+
+    // Provide explicit transport logging masks
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange,
+                                            static_cast<unsigned>(websocketpp::log::alevel::all),
+                                            static_cast<unsigned>(websocketpp::log::alevel::frame_payload));
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+
+    err = transport.disconnect();
+    EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: TransportUTest.GetNextMessageIDMonotonic
+// Covers: src/transport.cpp:277 (atomic increment)
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(TransportUTest, GetNextMessageIDMonotonic)
+{
+    unsigned prev = transport.getNextMessageID();
+    for (int i = 0; i < 100; ++i)
+    {
+        unsigned next = transport.getNextMessageID();
+        EXPECT_EQ(next, prev + 1);
+        prev = next;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test name: TransportCustomServerUTest.DisconnectFromDisconnectedState
+// Covers: src/transport.cpp:215-220 (disconnect when state is Disconnected)
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(TransportCustomServerUTest, DisconnectFromDisconnectedState)
+{
+    m_server.set_open_handler(
+        [this](connection_hdl hdl)
+        {
+            m_server.close(hdl, websocketpp::close::status::normal, "Bye");
+        });
+
+    StartServer();
+
+    Transport transport;
+    std::promise<void> closedPromise;
+    auto closedFuture = closedPromise.get_future();
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (!connected)
+        {
+            closedPromise.set_value();
+        }
+    };
+
+    auto onMessage = [](const nlohmann::json& /*msg*/) {};
+
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    // Wait for server to close connection
+    ASSERT_EQ(closedFuture.wait_for(std::chrono::milliseconds(300)), std::future_status::ready);
+
+    // Now disconnect from already-disconnected state (no close() call, just cleanup)
+    err = transport.disconnect();
+    EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+// ---------------------------------------------------------------------------
+// Branch-coverage tests
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Test name: TransportIntegrationUTest.DebugLoggingOnSendAndReceive
+// Covers: transport.cpp:121 (debugEnabled_ true → log received msg)
+//         transport.cpp:293 (debugEnabled_ true → log sent msg)
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(TransportIntegrationUTest, DebugLoggingOnSendAndReceive)
+{
+    // Set log level to Debug so debugEnabled_ is true when connect() is called
+    Firebolt::Logger::setLogLevel(Firebolt::LogLevel::Debug);
+
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+    std::promise<nlohmann::json> messagePromise;
+    auto messageFuture = messagePromise.get_future();
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (connected)
+        {
+            connectionPromise.set_value(true);
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& msg) { messagePromise.set_value(msg); };
+
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectionFuture.wait_for(std::chrono::milliseconds(150));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+
+    nlohmann::json params = {{"key", "value"}};
+    unsigned msgId = transport.getNextMessageID();
+    err = transport.send("test.debug", params, msgId);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    auto msgStatus = messageFuture.wait_for(std::chrono::milliseconds(150));
+    ASSERT_EQ(msgStatus, std::future_status::ready) << "Message response timed out";
+
+    nlohmann::json received = messageFuture.get();
+    EXPECT_EQ(received["id"], msgId);
+
+    transport.disconnect();
+    Firebolt::Logger::setLogLevel(Firebolt::LogLevel::Error);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: TransportCustomServerUTest.MessageDuringShutdownIgnored
+// Covers: Resilience — verifies no crash or hang when an echo arrives
+//         during or immediately after disconnect(). The stopMessageWorker_
+//         guard (transport.cpp:323-324) is unreachable from the public API,
+//         but this test validates safe behavior under rapid teardown.
+// Scenario type: resilience
+// ---------------------------------------------------------------------------
+TEST_F(TransportCustomServerUTest, MessageDuringShutdownIgnored)
+{
+    std::atomic<int> serverMsgCount{0};
+
+    m_server.set_message_handler(
+        [this, &serverMsgCount](connection_hdl hdl, server::message_ptr msg)
+        {
+            (void)this;
+            serverMsgCount++;
+            // Echo back
+            m_server.send(hdl, msg->get_payload(), msg->get_opcode());
+        });
+
+    StartServer();
+
+    Transport transport;
+    std::promise<void> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+    std::atomic<int> receivedCount{0};
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (connected)
+        {
+            connectionPromise.set_value();
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& /*msg*/) { receivedCount++; };
+
+    Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
+    ASSERT_EQ(err, Firebolt::Error::None);
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::milliseconds(150)), std::future_status::ready);
+
+    // Send a message, then immediately disconnect
+    // The echo may arrive while the message worker is stopping
+    transport.send("test.method", {{"k", "v"}}, transport.getNextMessageID());
+    transport.disconnect();
+
+    // No crash, no hang — that's the test
+    EXPECT_GE(serverMsgCount.load(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: TransportUTest.ConnectWithInvalidUrl
+// Covers: transport.cpp:191-192 (get_connection returns ec → NotConnected)
+// Scenario type: failure
+// ---------------------------------------------------------------------------
+TEST_F(TransportUTest, ConnectWithInvalidUrl)
+{
+    Transport transport;
+    auto onMessage = [](const nlohmann::json&) {};
+    auto onConnectionChange = [](bool, const Firebolt::Error&) {};
+
+    // An empty or completely invalid URL should cause get_connection to fail
+    Firebolt::Error err = transport.connect("", onMessage, onConnectionChange);
+    EXPECT_EQ(err, Firebolt::Error::NotConnected);
 }
