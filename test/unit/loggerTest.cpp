@@ -335,7 +335,7 @@ TEST_F(LoggerFormatUTest, LogLevelNames)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LocationWithoutSlashInPath
-// Covers: src/logger.cpp:123 (strrchr returns nullptr → use file as-is)
+// Covers: src/logger.cpp (std::filesystem::path::filename() with no directory)
 // Regression: previously assigned nullptr to std::string (UB / crash)
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
@@ -384,9 +384,8 @@ TEST_F(LoggerFormatUTest, LocationWithoutSlashInPath)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LocationWithSlashInPath
-// Covers: logger.cpp:123-126 (slash != nullptr → fileName = slash + 1)
-// When __FILE__ contains '/', strrchr returns a non-null pointer and
-// the filename is extracted by advancing past the last slash.
+// Covers: logger.cpp (std::filesystem::path::filename() strips directory)
+// When __FILE__ contains '/', the filename is extracted from the path.
 // This is the normal case for all Linux/Docker builds.
 // Scenario type: success
 // ---------------------------------------------------------------------------
