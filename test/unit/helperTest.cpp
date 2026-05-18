@@ -581,7 +581,7 @@ TEST_F(HelperUTest, DestructorWithNoSubscriptions)
 {
     // Destructor on a HelperImpl with no subscriptions should not call unsubscribe
     auto* localHelper = new HelperImpl(mockGateway);
-    // No EXPECT_CALL for unsubscribe — none should be called
+    EXPECT_CALL(mockGateway, unsubscribe(_, _)).Times(0);
     delete localHelper;
 }
 

@@ -945,16 +945,17 @@ TEST_F(GatewayUTest, SendNotConnected)
                                           });
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    // Wait for connection failure
-    auto status = connFuture.wait_for(std::chrono::milliseconds(500));
-    if (status == std::future_status::ready)
-    {
-        EXPECT_FALSE(connFuture.get());
-    }
+    // Wait for connection failure — assert so we don't proceed with dangling callback refs
+    auto status = connFuture.wait_for(std::chrono::milliseconds(2000));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection failure callback not received";
+    EXPECT_FALSE(connFuture.get());
 
     // Send should fail with NotConnected
     err = gateway.send("test.method", {});
     EXPECT_EQ(err, Firebolt::Error::NotConnected);
+
+    // Disconnect while locals are still alive to prevent use-after-scope
+    gateway.disconnect();
 }
 
 // ---------------------------------------------------------------------------
@@ -1220,7 +1221,9 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
                                           });
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    connFuture.wait_for(std::chrono::milliseconds(500));
+    // Assert callback arrives — prevents proceeding with dangling refs
+    auto connStatus = connFuture.wait_for(std::chrono::milliseconds(2000));
+    ASSERT_EQ(connStatus, std::future_status::ready) << "Connection failure callback not received";
 
     // Now request — transport.send will fail with NotConnected,
     // which triggers the error branch in Client::request (lines 136-141)
@@ -1231,6 +1234,9 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
     auto result = future.get();
     EXPECT_FALSE(result);
     EXPECT_EQ(result.error(), Firebolt::Error::NotConnected);
+
+    // Disconnect while locals are still alive to prevent use-after-scope
+    gateway.disconnect();
 }
 
 // ---------------------------------------------------------------------------

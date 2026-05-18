@@ -303,7 +303,7 @@ TEST_F(LoggerFormatUTest, MessageWithTrailingNewline)
     ASSERT_NE(msgPos, std::string::npos);
     // After stripping the user's \n, only fprintf's \n should remain:
     // the text "trailing newline" should be followed by exactly "\n" (end of output)
-    std::string afterMsg = output.substr(msgPos + strlen("trailing newline"));
+    std::string afterMsg = output.substr(msgPos + sizeof("trailing newline") - 1);
     EXPECT_EQ(afterMsg, "\n") << "Expected exactly one trailing newline. Got: [" << afterMsg << "]";
 }
 
@@ -383,9 +383,9 @@ TEST_F(LoggerFormatUTest, LocationWithoutSlashInPath)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LocationWithSlashInPath
-// Covers: logger.cpp:126 (fileName.empty() == false → substr(1) branch)
-// When __FILE__ contains '/', strrchr returns a non-null pointer,
-// fileName is non-empty, and the substr(1) path (line 130) is taken.
+// Covers: logger.cpp:123-126 (slash != nullptr → fileName = slash + 1)
+// When __FILE__ contains '/', strrchr returns a non-null pointer and
+// the filename is extracted by advancing past the last slash.
 // This is the normal case for all Linux/Docker builds.
 // Scenario type: success
 // ---------------------------------------------------------------------------

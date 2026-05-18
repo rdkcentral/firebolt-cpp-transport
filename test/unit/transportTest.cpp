@@ -998,13 +998,18 @@ TEST_F(TransportIntegrationUTest, DebugLoggingOnSendAndReceive)
 // ---------------------------------------------------------------------------
 TEST_F(TransportCustomServerUTest, MessageDuringShutdownIgnored)
 {
-    std::atomic<int> serverMsgCount{0};
+    std::promise<void> serverReceivedPromise;
+    auto serverReceivedFuture = serverReceivedPromise.get_future();
+    std::atomic<bool> serverPromiseSet{false};
 
     m_server.set_message_handler(
-        [this, &serverMsgCount](connection_hdl hdl, server::message_ptr msg)
+        [this, &serverReceivedPromise, &serverPromiseSet](connection_hdl hdl, server::message_ptr msg)
         {
-            (void)this;
-            serverMsgCount++;
+            bool expected = false;
+            if (serverPromiseSet.compare_exchange_strong(expected, true))
+            {
+                serverReceivedPromise.set_value();
+            }
             // Echo back
             m_server.send(hdl, msg->get_payload(), msg->get_opcode());
         });
@@ -1014,7 +1019,6 @@ TEST_F(TransportCustomServerUTest, MessageDuringShutdownIgnored)
     Transport transport;
     std::promise<void> connectionPromise;
     auto connectionFuture = connectionPromise.get_future();
-    std::atomic<int> receivedCount{0};
 
     auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
     {
@@ -1024,7 +1028,7 @@ TEST_F(TransportCustomServerUTest, MessageDuringShutdownIgnored)
         }
     };
 
-    auto onMessage = [&](const nlohmann::json& /*msg*/) { receivedCount++; };
+    auto onMessage = [&](const nlohmann::json& /*msg*/) {};
 
     Firebolt::Error err = transport.connect(m_uri, onMessage, onConnectionChange);
     ASSERT_EQ(err, Firebolt::Error::None);
@@ -1035,8 +1039,10 @@ TEST_F(TransportCustomServerUTest, MessageDuringShutdownIgnored)
     transport.send("test.method", {{"k", "v"}}, transport.getNextMessageID());
     transport.disconnect();
 
-    // No crash, no hang — that's the test
-    EXPECT_GE(serverMsgCount.load(), 1);
+    // No crash, no hang — that's the primary assertion.
+    // Verify the server did receive the message (wait to avoid racing the server thread).
+    auto serverStatus = serverReceivedFuture.wait_for(std::chrono::milliseconds(500));
+    EXPECT_EQ(serverStatus, std::future_status::ready) << "Server never received the message";
 }
 
 // ---------------------------------------------------------------------------
