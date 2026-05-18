@@ -18,6 +18,7 @@
 
 #include "firebolt/logger.h"
 #include <algorithm>
+#include <cstdio>
 #include <gtest/gtest.h>
 #include <regex>
 #include <string>
@@ -407,7 +408,7 @@ TEST_F(LoggerFormatUTest, LocationWithSlashInPath)
     }
     dup2(pipefd[1], STDERR_FILENO);
 
-    // Pass a file path WITH a slash — triggers the substr(1) branch
+    // Pass a file path with slashes so the logger strips the directory and keeps only the filename
     Logger::log(LogLevel::Error, "Test", "/some/path/myfile.cpp", "testFunc", 99, "msg");
 
     fflush(stderr);

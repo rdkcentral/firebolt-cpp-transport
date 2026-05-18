@@ -359,6 +359,9 @@ TEST_F(HelperUTest, SubscribeGatewayError)
         ihelper.subscribe(this, "test.onEvent", std::move(notification), onPropertyChangedCallback<TestJson, int>);
     ASSERT_FALSE(result);
     EXPECT_EQ(result.error(), Error::NotConnected);
+
+    // Verify the failed subscription was cleaned up — destructor should NOT call unsubscribe
+    EXPECT_CALL(mockGateway, unsubscribe("test.onEvent", _)).Times(0);
 }
 
 // ---------------------------------------------------------------------------
