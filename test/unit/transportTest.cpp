@@ -704,7 +704,7 @@ TEST_F(TransportCustomServerUTest, MalformedMessageFromServer)
 
 // ---------------------------------------------------------------------------
 // Test name: TransportCustomServerUTest.NonTextMessageIgnored
-// Covers: src/transport.cpp:305-308 (non-text opcode → warning + ignore)
+// Covers: transport.cpp non-text opcode branch (warning + ignore)
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(TransportCustomServerUTest, NonTextMessageIgnored)
@@ -767,7 +767,7 @@ TEST_F(TransportCustomServerUTest, NonTextMessageIgnored)
 
 // ---------------------------------------------------------------------------
 // Test name: TransportIntegrationUTest.DisconnectWhileConnected
-// Covers: src/transport.cpp:212-246 (disconnect from Connected state)
+// Covers: transport.cpp disconnect from Connected state
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(TransportIntegrationUTest, DisconnectWhileConnected)
@@ -803,7 +803,7 @@ TEST_F(TransportIntegrationUTest, DisconnectWhileConnected)
 
 // ---------------------------------------------------------------------------
 // Test name: TransportIntegrationUTest.MultipleMessagesInSequence
-// Covers: src/transport.cpp:100-120 (processQueuedMessages loop)
+// Covers: transport.cpp processQueuedMessages loop
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(TransportIntegrationUTest, MultipleMessagesInSequence)
@@ -854,7 +854,7 @@ TEST_F(TransportIntegrationUTest, MultipleMessagesInSequence)
 
 // ---------------------------------------------------------------------------
 // Test name: TransportIntegrationUTest.ConnectWithTransportLogging
-// Covers: src/transport.cpp:155-173 (transport logging include/exclude params)
+// Covers: transport.cpp logging include/exclude params
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(TransportIntegrationUTest, ConnectWithTransportLogging)
@@ -888,7 +888,7 @@ TEST_F(TransportIntegrationUTest, ConnectWithTransportLogging)
 
 // ---------------------------------------------------------------------------
 // Test name: TransportUTest.GetNextMessageIDMonotonic
-// Covers: src/transport.cpp:277 (atomic increment)
+// Covers: transport.cpp getNextMessageID atomic increment
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(TransportUTest, GetNextMessageIDMonotonic)
@@ -904,7 +904,7 @@ TEST_F(TransportUTest, GetNextMessageIDMonotonic)
 
 // ---------------------------------------------------------------------------
 // Test name: TransportCustomServerUTest.DisconnectFromDisconnectedState
-// Covers: src/transport.cpp:215-220 (disconnect when state is Disconnected)
+// Covers: transport.cpp disconnect when already Disconnected
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(TransportCustomServerUTest, DisconnectFromDisconnectedState)
@@ -945,8 +945,8 @@ TEST_F(TransportCustomServerUTest, DisconnectFromDisconnectedState)
 
 // ---------------------------------------------------------------------------
 // Test name: TransportIntegrationUTest.DebugLoggingOnSendAndReceive
-// Covers: transport.cpp:121 (debugEnabled_ true → log received msg)
-//         transport.cpp:293 (debugEnabled_ true → log sent msg)
+// Covers: transport.cpp debugEnabled_ true branch (log send/receive)
+//         Exercises both inbound and outbound debug logging
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(TransportIntegrationUTest, DebugLoggingOnSendAndReceive)
@@ -1057,7 +1057,7 @@ TEST_F(TransportCustomServerUTest, MessageDuringShutdownIgnored)
 
 // ---------------------------------------------------------------------------
 // Test name: TransportUTest.ConnectWithInvalidUrl
-// Covers: transport.cpp:191-192 (get_connection returns ec → NotConnected)
+// Covers: transport.cpp get_connection error → NotConnected
 // Scenario type: failure
 // ---------------------------------------------------------------------------
 TEST_F(TransportUTest, ConnectWithInvalidUrl)

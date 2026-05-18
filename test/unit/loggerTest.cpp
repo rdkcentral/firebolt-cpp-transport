@@ -28,7 +28,7 @@ using namespace Firebolt;
 
 // ---------------------------------------------------------------------------
 // File: test/unit/loggerTest.cpp
-// Covers: src/logger.cpp — format flag combinations (lines 119–153)
+// Covers: src/logger.cpp — format flag combinations and level filtering
 // ---------------------------------------------------------------------------
 
 class LoggerFormatUTest : public ::testing::Test
@@ -84,7 +84,7 @@ protected:
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LocationTrue_FunctionTrue
-// Covers: src/logger.cpp:141 (addLocation=true, addFunction=true branch)
+// Covers: logger.cpp format branch (addLocation=true, addFunction=true)
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, LocationTrue_FunctionTrue)
@@ -105,7 +105,7 @@ TEST_F(LoggerFormatUTest, LocationTrue_FunctionTrue)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LocationFalse_FunctionTrue
-// Covers: src/logger.cpp:148 (only addFunction branch → [func()])
+// Covers: logger.cpp format branch (addFunction only → [func()])
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, LocationFalse_FunctionTrue)
@@ -122,7 +122,7 @@ TEST_F(LoggerFormatUTest, LocationFalse_FunctionTrue)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LocationTrue_FunctionFalse
-// Covers: src/logger.cpp:145 (only addLocation branch → [file:line])
+// Covers: logger.cpp format branch (addLocation only → [file:line])
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, LocationTrue_FunctionFalse)
@@ -140,7 +140,7 @@ TEST_F(LoggerFormatUTest, LocationTrue_FunctionFalse)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LocationFalse_FunctionFalse
-// Covers: src/logger.cpp:138 (neither location nor function → no [] block)
+// Covers: logger.cpp format branch (no location/function → no [] block)
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, LocationFalse_FunctionFalse)
@@ -160,7 +160,7 @@ TEST_F(LoggerFormatUTest, LocationFalse_FunctionFalse)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.ThreadIdEnabled
-// Covers: src/logger.cpp:151 (formatter_addThreadId path)
+// Covers: logger.cpp formatter_addThreadId true branch
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, ThreadIdEnabled)
@@ -175,7 +175,7 @@ TEST_F(LoggerFormatUTest, ThreadIdEnabled)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.ThreadIdDisabled
-// Covers: src/logger.cpp:151 (formatter_addThreadId=false → skip)
+// Covers: logger.cpp formatter_addThreadId false branch
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, ThreadIdDisabled)
@@ -188,7 +188,7 @@ TEST_F(LoggerFormatUTest, ThreadIdDisabled)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.TimestampEnabled
-// Covers: src/logger.cpp:109-117 (formatter_addTs branch)
+// Covers: logger.cpp formatter_addTs timestamp formatting branch
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, TimestampEnabled)
@@ -203,7 +203,7 @@ TEST_F(LoggerFormatUTest, TimestampEnabled)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.AllFlagsEnabled
-// Covers: src/logger.cpp:109-153 (all format branches active)
+// Covers: logger.cpp all format branches active simultaneously
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, AllFlagsEnabled)
@@ -228,7 +228,7 @@ TEST_F(LoggerFormatUTest, AllFlagsEnabled)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LogLevelFiltering
-// Covers: src/logger.cpp:87 (logLevel > _logLevel early return)
+// Covers: logger.cpp logLevel filtering early return
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, LogLevelFiltering)
@@ -243,7 +243,7 @@ TEST_F(LoggerFormatUTest, LogLevelFiltering)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.SetLogLevelMaxLevel
-// Covers: src/logger.cpp:68-69 (logLevel == MaxLevel → set to Debug)
+// Covers: logger.cpp setLogLevel MaxLevel → Debug mapping
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, SetLogLevelMaxLevel)
@@ -255,7 +255,7 @@ TEST_F(LoggerFormatUTest, SetLogLevelMaxLevel)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.SetLogLevelBeyondMax
-// Covers: src/logger.cpp:64-67 (logLevel < MaxLevel guard)
+// Covers: logger.cpp setLogLevel out-of-range guard
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, SetLogLevelBeyondMax)
@@ -270,7 +270,7 @@ TEST_F(LoggerFormatUTest, SetLogLevelBeyondMax)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.MessageTruncation
-// Covers: src/logger.cpp:96-99 (message truncation at MaxBufSize)
+// Covers: logger.cpp message truncation at MaxBufSize
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, MessageTruncation)
@@ -290,7 +290,7 @@ TEST_F(LoggerFormatUTest, MessageTruncation)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.MessageWithTrailingNewline
-// Covers: src/logger.cpp:100-103 (trailing newline removal)
+// Covers: logger.cpp trailing newline removal
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, MessageWithTrailingNewline)
@@ -310,7 +310,7 @@ TEST_F(LoggerFormatUTest, MessageWithTrailingNewline)
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LogLevelNames
-// Covers: src/logger.cpp:43-49 (_logLevelNames map)
+// Covers: logger.cpp _logLevelNames map entries
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(LoggerFormatUTest, LogLevelNames)

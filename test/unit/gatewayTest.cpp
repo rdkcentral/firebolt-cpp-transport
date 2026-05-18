@@ -758,7 +758,7 @@ TEST_F(GatewayUTest, UnsubscribeNonexistentEvent)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.NotificationWithValueWrapping
-// Covers: src/gateway.cpp:325-340 (notify with "value" key unwrapping)
+// Covers: Server::notify value-unwrapping branch (params with single "value" key)
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(GatewayUTest, NotificationWithValueWrapping)
@@ -797,7 +797,7 @@ TEST_F(GatewayUTest, NotificationWithValueWrapping)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.NotificationWithValueObjectNotUnwrapped
-// Covers: src/gateway.cpp:330-336 (value IS object → keep full params)
+// Covers: Server::notify value-is-object branch (params kept as-is)
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(GatewayUTest, NotificationWithValueObjectNotUnwrapped)
@@ -837,7 +837,7 @@ TEST_F(GatewayUTest, NotificationWithValueObjectNotUnwrapped)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.NotificationNoSubscribers
-// Covers: src/gateway.cpp:350-353 (no subscribers for event → warning log)
+// Covers: Server::notify no-subscribers branch (warning log)
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(GatewayUTest, NotificationNoSubscribers)
@@ -975,7 +975,7 @@ TEST_F(GatewayUTest, DisconnectWithoutConnect)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.NotificationMultipleParams
-// Covers: src/gateway.cpp:340-344 (params with multiple keys → pass as-is)
+// Covers: Server::notify multi-key params branch (pass as-is)
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(GatewayUTest, NotificationMultipleParams)
@@ -1091,7 +1091,7 @@ TEST_F(GatewayUTest, LegacyRPCv1UnsubscribeCleanup)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.LegacyRPCv1NonEventResult
-// Covers: src/gateway.cpp:655-665 (legacy: result is present but id NOT in eventMap)
+// Covers: legacy RPC v1 response path (id not in eventMap → falls through to client.response)
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(GatewayUTest, LegacyRPCv1NonEventResult)
@@ -1170,7 +1170,7 @@ TEST_F(GatewayUTest, WaitTimeConfiguration)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.SendResponseIsIgnoredByClient
-// Covers: gateway.cpp:153-154 (invokes.find(id) != end → erase + return)
+// Covers: Client::response invoke-set erase path (fire-and-forget response dropped)
 // The response for a fire-and-forget send() ID should be silently dropped.
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
@@ -1198,7 +1198,7 @@ TEST_F(GatewayUTest, SendResponseIsIgnoredByClient)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.RequestFailsWhenSendErrors
-// Covers: gateway.cpp:136-141 (transport_.send returns error → promise set + erase)
+// Covers: Client::request send-error path (promise set with error + erase)
 // Scenario type: failure
 // ---------------------------------------------------------------------------
 TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
@@ -1242,7 +1242,7 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.LegacySubscribeFailureCleansEventMap
-// Covers: gateway.cpp:565-567 (legacyRPCv1 && subscribe error → erase rpcv1_eventMap)
+// Covers: legacy RPC v1 subscribe error cleanup (erase rpcv1_eventMap)
 // Scenario type: failure
 // ---------------------------------------------------------------------------
 TEST_F(GatewayUTest, LegacySubscribeFailureCleansEventMap)
@@ -1272,7 +1272,7 @@ TEST_F(GatewayUTest, LegacySubscribeFailureCleansEventMap)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.UnsubscribeAckWithError
-// Covers: gateway.cpp:621 (!result → status = result.error() in unsubscribe ACK)
+// Covers: unsubscribe ACK error propagation (!result → status = error)
 // Scenario type: failure
 // ---------------------------------------------------------------------------
 TEST_F(GatewayUTest, UnsubscribeAckWithError)
@@ -1327,7 +1327,7 @@ TEST_F(GatewayUTest, UnsubscribeAckWithError)
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.LegacyUnsubscribeIteratesPastNonMatchingEntry
-// Covers: gateway.cpp:600 (++it in rpcv1_eventMap loop — else branch when
+// Covers: legacy RPC v1 unsubscribe loop (++it else branch —
 //         it->second != event, advancing the iterator past non-matching entries)
 // Scenario: In legacy RPC v1 mode, subscribe to two events (eventA gets a
 //           lower message ID, eventB gets a higher one). When unsubscribing

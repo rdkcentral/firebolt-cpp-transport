@@ -225,7 +225,7 @@ TEST(OnPropertyChangedCallbackUTest, InvalidJson)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.SetWithNonObjectParams
-// Covers: src/helpers_impl.h:49-54 (non-object params wrapped in "value")
+// Covers: HelperImpl::set non-object params wrapped in "value"
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, SetWithNonObjectParams)
@@ -248,7 +248,7 @@ TEST_F(HelperUTest, SetWithNonObjectParams)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.SetWithArrayParams
-// Covers: src/helpers_impl.h:49-54 (array is not object → wrap in "value")
+// Covers: HelperImpl::set array params wrapped in "value"
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, SetWithArrayParams)
@@ -270,7 +270,7 @@ TEST_F(HelperUTest, SetWithArrayParams)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.InvokeFailure
-// Covers: src/helpers_impl.h:63-65 (invoke returns gateway error)
+// Covers: HelperImpl::invoke gateway error propagation
 // Scenario type: failure
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, InvokeFailure)
@@ -287,7 +287,7 @@ TEST_F(HelperUTest, InvokeFailure)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.GetWithParameters
-// Covers: src/helpers_impl.h:103 (getJson called with explicit parameters)
+// Covers: HelperImpl::getJson with explicit parameters
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, GetWithParameters)
@@ -307,7 +307,7 @@ TEST_F(HelperUTest, GetWithParameters)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.GetWithErrorInfo
-// Covers: src/helpers_impl.h:105-106 (error propagation with errorInfo)
+// Covers: HelperImpl::get error propagation with errorInfo
 // Scenario type: failure
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, GetWithErrorInfo)
@@ -328,7 +328,7 @@ TEST_F(HelperUTest, GetWithErrorInfo)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.SubscribeSuccess
-// Covers: src/helpers_impl.h:119-133 (subscribe success flow)
+// Covers: HelperImpl::subscribe success flow
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, SubscribeSuccess)
@@ -345,7 +345,7 @@ TEST_F(HelperUTest, SubscribeSuccess)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.SubscribeGatewayError
-// Covers: src/helpers_impl.h:127-131 (subscribe gateway error → erase + return)
+// Covers: HelperImpl::subscribe gateway error (erase + return)
 // Scenario type: failure
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, SubscribeGatewayError)
@@ -366,7 +366,7 @@ TEST_F(HelperUTest, SubscribeGatewayError)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.UnsubscribeNotFound
-// Covers: src/helpers_impl.h:71-74 (unsubscribe with invalid id)
+// Covers: HelperImpl::unsubscribe with invalid subscription id
 // Scenario type: failure
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, UnsubscribeNotFound)
@@ -378,7 +378,7 @@ TEST_F(HelperUTest, UnsubscribeNotFound)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.UnsubscribeSuccess
-// Covers: src/helpers_impl.h:75-79 (unsubscribe with valid id)
+// Covers: HelperImpl::unsubscribe with valid subscription id
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, UnsubscribeSuccess)
@@ -401,7 +401,7 @@ TEST_F(HelperUTest, UnsubscribeSuccess)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.UnsubscribeAllWithOwner
-// Covers: src/helpers_impl.h:83-97 (unsubscribeAll matching owner)
+// Covers: HelperImpl::unsubscribeAll matching owner
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, UnsubscribeAllWithOwner)
@@ -429,7 +429,7 @@ TEST_F(HelperUTest, UnsubscribeAllWithOwner)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.UnsubscribeAllNoMatch
-// Covers: src/helpers_impl.h:83-97 (unsubscribeAll with no matching owner)
+// Covers: HelperImpl::unsubscribeAll with no matching owner
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, UnsubscribeAllNoMatch)
@@ -464,7 +464,7 @@ struct TestMultiArgJson
 
 // ---------------------------------------------------------------------------
 // Test name: OnPropertyChangedCallbackUTest.MultiArgCallback
-// Covers: src/helpers.h:51-52 (sizeof...(Args) > 1 → std::apply branch)
+// Covers: onPropertyChangedCallback multi-arg std::apply branch
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST(OnPropertyChangedCallbackUTest, MultiArgCallback)
@@ -491,7 +491,7 @@ TEST(OnPropertyChangedCallbackUTest, MultiArgCallback)
 
 // ---------------------------------------------------------------------------
 // Test name: OnPropertyChangedCallbackUTest.MultiArgInvalidJson
-// Covers: helpers.h:59 (catch path for multi-arg template instantiation)
+// Covers: onPropertyChangedCallback multi-arg catch path
 // Scenario: The multi-arg instantiation of onPropertyChangedCallback receives
 //           malformed JSON that fails fromJson(). Exercises the catch branch
 //           for the <TestMultiArgJson, int, std::string> instantiation.
@@ -516,7 +516,7 @@ TEST(OnPropertyChangedCallbackUTest, MultiArgInvalidJson)
 
 // ---------------------------------------------------------------------------
 // Test name: SubscriptionManagerUTest.SubscribeFailure
-// Covers: helpers_impl.cpp:38 (SubscriptionManager propagates error)
+// Covers: SubscriptionManager::subscribe error propagation
 // Scenario type: failure
 // ---------------------------------------------------------------------------
 TEST_F(SubscriptionManagerUTest, SubscribeFailure)
@@ -532,7 +532,7 @@ TEST_F(SubscriptionManagerUTest, SubscribeFailure)
 
 // ---------------------------------------------------------------------------
 // Test name: SubscriptionManagerUTest.DestructorCallsUnsubscribeAll
-// Covers: helpers_impl.cpp:34 (destructor calls unsubscribeAll)
+// Covers: SubscriptionManager destructor calls unsubscribeAll
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(SubscriptionManagerUTest, DestructorCallsUnsubscribeAll)
@@ -548,7 +548,7 @@ TEST_F(SubscriptionManagerUTest, DestructorCallsUnsubscribeAll)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.DestructorCleansUpActiveSubscriptions
-// Covers: helpers_impl.h:35-42 (destructor loop over subscriptions_)
+// Covers: HelperImpl destructor loop over active subscriptions
 //         Also covers the false branch (empty subscriptions_ → skip loop)
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
@@ -577,7 +577,7 @@ TEST_F(HelperUTest, DestructorCleansUpActiveSubscriptions)
 
 // ---------------------------------------------------------------------------
 // Test name: HelperUTest.DestructorWithNoSubscriptions
-// Covers: helpers_impl.h:35-42 (destructor with empty subscriptions_ → skip)
+// Covers: HelperImpl destructor with empty subscriptions (skip loop)
 // Scenario type: edge case
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, DestructorWithNoSubscriptions)
@@ -590,7 +590,7 @@ TEST_F(HelperUTest, DestructorWithNoSubscriptions)
 
 // ---------------------------------------------------------------------------
 // Test name: GetHelperInstanceTest.ReturnsSingleton
-// Covers: helpers_impl.cpp:45,47-48 (GetHelperInstance singleton factory)
+// Covers: GetHelperInstance singleton factory
 // Scenario type: success
 // ---------------------------------------------------------------------------
 TEST(GetHelperInstanceTest, ReturnsSingleton)
