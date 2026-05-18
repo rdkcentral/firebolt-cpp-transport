@@ -934,16 +934,15 @@ TEST_F(GatewayUTest, SendNotConnected)
     Firebolt::Config cfg = getTestConfig();
     cfg.wsUrl = "ws://localhost:49199"; // No server here
 
-    Firebolt::Error err =
-        gateway.connect(cfg,
-                        [&](bool connected, const Firebolt::Error&)
-                        {
-                            bool expected = false;
-                            if (promiseSet.compare_exchange_strong(expected, true))
-                            {
-                                connPromise.set_value(connected);
-                            }
-                        });
+    Firebolt::Error err = gateway.connect(cfg,
+                                          [&](bool connected, const Firebolt::Error&)
+                                          {
+                                              bool expected = false;
+                                              if (promiseSet.compare_exchange_strong(expected, true))
+                                              {
+                                                  connPromise.set_value(connected);
+                                              }
+                                          });
     ASSERT_EQ(err, Firebolt::Error::None);
 
     // Wait for connection failure
@@ -1144,8 +1143,8 @@ TEST_F(GatewayUTest, WaitTimeConfiguration)
     Firebolt::Config cfg = getTestConfig();
     cfg.waitTime_ms = 200; // Short timeout
 
-    Firebolt::Error err = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& e)
-                                          { onConnectionChange(connected, e); });
+    Firebolt::Error err =
+        gateway.connect(cfg, [this](bool connected, const Firebolt::Error& e) { onConnectionChange(connected, e); });
     ASSERT_EQ(err, Firebolt::Error::None);
     ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
 
@@ -1212,14 +1211,13 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
     Firebolt::Config cfg = getTestConfig();
     cfg.wsUrl = "ws://localhost:49198";
 
-    Firebolt::Error err =
-        gateway.connect(cfg,
-                        [&](bool connected, const Firebolt::Error&)
-                        {
-                            bool exp = false;
-                            if (pset.compare_exchange_strong(exp, true))
-                                connPromise.set_value(connected);
-                        });
+    Firebolt::Error err = gateway.connect(cfg,
+                                          [&](bool connected, const Firebolt::Error&)
+                                          {
+                                              bool exp = false;
+                                              if (pset.compare_exchange_strong(exp, true))
+                                                  connPromise.set_value(connected);
+                                          });
     ASSERT_EQ(err, Firebolt::Error::None);
 
     connFuture.wait_for(std::chrono::milliseconds(500));

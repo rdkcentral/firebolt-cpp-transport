@@ -338,8 +338,8 @@ TEST_F(HelperUTest, SubscribeSuccess)
     EXPECT_CALL(mockGateway, subscribe("test.onEvent", _, _)).WillOnce(Return(Error::None));
 
     IHelper& ihelper = helper;
-    auto result = ihelper.subscribe(this, "test.onEvent", std::move(notification),
-                                    onPropertyChangedCallback<TestJson, int>);
+    auto result =
+        ihelper.subscribe(this, "test.onEvent", std::move(notification), onPropertyChangedCallback<TestJson, int>);
     ASSERT_TRUE(result);
 }
 
@@ -355,8 +355,8 @@ TEST_F(HelperUTest, SubscribeGatewayError)
     EXPECT_CALL(mockGateway, subscribe("test.onEvent", _, _)).WillOnce(Return(Error::NotConnected));
 
     IHelper& ihelper = helper;
-    auto result = ihelper.subscribe(this, "test.onEvent", std::move(notification),
-                                    onPropertyChangedCallback<TestJson, int>);
+    auto result =
+        ihelper.subscribe(this, "test.onEvent", std::move(notification), onPropertyChangedCallback<TestJson, int>);
     ASSERT_FALSE(result);
     EXPECT_EQ(result.error(), Error::NotConnected);
 }
@@ -385,8 +385,8 @@ TEST_F(HelperUTest, UnsubscribeSuccess)
     EXPECT_CALL(mockGateway, subscribe("test.onEvent", _, _)).WillOnce(Return(Error::None));
 
     IHelper& ihelper = helper;
-    auto subResult = ihelper.subscribe(this, "test.onEvent", std::move(notification),
-                                       onPropertyChangedCallback<TestJson, int>);
+    auto subResult =
+        ihelper.subscribe(this, "test.onEvent", std::move(notification), onPropertyChangedCallback<TestJson, int>);
     ASSERT_TRUE(subResult);
     SubscriptionId id = *subResult;
 
@@ -472,8 +472,7 @@ TEST(OnPropertyChangedCallbackUTest, MultiArgCallback)
 
     std::promise<std::pair<int, std::string>> promise;
     auto future = promise.get_future();
-    std::function<void(int, std::string)> notification = [&promise](int n, std::string s)
-    { promise.set_value({n, s}); };
+    std::function<void(int, std::string)> notification = [&promise](int n, std::string s) { promise.set_value({n, s}); };
     subData.notification = notification;
 
     nlohmann::json jsonResponse = {{"num", 7}, {"str", "hello"}};

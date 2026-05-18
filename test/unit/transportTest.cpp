@@ -903,11 +903,8 @@ TEST_F(TransportUTest, GetNextMessageIDMonotonic)
 // ---------------------------------------------------------------------------
 TEST_F(TransportCustomServerUTest, DisconnectFromDisconnectedState)
 {
-    m_server.set_open_handler(
-        [this](connection_hdl hdl)
-        {
-            m_server.close(hdl, websocketpp::close::status::normal, "Bye");
-        });
+    m_server.set_open_handler([this](connection_hdl hdl)
+                              { m_server.close(hdl, websocketpp::close::status::normal, "Bye"); });
 
     StartServer();
 
