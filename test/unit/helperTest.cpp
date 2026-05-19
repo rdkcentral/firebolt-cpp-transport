@@ -405,8 +405,10 @@ TEST_F(HelperUTest, UnsubscribeSuccess)
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, UnsubscribeAllWithOwner)
 {
-    void* owner1 = reinterpret_cast<void*>(0x1);
-    void* owner2 = reinterpret_cast<void*>(0x2);
+    int owner1Tag = 0;
+    int owner2Tag = 0;
+    void* owner1 = &owner1Tag;
+    void* owner2 = &owner2Tag;
 
     std::function<void(int)> notification1 = [](int) {};
     std::function<void(int)> notification2 = [](int) {};
@@ -433,8 +435,10 @@ TEST_F(HelperUTest, UnsubscribeAllWithOwner)
 // ---------------------------------------------------------------------------
 TEST_F(HelperUTest, UnsubscribeAllNoMatch)
 {
-    void* owner = reinterpret_cast<void*>(0x1);
-    void* otherOwner = reinterpret_cast<void*>(0x99);
+    int ownerTag = 0;
+    int otherOwnerTag = 0;
+    void* owner = &ownerTag;
+    void* otherOwner = &otherOwnerTag;
 
     std::function<void(int)> notification = [](int) {};
     EXPECT_CALL(mockGateway, subscribe("event", _, _)).WillOnce(Return(Error::None));
