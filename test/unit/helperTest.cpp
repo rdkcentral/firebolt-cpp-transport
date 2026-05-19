@@ -180,9 +180,8 @@ TEST_F(SubscriptionManagerUTest, Unsubscribe)
 
 TEST_F(SubscriptionManagerUTest, UnsubscribeAll)
 {
-    EXPECT_CALL(mockHelper, unsubscribeAll(owner));
+    EXPECT_CALL(mockHelper, unsubscribeAll(owner)).Times(2);
     subscriptionManager->unsubscribeAll();
-    subscriptionManager.release();
 }
 
 TEST(OnPropertyChangedCallbackUTest, Basic)
