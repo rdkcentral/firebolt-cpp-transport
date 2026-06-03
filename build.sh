@@ -55,7 +55,9 @@ done
 
 $cleanFirst && rm -rf $bdir
 
-if [[ ! -e $bdir || ! -z "$@" ]]; then
+if [[ ! -e "$bdir" || -n "$@" ]]; then
+  params+=" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+  command -v ccache >/dev/null 2>&1 && params+=" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
   cmake -B $bdir \
     -DCMAKE_BUILD_TYPE=$buildType \
     -DSYSROOT_PATH=$SYSROOT_PATH \

@@ -20,6 +20,8 @@
 #include "firebolt/logger.h"
 #include "firebolt/types.h"
 #include <assert.h>
+#include <chrono>
+#include <memory>
 
 namespace Firebolt::Transport
 {
@@ -230,7 +232,23 @@ Firebolt::Error Transport::disconnect()
 
     if (connectionStatus_ == TransportState::Connected)
     {
+        // Shorten the close-handshake timeout so that join() below does not block
+        // for the full websocketpp default (5 s) if the gateway is unresponsive.
+        // get_con_from_hdl() throws bad_weak_ptr when the connection has already
+        // been torn down at the network level, in which case close() will fail
+        // gracefully via its error_code path.
+        try
+        {
+            auto con = client_->get_con_from_hdl(connectionHandle_);
+            con->set_close_handshake_timeout(100);
+        }
+        catch (const std::bad_weak_ptr& ex)
+        {
+            FIREBOLT_LOG_WARNING("Transport", "Could not set close handshake timeout: %s", ex.what());
+        }
+
         websocketpp::lib::error_code ec;
+        FIREBOLT_LOG_DEBUG("Transport", "[disconnect] close() start (handshake timeout=100ms)");
         client_->close(connectionHandle_, websocketpp::close::status::going_away, "", ec);
         if (ec)
         {
@@ -238,12 +256,24 @@ Firebolt::Error Transport::disconnect()
         }
     }
 
+    FIREBOLT_LOG_DEBUG("Transport", "[disconnect] waiting for connectionThread join (close handshake in progress)...");
+    auto t0_ct = std::chrono::steady_clock::now();
     if (connectionThread_ && connectionThread_->joinable())
     {
         connectionThread_->join();
     }
+    FIREBOLT_LOG_INFO("Transport", "[disconnect] connectionThread joined in %ld ms",
+                      static_cast<long>(
+                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_ct)
+                              .count()));
 
+    FIREBOLT_LOG_DEBUG("Transport", "[disconnect] stopping message worker...");
+    auto t0_mw = std::chrono::steady_clock::now();
     stopMessageWorker();
+    FIREBOLT_LOG_DEBUG("Transport", "[disconnect] message worker stopped in %ld ms",
+                       static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now() - t0_mw)
+                                             .count()));
 
     client_ = std::make_unique<client>();
     connectionStatus_ = TransportState::NotStarted;
