@@ -1,0 +1,106 @@
+# Sync develop → main
+#
+# Runs automatically on every merge to develop, and on demand via workflow_dispatch.
+# On a clean merge: pushes directly to main.
+# On a conflict: opens a PR instead so it can be resolved with human eyes.
+#
+# To adapt for another repo, change SOURCE_BRANCH / TARGET_BRANCH below.
+# When a shared org workflow repo exists, these become reusable workflow inputs.
+
+name: Sync develop to main
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+env:
+  SOURCE_BRANCH: develop
+  TARGET_BRANCH: main
+  GIT_USER_NAME: github-actions[bot]
+  GIT_USER_EMAIL: github-actions[bot]@users.noreply.github.com
+
+jobs:
+  sync:
+    name: Merge develop to main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "${{ env.GIT_USER_NAME }}"
+          git config user.email "${{ env.GIT_USER_EMAIL }}"
+
+      - name: Check if sync is needed
+        id: check
+        run: |
+          git fetch origin \
+            "refs/heads/${{ env.SOURCE_BRANCH }}:refs/remotes/origin/${{ env.SOURCE_BRANCH }}" \
+            "refs/heads/${{ env.TARGET_BRANCH }}:refs/remotes/origin/${{ env.TARGET_BRANCH }}"
+          if git merge-base --is-ancestor "origin/${{ env.SOURCE_BRANCH }}" "origin/${{ env.TARGET_BRANCH }}"; then
+            echo "already_synced=true" >> "$GITHUB_OUTPUT"
+            echo "${{ env.TARGET_BRANCH }} already contains all commits from ${{ env.SOURCE_BRANCH }} — nothing to do."
+          else
+            echo "already_synced=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attempt merge
+        if: steps.check.outputs.already_synced == 'false'
+        id: merge
+        run: |
+          git checkout -B "${{ env.TARGET_BRANCH }}" "origin/${{ env.TARGET_BRANCH }}"
+
+          if git merge --no-edit "origin/${{ env.SOURCE_BRANCH }}"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            git merge --abort || true
+          fi
+
+      - name: Push merged result
+        if: steps.check.outputs.already_synced == 'false' && steps.merge.outputs.conflict == 'false'
+        run: |
+          git push origin "${{ env.TARGET_BRANCH }}"
+          echo "Pushed ${{ env.SOURCE_BRANCH }} → ${{ env.TARGET_BRANCH }} successfully."
+
+      - name: Open PR on conflict
+        if: steps.check.outputs.already_synced == 'false' && steps.merge.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+        run: |
+          PR_BRANCH="auto-sync/${{ env.SOURCE_BRANCH }}-to-${{ env.TARGET_BRANCH }}"
+
+          # Create or reset the conflict-resolution branch from source
+          git checkout -B "$PR_BRANCH" "origin/${{ env.SOURCE_BRANCH }}"
+          git push origin "$PR_BRANCH" --force
+
+          # Open a PR if one doesn't already exist
+          EXISTING=$(gh pr list --base "${{ env.TARGET_BRANCH }}" --head "$PR_BRANCH" --json number --jq '.[0].number')
+          if [ -z "$EXISTING" ]; then
+            gh pr create \
+              --base "${{ env.TARGET_BRANCH }}" \
+              --head "$PR_BRANCH" \
+              --title "chore: auto-sync ${{ env.SOURCE_BRANCH }} → ${{ env.TARGET_BRANCH }} (conflict)" \
+              --body "$(cat <<'EOF'
+          Automatic sync of \`${{ env.SOURCE_BRANCH }}\` → \`${{ env.TARGET_BRANCH }}\` detected a merge conflict and could not push directly.
+
+          **Action required:** resolve the conflicts in this PR, then merge it.
+
+          _Triggered by: ${{ github.sha }} on ${{ github.ref_name }}_
+          EOF
+          )"
+            echo "PR opened for manual conflict resolution."
+          else
+            echo "PR #$EXISTING already open — skipping creation."
+          fi
+          exit 1  # Fail the job so the conflict is visible in the Actions UI
