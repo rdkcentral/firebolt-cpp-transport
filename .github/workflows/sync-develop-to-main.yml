@@ -1,0 +1,131 @@
+# Sync develop → main
+#
+# Runs automatically on every merge to develop, and on demand via workflow_dispatch.
+# On a clean merge: pushes directly to main.
+# On a conflict: opens a PR instead so it can be resolved with human eyes.
+#
+# To adapt for another repo, change SOURCE_BRANCH / TARGET_BRANCH below.
+# When a shared org workflow repo exists, these become reusable workflow inputs.
+
+name: Sync develop to main
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+concurrency:
+  group: sync-${{ github.repository }}-${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_BRANCH: develop
+  TARGET_BRANCH: main
+  GIT_USER_NAME: github-actions[bot]
+  GIT_USER_EMAIL: github-actions[bot]@users.noreply.github.com
+
+jobs:
+  sync:
+    name: Merge develop to main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "${{ env.GIT_USER_NAME }}"
+          git config user.email "${{ env.GIT_USER_EMAIL }}"
+
+      - name: Check if sync is needed
+        id: check
+        run: |
+          git fetch origin \
+            "refs/heads/${{ env.SOURCE_BRANCH }}:refs/remotes/origin/${{ env.SOURCE_BRANCH }}" \
+            "refs/heads/${{ env.TARGET_BRANCH }}:refs/remotes/origin/${{ env.TARGET_BRANCH }}"
+          if git merge-base --is-ancestor "origin/${{ env.SOURCE_BRANCH }}" "origin/${{ env.TARGET_BRANCH }}"; then
+            echo "already_synced=true" >> "$GITHUB_OUTPUT"
+            echo "${{ env.TARGET_BRANCH }} already contains all commits from ${{ env.SOURCE_BRANCH }} — nothing to do."
+          else
+            echo "already_synced=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attempt merge
+        if: steps.check.outputs.already_synced == 'false'
+        id: merge
+        run: |
+          git checkout -B "${{ env.TARGET_BRANCH }}" "origin/${{ env.TARGET_BRANCH }}"
+
+          if git merge --no-edit "origin/${{ env.SOURCE_BRANCH }}"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            git merge --abort || true
+          fi
+
+      - name: Push merged result
+        if: steps.check.outputs.already_synced == 'false' && steps.merge.outputs.conflict == 'false'
+        id: push_merged
+        run: |
+          if git push origin "${{ env.TARGET_BRANCH }}"; then
+            echo "push_failed=false" >> "$GITHUB_OUTPUT"
+            echo "Pushed ${{ env.SOURCE_BRANCH }} → ${{ env.TARGET_BRANCH }} successfully."
+          else
+            echo "push_failed=true" >> "$GITHUB_OUTPUT"
+            echo "Direct push failed. Falling back to conflict PR path."
+          fi
+
+      - name: Open PR on conflict
+        if: steps.check.outputs.already_synced == 'false' && (steps.merge.outputs.conflict == 'true' || steps.push_merged.outputs.push_failed == 'true')
+        env:
+          GH_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+        run: |
+          PR_BRANCH="auto-sync/${{ env.SOURCE_BRANCH }}-to-${{ env.TARGET_BRANCH }}"
+          REASON="merge conflict"
+          if [ "${{ steps.merge.outputs.conflict }}" != "true" ]; then
+            REASON="direct push failure"
+          fi
+
+          # Open a PR if one doesn't already exist
+          EXISTING=$(gh pr list --base "${{ env.TARGET_BRANCH }}" --head "$PR_BRANCH" --json number --jq '.[0].number')
+          if [ -z "$EXISTING" ]; then
+            PUSH_BRANCH="$PR_BRANCH"
+
+            # If the canonical branch already exists (without an open PR), use a unique branch
+            # to avoid force-pushing over potential in-progress manual work.
+            if git ls-remote --exit-code --heads origin "$PR_BRANCH" >/dev/null 2>&1; then
+              PUSH_BRANCH="$PR_BRANCH-${GITHUB_RUN_ID}"
+            fi
+
+            git checkout -B "$PUSH_BRANCH" "origin/${{ env.SOURCE_BRANCH }}"
+            git push origin "$PUSH_BRANCH"
+
+            PR_BODY=$(cat <<EOF
+          Automatic sync of \`${{ env.SOURCE_BRANCH }}\` → \`${{ env.TARGET_BRANCH }}\` could not complete via direct workflow push.
+
+          **Action required:** resolve the conflicts in this PR, then merge it.
+
+          **Detected reason:** ${REASON}
+
+          _Triggered by: ${{ github.sha }} on ${{ github.ref_name }}_
+          EOF
+          )
+
+            gh pr create \
+              --base "${{ env.TARGET_BRANCH }}" \
+              --head "$PUSH_BRANCH" \
+              --title "chore: auto-sync ${{ env.SOURCE_BRANCH }} → ${{ env.TARGET_BRANCH }} ($REASON)" \
+              --body "$PR_BODY"
+            echo "PR opened for manual conflict resolution."
+          else
+            echo "PR #$EXISTING already open — leaving branch untouched."
+          fi
+          exit 1  # Fail the job so the conflict is visible in the Actions UI

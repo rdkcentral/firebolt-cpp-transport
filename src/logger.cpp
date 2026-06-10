@@ -21,6 +21,7 @@
 #include <cstdarg>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <map>
 #include <stdio.h>
 #include <sys/time.h>
@@ -120,15 +121,7 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
     std::string fileName;
     if (formatter_addLocation)
     {
-        fileName = strrchr(file.c_str(), '/');
-        if (fileName.empty())
-        {
-            fileName = file;
-        }
-        else
-        {
-            fileName = fileName.substr(1);
-        }
+        fileName = std::filesystem::path(file).filename().string();
     }
 
 #pragma GCC diagnostic push

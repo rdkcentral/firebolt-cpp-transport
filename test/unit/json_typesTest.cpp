@@ -189,3 +189,35 @@ TEST(JsonTypesUTest, ArrayWithMixedTypes)
     nlohmann::json json = {1, "two", 3};
     EXPECT_THROW(intArray.fromJson(json), nlohmann::json::type_error);
 }
+
+// ---------------------------------------------------------------------------
+// Non-array input tests for each NL_Json_Array instantiation.
+// Each instantiation generates its own copy of the throw at json_types.h:86.
+// ---------------------------------------------------------------------------
+TEST(JsonTypesUTest, IntegerArrayWithNonArrayPayload)
+{
+    NL_Json_Array<Integer, int32_t> arr;
+    nlohmann::json json = 42;
+    EXPECT_THROW(arr.fromJson(json), nlohmann::json::type_error);
+}
+
+TEST(JsonTypesUTest, BooleanArrayWithNonArrayPayload)
+{
+    NL_Json_Array<Boolean, bool> arr;
+    nlohmann::json json = true;
+    EXPECT_THROW(arr.fromJson(json), nlohmann::json::type_error);
+}
+
+TEST(JsonTypesUTest, FloatArrayWithNonArrayPayload)
+{
+    NL_Json_Array<Float, float> arr;
+    nlohmann::json json = 3.14;
+    EXPECT_THROW(arr.fromJson(json), nlohmann::json::type_error);
+}
+
+TEST(JsonTypesUTest, UnsignedArrayWithNonArrayPayload)
+{
+    NL_Json_Array<Unsigned, uint32_t> arr;
+    nlohmann::json json = 99u;
+    EXPECT_THROW(arr.fromJson(json), nlohmann::json::type_error);
+}
