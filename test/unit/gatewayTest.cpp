@@ -924,32 +924,11 @@ TEST_F(GatewayUTest, SendNotConnected)
 {
     // Don't start the server — connect will fail
     IGateway& gateway = GetGatewayInstance();
-    // Don't connect, just try to send on a fresh instance (already disconnected from TearDown)
-    // The gateway instance is a singleton, so we need to rely on the state being disconnected
-    // after TearDown was called in a previous test
-    // Instead, let's connect to a non-existent server and verify send after connection failure
-    std::promise<bool> connPromise;
-    auto connFuture = connPromise.get_future();
-    std::atomic<bool> promiseSet{false};
-
     Firebolt::Config cfg = getTestConfig();
     cfg.wsUrl = "ws://localhost:49199"; // No server here
 
-    Firebolt::Error err = gateway.connect(cfg,
-                                          [&](bool connected, const Firebolt::Error&)
-                                          {
-                                              bool expected = false;
-                                              if (promiseSet.compare_exchange_strong(expected, true))
-                                              {
-                                                  connPromise.set_value(connected);
-                                              }
-                                          });
-    ASSERT_EQ(err, Firebolt::Error::None);
-
-    // Wait for connection failure — assert so we don't proceed with dangling callback refs
-    auto status = connFuture.wait_for(std::chrono::milliseconds(2000));
-    ASSERT_EQ(status, std::future_status::ready) << "Connection failure callback not received";
-    EXPECT_FALSE(connFuture.get());
+    Firebolt::Error err = gateway.connect(cfg, [](bool, const Firebolt::Error&) {});
+    ASSERT_EQ(err, Firebolt::Error::General);
 
     // Send should fail with NotConnected
     err = gateway.send("test.method", {});
@@ -1206,25 +1185,12 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
     // Don't start server — connect to a port nobody listens on
     // so transport is in Disconnected state after connection failure
     IGateway& gateway = GetGatewayInstance();
-    std::promise<bool> connPromise;
-    auto connFuture = connPromise.get_future();
-    std::atomic<bool> pset{false};
 
     Firebolt::Config cfg = getTestConfig();
     cfg.wsUrl = "ws://localhost:49198";
 
-    Firebolt::Error err = gateway.connect(cfg,
-                                          [&](bool connected, const Firebolt::Error&)
-                                          {
-                                              bool exp = false;
-                                              if (pset.compare_exchange_strong(exp, true))
-                                                  connPromise.set_value(connected);
-                                          });
-    ASSERT_EQ(err, Firebolt::Error::None);
-
-    // Assert callback arrives — prevents proceeding with dangling refs
-    auto connStatus = connFuture.wait_for(std::chrono::milliseconds(2000));
-    ASSERT_EQ(connStatus, std::future_status::ready) << "Connection failure callback not received";
+    Firebolt::Error err = gateway.connect(cfg, [](bool, const Firebolt::Error&) {});
+    ASSERT_EQ(err, Firebolt::Error::General);
 
     // Now request — transport.send will fail with NotConnected,
     // which triggers the error branch in Client::request (lines 136-141)
