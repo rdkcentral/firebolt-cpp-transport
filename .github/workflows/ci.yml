@@ -2,9 +2,9 @@ name: CI Build and Test
 
 on:
   push:
-    branches: [ main, '+([0-9])\.+([0-9])\.x-maintenance', '+([0-9])\.+([0-9])-rc' ]
+    branches: [ main, develop, '+([0-9])\.+([0-9])\.x-maintenance', '+([0-9])\.+([0-9])-rc' ]
   pull_request:
-    branches: [ main, '+([0-9])\.+([0-9])\.x-maintenance', '+([0-9])\.+([0-9])-rc'  ]
+    branches: [ main, develop, '+([0-9])\.+([0-9])\.x-maintenance', '+([0-9])\.+([0-9])-rc' ]
   workflow_dispatch:
     inputs:
       protocol:
