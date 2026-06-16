@@ -141,4 +141,5 @@ This spec is a recommendations document, not a normative specification. It captu
 ---
 
 ## Change History
+- 2026-06-16 - Added/updated in this PR.
 - 2026-04-17 - Restructured to match spec template.
