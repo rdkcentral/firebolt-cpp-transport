@@ -82,4 +82,5 @@ _No open queries._
 - [websocketpp connection API - replace_header](https://docs.websocketpp.org/classwebsocketpp_1_1connection.html)
 
 ## Change History
+- 2026-06-16 - Archived/updated in this PR.
 - 2026-03-16 - satlead - Initial spec for header support (inject request headers, retrieve response headers)
