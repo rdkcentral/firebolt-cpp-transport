@@ -177,4 +177,5 @@ _Not applicable — conformance test strategies are defined in [transport_recomm
 ---
 
 ## Change History
+- 2026-06-16 - Added/updated in this PR.
 - 2026-04-17 - Restructured to match spec template; moved header interface details to header_interfaces_spec.md.
