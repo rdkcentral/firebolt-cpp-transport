@@ -165,6 +165,7 @@ The Firebolt Transport Layer uses WebSocket as its underlying transport, with JS
 
 **Conclusion:**
 The transport library is decoupled from client and schema logic, providing a generic, extensible foundation for JSON-RPC over WebSocket. Integration patterns and initialization flows should be defined to support external consumers and SDKs.
+---
 theme: default
 title: Firebolt C++ Transport
 info: |
