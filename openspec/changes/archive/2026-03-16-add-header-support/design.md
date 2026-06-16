@@ -42,8 +42,8 @@ This document details the design for adding custom header support to the Firebol
 - Header injection occurs before connection is established, so no race conditions are expected.
 
 ## API Reference
-- [Config struct](../include/firebolt/config.h.in)
-- [IGateway interface](../include/firebolt/gateway.h)
+- [Config struct](../../../../include/firebolt/config.h.in)
+- [IGateway interface](../../../../include/firebolt/gateway.h)
 - [websocketpp connection API - get_response_header](https://docs.websocketpp.org/classwebsocketpp_1_1connection.html#a72e0c94609844078fc611716c39791de)
 
 ## Alternatives Considered
