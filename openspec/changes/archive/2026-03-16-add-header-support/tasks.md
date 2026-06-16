@@ -8,4 +8,4 @@
 - [x] Ensure thread safety and error handling for header operations
 - [x] Add unit and integration tests for header injection and retrieval
 - [x] Update documentation for new header support
-- [ ] Review and archive the change in OpenSpec
+- [x] Review and archive the change in OpenSpec
