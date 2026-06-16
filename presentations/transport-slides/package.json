@@ -1,5 +1,6 @@
 {
   "name": "transport-slides",
+  "private": true,
   "version": "1.0.0",
   "description": "Slidev deck for Firebolt C++ Transport",
   "scripts": {
