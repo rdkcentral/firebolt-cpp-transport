@@ -23,7 +23,7 @@ rules:
       "_Not applicable — [brief reason]._"
     - The Covered Code section must list relevant src/ and include/ files and methods.
     - Open Queries must always be present, even if empty (_No open queries._).
-    - Change History must include an entry for the current date.
+    - Change History must include an entry for each update (date of change).
   tasks:
     - Break tasks into chunks of max 2-4 hours.
     - Each task should reference the relevant spec section it implements.
