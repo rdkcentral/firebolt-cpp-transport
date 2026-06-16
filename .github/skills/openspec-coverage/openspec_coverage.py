@@ -202,10 +202,10 @@ def scan_all_specs_for_coverage(spec_files):
 def scan_code_for_spec_comments(code_files):
     """Supplementary source: scan code files for '// Spec: <spec_name>' comments.
 
-    Returns a set of (file_path, method_name) pairs that are attributed to at
-    least one spec via an inline comment.  The comment may appear anywhere
-    inside the same file as the method — we attribute every method in the file
-    to the spec when a comment is found, since comment placement varies widely.
+    Returns a set of file paths that contain at least one spec comment.
+
+    Note: The main loop attributes every extracted method in those files as covered,
+    since comment placement can vary widely.
     """
     spec_comment_pattern = re.compile(
         r'//\s*[Ss]pec:\s*([\w\-./]+)', re.IGNORECASE

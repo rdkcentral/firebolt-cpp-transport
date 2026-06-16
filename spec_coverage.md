@@ -1,24 +1,24 @@
 # Openspec Coverage Report
 
-**Total Score: 78.67 / 100**
+**Total Score: 77.62 / 100**
 
 ---
 
-## Code to Spec Coverage: 26.67 / 40
-  - Reference Coverage:  10.00 / 20
+## Code to Spec Coverage: 25.62 / 40
+  - Reference Coverage:  8.50 / 20
     - Covered via spec 'Covered Code' sections: 17 method(s)
     - Additionally covered via '// Spec:' comments: 0 method(s)
   - Spec Existence:      10.00 / 10
-  - Spec Completeness:   4.17 / 5  (5/6 specs have all required sections)
-  - No Orphaned Code:    2.50 / 5
+  - Spec Completeness:   5.00 / 5  (6/6 specs have all required sections)
+  - No Orphaned Code:    2.12 / 5
 
 ### Spec Completeness Detail
-  - ✓ `openspec/specs/header_interfaces_spec.md`: all required sections present
   - ✓ `openspec/specs/transport_layer_spec.md`: all required sections present
   - ✓ `openspec/specs/cpp_specifics_spec.md`: all required sections present
   - ✓ `openspec/specs/transport_recommendations_spec.md`: all required sections present
+  - ✓ `openspec/specs/header_interfaces_spec.md`: all required sections present
   - ✓ `openspec/specs/json_rpc_handling_spec.md`: all required sections present
-  - ✗ `openspec/changes/archive/2026-03-16-add-header-support/specs/header_support_spec.md`: missing: overview, description
+  - ✓ `openspec/changes/archive/2026-03-16-add-header-support/specs/header_support_spec.md`: all required sections present
 
 ## Architecture HLA Specification: 10 / 10
   - Presence of HLA Spec:             3 / 3
@@ -58,21 +58,29 @@
 
 ---
 
-## Orphaned Code Methods (not covered by any spec) — 17 total
-- `src/gateway.cpp`: `lock`
-- `src/gateway.cpp`: `lck`
-- `src/gateway.cpp`: `onConnectionChange`
+## Orphaned Code Methods (not covered by any spec) — 23 total
 - `src/helpers_impl.h`: `lock`
-- `src/transport.cpp`: `lock`
-- `src/transport.cpp`: `mapError`
+- `src/transport.h`: `~Transport`
 - `src/transport.h`: `stopMessageWorker`
 - `src/transport.h`: `start`
-- `src/transport.h`: `~Transport`
-- `include/firebolt/types.h`: `has_value`
+- `src/gateway.cpp`: `onConnectionChange`
+- `src/gateway.cpp`: `lock`
+- `src/gateway.cpp`: `lck`
+- `src/transport.cpp`: `mapError`
+- `src/transport.cpp`: `lock`
 - `include/firebolt/types.h`: `bool`
-- `include/firebolt/gateway.h`: `~IGateway`
+- `include/firebolt/types.h`: `has_value`
+- `include/firebolt/types.h`: `error`
 - `include/firebolt/json_types.h`: `nlohmann::json::type_error::create`
+- `include/firebolt/gateway.h`: `~IGateway`
 - `test/UnitTestsMain.cpp`: `RUN_ALL_TESTS`
+- `test/unit/loggerTest.cpp`: `std::string`
+- `test/unit/loggerTest.cpp`: `output`
+- `test/unit/loggerTest.cpp`: `longMsg`
+- `test/unit/transportTest.cpp`: `port`
 - `test/unit/transportTest.cpp`: `promiseSet`
+- `test/unit/helperTest.cpp`: `errorInfo`
 - `test/unit/helperTest.cpp`: `value`
 - `test/unit/helperTest.cpp`: `fromJson`
+
+Report written to spec_coverage.md
