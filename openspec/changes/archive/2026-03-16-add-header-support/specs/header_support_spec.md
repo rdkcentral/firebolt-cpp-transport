@@ -1,8 +1,10 @@
 # Header Support Specification
 
-## Capability
+## Overview
 Add support for custom HTTP headers in the Firebolt C++ transport layer, including both header injection during connection and response header retrieval after connection.
 
+## Description
+This specification defines the expected API and behavior for sending custom HTTP headers during the WebSocket handshake and retrieving response headers after a successful connection.
 ## Requirements
 - Clients MUST be able to specify custom headers in the `Config` struct.
 - The transport layer MUST inject these headers into the WebSocket handshake.
