@@ -73,19 +73,20 @@ The transport layer is a standalone C++ library that abstracts WebSocket communi
 
 The `Firebolt::Config` structure defines all options available during connection:
 
-| Field                | Type               | Default             | Description                        |
-|----------------------|--------------------|---------------------|------------------------------------|
-| wsUrl                | std::string        | ws://127.0.0.1:9998 | WebSocket endpoint                 |
-| waitTime_ms          | unsigned           | 3000                | RPC response timeout (ms)          |
-| legacyRPCv1          | bool               | macro value         | Enable legacy event notification   |
-| log.level            | LogLevel           | Info                | Log verbosity                      |
-| log.transportInclude | optional<unsigned> | n/a                 | Log category include mask          |
-| log.transportExclude | optional<unsigned> | n/a                 | Log category exclude mask          |
-| log.format.ts        | bool               | true                | Timestamp in logs                  |
-| log.format.location  | bool               | false               | Source location in logs            |
-| log.format.function  | bool               | true                | Function name in logs              |
-| log.format.thread    | bool               | true                | Thread id in logs                  |
-| watchdogCycle_ms     | unsigned           | 500                 | Watchdog polling interval (ms)     |
+| Field                | Type                          | Default             | Description                              |
+|----------------------|-------------------------------|---------------------|------------------------------------------|
+| wsUrl                | std::string                   | ws://127.0.0.1:9998 | WebSocket endpoint                       |
+| headers              | std::map<std::string, std::string> | {}                  | Custom headers for WebSocket handshake   |
+| waitTime_ms          | unsigned                      | 3000                | RPC response timeout (ms)                |
+| legacyRPCv1          | bool                          | macro value         | Enable legacy event notification         |
+| log.level            | LogLevel                      | Info                | Log verbosity                            |
+| log.transportInclude | optional<unsigned>            | n/a                 | Log category include mask                |
+| log.transportExclude | optional<unsigned>            | n/a                 | Log category exclude mask                |
+| log.format.ts        | bool                          | true                | Timestamp in logs                        |
+| log.format.location  | bool                          | false               | Source location in logs                  |
+| log.format.function  | bool                          | true                | Function name in logs                    |
+| log.format.thread    | bool                          | true                | Thread id in logs                        |
+| watchdogCycle_ms     | unsigned                      | 500                 | Watchdog polling interval (ms)           |
 
 ### Event Types & Error Handling
 
