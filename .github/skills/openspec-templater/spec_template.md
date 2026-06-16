@@ -11,23 +11,23 @@ Detailed explanation of the feature, module, or interface being specified. Inclu
 - [Requirement 2]
 - [Requirement 3]
 
-## Architecture / Design (if applicable)
+## Architecture / Design
 - High-level architecture diagrams or descriptions
 - Key components and their interactions
 
-## External Interfaces (if applicable)
+## External Interfaces
 - API endpoints, data formats, protocols, etc.
 
-## Performance (if applicable)
+## Performance
 - Performance goals, metrics, and benchmarks
 
-## Security (if applicable)
+## Security
 - Security requirements, threat models, mitigations
 
-## Versioning & Compatibility (if applicable)
+## Versioning & Compatibility
 - Versioning scheme, compatibility guarantees, migration paths
 
-## Conformance Testing & Validation (if applicable)
+## Conformance Testing & Validation
 - Test strategies, automation, validation criteria
 
 ## Covered Code
