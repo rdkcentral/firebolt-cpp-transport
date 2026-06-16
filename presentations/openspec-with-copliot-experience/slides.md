@@ -164,8 +164,7 @@ What is the objective?
 # [Explore] Interactive Spec Generation
 
 ```sh
-$ /ospx-explore "Explore current repository and generate specs for transport layer. Prompt questions 
-when you need more info" --output "specs/"
+$ /opsx:explore "Explore current repository and generate specs for transport layer. Prompt questions when you need more info" --output "specs/"
 ```
 
 ```mermaid
