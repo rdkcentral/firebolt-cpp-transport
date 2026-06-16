@@ -157,7 +157,7 @@ What is the objective?
 - Propose and implement changes.
 - Document and share learnings.
 
-> Use VS Code with Copilot and preferrably a simple Agent like GPT-4.1(0x Tokens) from spec generation to code implementation and documentation.
+> Use VS Code with Copilot and preferably a simple Agent like GPT-4.1(0x Tokens) from spec generation to code implementation and documentation.
 
 ---
 
