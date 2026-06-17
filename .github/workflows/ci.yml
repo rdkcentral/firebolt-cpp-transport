@@ -178,6 +178,7 @@ jobs:
                     --medium-threshold 50 --high-threshold 75 \
                     --html-details coverage/index.html \
                     --cobertura coverage.cobertura.xml \
+                    --lcov coverage/coverage.info \
             "
 
       - name: Upload Coverage Report
@@ -185,6 +186,12 @@ jobs:
         with:
           name: coverage-report
           path: ${{ github.workspace }}/build/coverage/
+
+      - name: Upload lcov artifact for coverage gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: ${{ github.workspace }}/build/coverage/coverage.info
 
       - name: Code Coverage Summary Report
         uses: irongut/CodeCoverageSummary@v1.3.0
@@ -199,3 +206,139 @@ jobs:
 
       - name: Add coverage summary to job summary
         run: cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY
+
+  coverage-gate:
+    name: Coverage Gate
+    needs: [unit_tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # continue-on-error ensures transient infrastructure failures never block PRs
+    continue-on-error: true
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Fetch baseline from build-metadata branch
+        # Falls back to {} on first run or if the branch/file is absent.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if git fetch origin build-metadata 2>/dev/null && \
+             git cat-file -e FETCH_HEAD:coverage-baseline.json 2>/dev/null; then
+            git show FETCH_HEAD:coverage-baseline.json > coverage-baseline.json
+          else
+            echo '{}' > coverage-baseline.json
+          fi
+
+      - name: Download lcov artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-lcov
+          path: ./coverage-lcov
+
+      - name: Compare coverage to baseline
+        run: |
+          python3 .github/scripts/compare_coverage.py \
+            --baseline coverage-baseline.json \
+            --lcov ./coverage-lcov/coverage.info
+
+  update-baseline:
+    name: Update Coverage Baseline
+    # Runs only on a direct push to main when unit tests pass.
+    # Updates unconditionally — the baseline always tracks actual coverage
+    # so future runs compare against the current state, not a stale high-water mark.
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.unit_tests.result == 'success'
+    needs: [unit_tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: update-baseline-main
+      cancel-in-progress: false
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download lcov artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-lcov
+          path: ./coverage-lcov
+
+      - name: Write new baseline JSON
+        run: |
+          set -euo pipefail
+          export BASELINE_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          python3 - <<'PYEOF'
+import json, os, sys
+
+def parse_lcov(path):
+    found = hit = 0
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("LF:"):
+                    try: found += int(line[3:])
+                    except ValueError: pass
+                elif line.startswith("LH:"):
+                    try: hit += int(line[3:])
+                    except ValueError: pass
+    except OSError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    return round(hit / found * 100.0, 2) if found else None
+
+cov = parse_lcov("./coverage-lcov/coverage.info")
+if cov is None:
+    print("ERROR: no coverage data in lcov file", file=sys.stderr)
+    sys.exit(1)
+
+with open("new-baseline.json", "w") as f:
+    json.dump({
+        "coverage": cov,
+        "commit": os.environ["GITHUB_SHA"],
+        "timestamp": os.environ["BASELINE_TIMESTAMP"],
+    }, f, indent=2)
+    f.write("\n")
+print(f"Coverage: {cov}%")
+PYEOF
+          echo "New baseline:"
+          cat new-baseline.json
+
+      - name: Commit and push to build-metadata branch
+        run: |
+          set -euo pipefail
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+          if git fetch origin build-metadata 2>/dev/null; then
+            git checkout -B build-metadata FETCH_HEAD
+          else
+            git checkout --orphan build-metadata
+            git rm -rf . --quiet 2>/dev/null || true
+          fi
+
+          cp -f new-baseline.json coverage-baseline.json
+          git add coverage-baseline.json
+
+          if git diff --cached --quiet; then
+            echo "Coverage baseline unchanged — no commit needed"
+          else
+            git commit -m "chore: update coverage baseline [skip ci]
+
+Commit : $GITHUB_SHA
+Run ID : $GITHUB_RUN_ID"
+            git push --force-with-lease origin build-metadata
+            echo "Pushed updated baseline to build-metadata"
+          fi
