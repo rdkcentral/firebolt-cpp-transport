@@ -439,7 +439,7 @@ public:
         Firebolt::Error status = transport.connect(
             url, [this](const nlohmann::json& message) { this->onMessage(message); },
             [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
-            transportLoggingInclude, transportLoggingExclude);
+            transportLoggingInclude, transportLoggingExclude, cfg.headers);
 
         if (status != Firebolt::Error::None)
         {
@@ -695,6 +695,11 @@ private:
     Firebolt::Error send(const std::string& method, const nlohmann::json& parameters, MessageID id) override
     {
         return transport.send(method, parameters, id);
+    }
+
+    std::optional<std::string> getResponseHeader(const std::string& headerName) override
+    {
+        return transport.getResponseHeader(headerName);
     }
 };
 

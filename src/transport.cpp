@@ -142,7 +142,8 @@ void Transport::processQueuedMessages()
 
 Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, ConnectionCallback onConnectionChange,
                                    std::optional<unsigned> transportLoggingInclude,
-                                   std::optional<unsigned> transportLoggingExclude)
+                                   std::optional<unsigned> transportLoggingExclude,
+                                   const std::map<std::string, std::string>& headers)
 {
     if (connectionStatus_ == TransportState::Connected)
     {
@@ -190,6 +191,18 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     {
         FIREBOLT_LOG_ERROR("Transport", "Could not create connection because: %s", ec.message().c_str());
         return Firebolt::Error::NotConnected;
+    }
+
+    if (!con)
+    {
+        FIREBOLT_LOG_ERROR("Transport", "Connection pointer is null after get_connection.");
+        return Firebolt::Error::NotConnected;
+    }
+
+    // Inject custom headers before connecting
+    for (const auto& header : headers)
+    {
+        con->replace_header(header.first, header.second);
     }
 
     connectionHandle_ = con->get_handle();
@@ -335,6 +348,19 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
     connectionStatus_ = TransportState::Connected;
 
     client::connection_ptr con = c->get_con_from_hdl(hdl);
+    // Populate responseHeaders_ from the connection's response headers
+    {
+        std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+        responseHeaders_.clear();
+        if (con)
+        {
+            const auto& headers = con->get_response().get_headers();
+            for (const auto& header : headers)
+            {
+                responseHeaders_[header.first] = header.second;
+            }
+        }
+    }
     connectionReceiver_(true, Firebolt::Error::None);
 }
 
@@ -352,4 +378,14 @@ void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c,
     connectionReceiver_(false, mapError(con->get_ec()));
 }
 
+std::optional<std::string> Transport::getResponseHeader(const std::string& headerName)
+{
+    std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+    auto it = responseHeaders_.find(headerName);
+    if (it != responseHeaders_.end())
+    {
+        return it->second;
+    }
+    return std::nullopt;
+}
 } // namespace Firebolt::Transport

@@ -44,6 +44,13 @@ public:
                                                                   const nlohmann::json& parameters) = 0;
     virtual Firebolt::Error subscribe(const std::string& event, EventCallback callback, void* usercb) = 0;
     virtual Firebolt::Error unsubscribe(const std::string& event, void* usercb) = 0;
+
+    /**
+     * @brief Retrieve a response header by name from the server after connection.
+     * @param headerName The name of the header to retrieve.
+     * @return The header value if present, otherwise std::nullopt.
+     */
+    virtual std::optional<std::string> getResponseHeader(const std::string& headerName) = 0;
 };
 
 FIREBOLTTRANSPORT_EXPORT IGateway& GetGatewayInstance();
