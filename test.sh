@@ -27,6 +27,8 @@ $RUN cmake --build build-dev --parallel
 echo "Testing..."
 $RUN ctest --test-dir build-dev/test --output-on-failure
 
-echo "Coverage..."
-$RUN gcovr -r /workspace -f 'src/' -f 'include/' /workspace/build-dev \
-    --print-summary --exclude-unreachable-branches --exclude-throw-branches
+if [[ "${ENABLE_COVERAGE:-0}" == "1" ]]; then
+    echo "Coverage..."
+    $RUN gcovr -r /workspace -f 'src/' -f 'include/' /workspace/build-dev \
+        --print-summary --exclude-unreachable-branches --exclude-throw-branches
+fi

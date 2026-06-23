@@ -16,12 +16,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# SPDX-License-Identifier: Apache-2.0
 """
 Coverage gate for firebolt-cpp-transport.
 
-Reads unit-test line coverage from an lcov .info file, compares it against
-the stored baseline (build-metadata branch), and prints a summary report.
-Always exits 0 — the gate is informational and never blocks PRs.
+Reads unit-test line coverage from an lcov .info file produced by gcovr,
+compares it against a stored baseline (build-metadata branch), and prints a
+summary report.  Always exits 0 — the gate is informational and never blocks PRs.
 """
 
 import argparse
@@ -41,7 +42,20 @@ _SEP   = "\u2500" * 64
 
 
 def _colored(token: str, ok: bool) -> str:
+    if os.environ.get("NO_COLOR") is not None:
+        return token
     return f"{_GREEN if ok else _RED}{token}{_RESET}"
+
+
+def _fmt_timestamp(ts_raw: object) -> str:
+    """Format an ISO 8601 UTC timestamp string for display, or return 'unknown'."""
+    if not isinstance(ts_raw, str):
+        return "unknown"
+    try:
+        dt = datetime.datetime.strptime(ts_raw, "%Y-%m-%dT%H:%M:%SZ")
+        return dt.strftime("%Y-%m-%d %H:%M UTC")
+    except ValueError:
+        return ts_raw or "unknown"
 
 
 def parse_lcov_coverage(path: str) -> Optional[float]:
@@ -97,14 +111,78 @@ def load_baseline(path: str) -> dict:
     return {}
 
 
+def _suite_analysis(
+    current: Optional[float],
+    baseline_cov: Optional[float],
+) -> tuple:
+    """Analyse coverage for the unit-test suite.
+
+    Args:
+        current:      Measured line coverage %, or None if the lcov file was
+                      absent or unreadable.
+        baseline_cov: Stored baseline coverage %, or None if no baseline exists.
+
+    Returns:
+        A 4-tuple (ok, result_str, delta_str, reason):
+        - ok:         True when coverage meets both the threshold and regression checks.
+        - result_str: Human-readable status — the coverage percentage, or a
+                      "coverage data missing" message when current is None.
+        - delta_str:  Change from baseline as "+X.XX%" / "-X.XX%" / "N/A".
+        - reason:     None when ok, otherwise a description of what failed.
+    """
+    if current is None:
+        msg = "coverage data missing \u2014 lcov artifact absent or unreadable"
+        return False, msg, "N/A", msg
+
+    delta_str = "N/A"
+    threshold_ok = current >= THRESHOLD
+    regression_ok = True
+
+    if baseline_cov is not None and baseline_cov > 0.0:
+        regression_ok = current >= baseline_cov
+        delta = current - baseline_cov
+        delta_str = f"{'+' if delta >= 0 else ''}{delta:.2f}%"
+
+    ok = threshold_ok and regression_ok
+    reasons = []
+    if not threshold_ok:
+        reasons.append(f"below threshold ({THRESHOLD}%)")
+    if not regression_ok:
+        reasons.append(f"dropped from baseline ({baseline_cov:.2f}%)")
+
+    reason = " \u00b7 ".join(reasons) if reasons else None
+    return ok, f"{current:.2f}%", delta_str, reason
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Coverage gate for firebolt-cpp-transport unit tests."
     )
-    parser.add_argument("--baseline", required=True, metavar="PATH",
-                        help="Path to coverage-baseline.json.")
-    parser.add_argument("--lcov", required=False, metavar="PATH",
-                        help="Path to the lcov coverage.info file.")
+    parser.add_argument(
+        "--baseline", required=True, metavar="PATH",
+        help="Path to coverage-baseline.json.",
+    )
+    parser.add_argument(
+        "--unit", required=False, metavar="PATH",
+        help="Path to the unit-test lcov coverage.info file.",
+    )
+    parser.add_argument(
+        "--output-json", required=False, metavar="PATH",
+        help=(
+            "Write a new coverage-baseline.json to PATH when coverage data is "
+            "available.  Requires --commit and --timestamp."
+        ),
+    )
+    parser.add_argument(
+        "--commit", required=False, default="unknown", metavar="SHA",
+        help="Commit SHA to embed in --output-json (default: 'unknown').",
+    )
+    parser.add_argument(
+        "--timestamp", required=False,
+        default=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        metavar="ISO8601",
+        help="UTC timestamp to embed in --output-json (default: current time).",
+    )
     args = parser.parse_args()
 
     baseline = load_baseline(args.baseline)
@@ -116,59 +194,49 @@ def main() -> None:
         except (TypeError, ValueError):
             baseline_cov = None
 
-    current: Optional[float] = parse_lcov_coverage(args.lcov) if args.lcov else None
+    current: Optional[float] = parse_lcov_coverage(args.unit) if args.unit else None
 
-    # ── analysis ──────────────────────────────────────────────────────────────
-    delta_str = "N/A"
-    status_detail = ""
+    ok, result_str, delta_str, reason = _suite_analysis(current, baseline_cov)
 
-    if current is None:
-        overall_ok = False
-        status_detail = "coverage data missing \u2014 lcov artifact absent or unreadable"
-    else:
-        threshold_ok = current >= THRESHOLD
-        if baseline_cov and baseline_cov > 0.0:
-            regression_ok = current >= baseline_cov
-            delta = current - baseline_cov
-            delta_str = f"{'+' if delta >= 0 else ''}{delta:.2f}%"
-        else:
-            regression_ok = True
-
-        overall_ok = threshold_ok and regression_ok
-        reasons = []
-        if not threshold_ok:
-            reasons.append(f"below threshold ({THRESHOLD}%)")
-        if not regression_ok:
-            reasons.append(f"dropped from baseline ({baseline_cov:.2f}%)")
-        status_detail = " \u00b7 ".join(reasons)
-
-    token = _colored("[PASS]", True) if overall_ok else _colored("[WARN]", False)
-
-    # ── report ─────────────────────────────────────────────────────────────────
+    # ── report ────────────────────────────────────────────────────────────────
     print()
     print(_SEP)
     if baseline:
         commit = baseline.get("commit", "unknown")
-        ts_raw = baseline.get("timestamp", "")
-        try:
-            dt = datetime.datetime.strptime(ts_raw, "%Y-%m-%dT%H:%M:%SZ")
-            ts = dt.strftime("%Y-%m-%d %H:%M UTC")
-        except (ValueError, TypeError):
-            ts = ts_raw or "unknown"
+        ts = _fmt_timestamp(baseline.get("timestamp", ""))
         base_disp = f"{baseline_cov:.2f}%" if baseline_cov is not None else "N/A"
         print(f"  Baseline  {base_disp}  (commit {commit}, {ts})")
     else:
         print("  Baseline  N/A  (first run \u2014 threshold check only)")
     print(f"  Threshold {THRESHOLD}%")
-    cur_disp = f"{current:.2f}%" if current is not None else "N/A"
     delta_disp = f"  \u0394 {delta_str}" if delta_str != "N/A" else ""
+    cur_disp = f"{current:.2f}%" if current is not None else "N/A"
     print(f"  Current   {cur_disp}{delta_disp}")
     print(_SEP)
-    if status_detail:
-        print(f"  {status_detail}")
+    if reason:
+        print(f"  {reason}")
+    token = _colored("[PASS]", True) if ok else _colored("[WARN]", False)
     print(f"  {token}  (informational \u2014 PRs are never blocked)")
     print(_SEP)
     print()
+
+    # ── optional baseline output ───────────────────────────────────────────────
+    if args.output_json:
+        if current is not None:
+            new_baseline = {
+                "coverage": current,
+                "commit": args.commit,
+                "timestamp": args.timestamp,
+            }
+            with open(args.output_json, "w", encoding="utf-8") as fh:
+                json.dump(new_baseline, fh, indent=2)
+                fh.write("\n")
+        else:
+            print(
+                f"WARNING: --output-json requested but coverage data is absent; "
+                f"{args.output_json} not written",
+                file=sys.stderr,
+            )
 
     sys.exit(0)
 

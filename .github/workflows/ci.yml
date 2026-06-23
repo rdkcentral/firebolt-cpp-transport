@@ -207,14 +207,49 @@ jobs:
       - name: Add coverage summary to job summary
         run: cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY
 
+  network_isolation_tests:
+    permissions:
+      contents: read
+      packages: read
+    needs: [build_docker, build_project]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download build directory
+        uses: actions/download-artifact@v4
+        with:
+          name: build-dir
+          path: ${{ github.workspace }}/build
+
+      - name: Run network-isolation tests (--network none)
+        run: |
+          chmod +x ${{ github.workspace }}/build/test/utApp
+          docker run --rm --network none \
+            --user "$(id -u):$(id -g)" \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            ${{ needs.build_docker.outputs.image_tag }} \
+            bash -c " \
+              build/test/utApp \
+                --gtest_filter='TransportNumericIPUTest.*:TransportIPv6UTest.ConnectViaIPv6LoopbackIP:TransportNumericIPResolverTest.ConnectFailureViaNumericIP' \
+            "
+
   coverage-gate:
     name: Coverage Gate
     needs: [unit_tests]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # continue-on-error ensures transient infrastructure failures never block PRs
-    continue-on-error: true
+    # Step-level continue-on-error below avoids blocking PRs on transient fetch/download issues.
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -247,27 +282,32 @@ jobs:
         run: |
           python3 .github/scripts/compare_coverage.py \
             --baseline coverage-baseline.json \
-            --lcov ./coverage-lcov/coverage.info
+            --unit ./coverage-lcov/coverage.info
 
   update-baseline:
     name: Update Coverage Baseline
-    # Runs only on a direct push to main when unit tests pass.
+    # Runs only on a direct push to develop when unit tests pass.
     # Updates unconditionally — the baseline always tracks actual coverage
     # so future runs compare against the current state, not a stale high-water mark.
     if: >
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
+      github.ref == 'refs/heads/develop' &&
       needs.unit_tests.result == 'success'
     needs: [unit_tests]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     concurrency:
-      group: update-baseline-main
+      group: update-baseline-develop
       cancel-in-progress: false
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
       - name: Download lcov artifact
         uses: actions/download-artifact@v4
@@ -278,43 +318,15 @@ jobs:
       - name: Write new baseline JSON
         run: |
           set -euo pipefail
-          export BASELINE_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          python3 - <<'PYEOF'
-import json, os, sys
-
-def parse_lcov(path):
-    found = hit = 0
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("LF:"):
-                    try: found += int(line[3:])
-                    except ValueError: pass
-                elif line.startswith("LH:"):
-                    try: hit += int(line[3:])
-                    except ValueError: pass
-    except OSError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
-    return round(hit / found * 100.0, 2) if found else None
-
-cov = parse_lcov("./coverage-lcov/coverage.info")
-if cov is None:
-    print("ERROR: no coverage data in lcov file", file=sys.stderr)
-    sys.exit(1)
-
-with open("new-baseline.json", "w") as f:
-    json.dump({
-        "coverage": cov,
-        "commit": os.environ["GITHUB_SHA"],
-        "timestamp": os.environ["BASELINE_TIMESTAMP"],
-    }, f, indent=2)
-    f.write("\n")
-print(f"Coverage: {cov}%")
-PYEOF
-          echo "New baseline:"
-          cat new-baseline.json
+          TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          python3 .github/scripts/compare_coverage.py \
+            --baseline coverage-baseline.json \
+            --unit ./coverage-lcov/coverage.info \
+            --output-json new-baseline.json \
+            --commit "$GITHUB_SHA" \
+            --timestamp "$TIMESTAMP"
+          [[ -f new-baseline.json ]] || { echo "ERROR: no coverage data in lcov file" >&2; exit 1; }
+          echo "New baseline:"; cat new-baseline.json
 
       - name: Commit and push to build-metadata branch
         run: |
@@ -335,10 +347,7 @@ PYEOF
           if git diff --cached --quiet; then
             echo "Coverage baseline unchanged — no commit needed"
           else
-            git commit -m "chore: update coverage baseline [skip ci]
-
-Commit : $GITHUB_SHA
-Run ID : $GITHUB_RUN_ID"
+            git commit -m "$(printf 'chore: update coverage baseline [skip ci]\n\nCommit : %s\nRun ID : %s' "$GITHUB_SHA" "$GITHUB_RUN_ID")"
             git push --force-with-lease origin build-metadata
             echo "Pushed updated baseline to build-metadata"
           fi
