@@ -680,13 +680,19 @@ class TestMainIntegration(unittest.TestCase):
     # Expected: non-zero exit; error visible on stderr
     # ===========================================================================
 
-    def test_s11_missing_required_baseline_arg(self):
-        """Invoking the script without --baseline must fail (argparse error)."""
+    def test_s11_unknown_arg_causes_error(self):
+        """Passing an unrecognized argument must fail (argparse error, exit 2)."""
         unit_cov = self._lcov("unit.info", 100, 80)
-        r = self._run("--unit", unit_cov)
-        # argparse exits with code 2 on missing required argument
+        r = self._run("--unit", unit_cov, "--unknown-flag")
         self.assertNotEqual(r.returncode, 0)
         self.assertTrue(len(r.stderr) > 0, "Error must appear on stderr")
+
+    def test_s11_no_baseline_arg_threshold_only(self):
+        """Omitting --baseline entirely runs a threshold-only check and exits 0."""
+        unit_cov = self._lcov("unit.info", 100, 80)
+        r = self._run("--unit", unit_cov)
+        self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+        self.assertIn("[PASS]", r.stdout)
 
     # ===========================================================================
     # First-time setup: empty baseline {} → threshold-only

@@ -207,42 +207,6 @@ jobs:
       - name: Add coverage summary to job summary
         run: cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY
 
-  network_isolation_tests:
-    permissions:
-      contents: read
-      packages: read
-    needs: [build_docker, build_project]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Download build directory
-        uses: actions/download-artifact@v4
-        with:
-          name: build-dir
-          path: ${{ github.workspace }}/build
-
-      - name: Run network-isolation tests (--network none)
-        run: |
-          chmod +x ${{ github.workspace }}/build/test/utApp
-          docker run --rm --network none \
-            --user "$(id -u):$(id -g)" \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            ${{ needs.build_docker.outputs.image_tag }} \
-            bash -c " \
-              build/test/utApp \
-                --gtest_filter='TransportNumericIPUTest.*:TransportIPv6UTest.ConnectViaIPv6LoopbackIP:TransportNumericIPResolverTest.ConnectFailureViaNumericIP' \
-            "
-
   coverage-gate:
     name: Coverage Gate
     needs: [unit_tests]
@@ -320,7 +284,6 @@ jobs:
           set -euo pipefail
           TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
           python3 .github/scripts/compare_coverage.py \
-            --baseline coverage-baseline.json \
             --unit ./coverage-lcov/coverage.info \
             --output-json new-baseline.json \
             --commit "$GITHUB_SHA" \

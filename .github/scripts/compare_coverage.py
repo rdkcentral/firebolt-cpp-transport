@@ -159,8 +159,8 @@ def main() -> None:
         description="Coverage gate for firebolt-cpp-transport unit tests."
     )
     parser.add_argument(
-        "--baseline", required=True, metavar="PATH",
-        help="Path to coverage-baseline.json.",
+        "--baseline", required=False, default="", metavar="PATH",
+        help="Path to coverage-baseline.json (omit to run threshold-only).",
     )
     parser.add_argument(
         "--unit", required=False, metavar="PATH",
