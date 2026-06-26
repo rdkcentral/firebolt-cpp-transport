@@ -22,7 +22,8 @@ Coverage gate for firebolt-cpp-transport.
 
 Reads unit-test line coverage from an lcov .info file produced by gcovr,
 compares it against a stored baseline (build-metadata branch), and prints a
-summary report.  Always exits 0 — the gate is informational and never blocks PRs.
+summary report.  For valid invocations it exits 0 (informational gate);
+invalid CLI usage is reported by argparse with a non-zero exit status.
 """
 
 import argparse
@@ -58,7 +59,7 @@ def _fmt_timestamp(ts_raw: object) -> str:
         return ts_raw or "unknown"
 
 
-def parse_lcov_coverage(path: str) -> Optional[float]:
+def parse_lcov_coverage(path: Optional[str]) -> Optional[float]:
     """Return overall line coverage % from an lcov .info file, or None.
 
     Aggregates LF (lines found) and LH (lines hit) across all records in the
@@ -170,7 +171,7 @@ def main() -> None:
         "--output-json", required=False, metavar="PATH",
         help=(
             "Write a new coverage-baseline.json to PATH when coverage data is "
-            "available.  Requires --commit and --timestamp."
+            "available.  --commit and --timestamp are optional metadata fields."
         ),
     )
     parser.add_argument(
