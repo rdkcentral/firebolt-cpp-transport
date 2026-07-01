@@ -38,14 +38,16 @@ public:
 
 public:
     static void setLogLevel(LogLevel logLevel);
+    static LogLevel resolveLogLevelFromEnvironment(LogLevel defaultLevel);
     static void setFormat(bool addTs, bool addLocation, bool addFunction, bool addThreadId);
     static void log(LogLevel logLevel, const std::string& module, const std::string file, const std::string function,
                     const uint16_t line, const char* format, ...) __attribute__((format(printf, 6, 7)));
 
-    static bool isLogLevelEnabled(LogLevel logLevel) { return logLevel <= _logLevel; }
+    static bool isLogLevelEnabled(LogLevel logLevel) { return _loggingEnabled && (logLevel <= _logLevel); }
 
 private:
     static LogLevel _logLevel;
+    static bool _loggingEnabled;
     static bool formatter_addTs;
     static bool formatter_addThreadId;
     static bool formatter_addLocation;

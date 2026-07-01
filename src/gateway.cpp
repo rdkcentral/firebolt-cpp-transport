@@ -415,7 +415,9 @@ public:
     {
         assert(onConnectionChange != nullptr);
 
-        Firebolt::Logger::setLogLevel(cfg.log.level);
+        const Firebolt::LogLevel logLevel = Firebolt::Logger::resolveLogLevelFromEnvironment(cfg.log.level);
+
+        Firebolt::Logger::setLogLevel(logLevel);
         Firebolt::Logger::setFormat(cfg.log.format.ts, cfg.log.format.location, cfg.log.format.function,
                                     cfg.log.format.thread);
 

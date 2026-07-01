@@ -136,3 +136,18 @@ Header operations are thread-safe. Access to response headers is protected by a 
 - [IGateway interface](include/firebolt/gateway.h)
 - [websocketpp connection API - get_response_header](https://docs.websocketpp.org/classwebsocketpp_1_1connection.html#a72e0c94609844078fc611716c39791de)
 
+## Runtime Logging Overrides (Environment Variables)
+
+To make logging configurable without changing app code, the transport reads optional environment variables at connect time.
+When set, this value overrides `config.log.level` passed by the app.
+
+- `FIREBOLT_TRANSPORT_LOG_LEVEL`: `off|error|warning|notice|info|debug` (or `0..4`)
+- `FIREBOLT_TRANSPORT_LOG_FILE`: absolute or relative path to append logs to (default: `/opt/logs/firebolt-native.log`)
+
+Example:
+
+```bash
+export FIREBOLT_TRANSPORT_LOG_LEVEL=debug
+export FIREBOLT_TRANSPORT_LOG_FILE=/tmp/firebolt-transport.log
+```
+

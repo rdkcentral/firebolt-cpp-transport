@@ -17,12 +17,16 @@
  */
 #include "firebolt/logger.h"
 #include "firebolt/types.h"
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdarg>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <stdio.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -32,7 +36,94 @@
 
 namespace Firebolt
 {
+
+namespace
+{
+std::string toLowerCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return std::tolower(c); });
+    return value;
+}
+
+std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
+{
+    const char* raw = std::getenv(name);
+    if (raw == nullptr)
+    {
+        return std::nullopt;
+    }
+
+    const std::string value = toLowerCopy(raw);
+    if (value == "error" || value == "0")
+    {
+        return Firebolt::LogLevel::Error;
+    }
+    if (value == "warning" || value == "warn" || value == "1")
+    {
+        return Firebolt::LogLevel::Warning;
+    }
+    if (value == "notice" || value == "2")
+    {
+        return Firebolt::LogLevel::Notice;
+    }
+    if (value == "info" || value == "3")
+    {
+        return Firebolt::LogLevel::Info;
+    }
+    if (value == "debug" || value == "4")
+    {
+        return Firebolt::LogLevel::Debug;
+    }
+
+    return std::nullopt;
+}
+
+bool isEnvLogDisabled(const char* name)
+{
+    const char* raw = std::getenv(name);
+    if (raw == nullptr)
+    {
+        return false;
+    }
+
+    const std::string value = toLowerCopy(raw);
+    return value == "off" || value == "none" || value == "disable" || value == "disabled";
+}
+
+std::optional<std::string> resolveLogFilePathFromEnvironment()
+{
+    const char* raw = std::getenv("FIREBOLT_TRANSPORT_LOG_FILE");
+    if (raw != nullptr && *raw != '\0')
+    {
+        return std::string(raw);
+    }
+
+    return std::string("/opt/logs/firebolt-native.log");
+}
+
+bool tryWriteToConfiguredLogFile(const char* message)
+{
+    const auto logFilePath = resolveLogFilePathFromEnvironment();
+    if (!logFilePath.has_value())
+    {
+        return false;
+    }
+
+    FILE* file = fopen(logFilePath->c_str(), "a");
+    if (file == nullptr)
+    {
+        return false;
+    }
+
+    fprintf(file, "%s\n", message);
+    fflush(file);
+    fclose(file);
+    return true;
+}
+} // namespace
+
 /* static */ LogLevel Logger::_logLevel = LogLevel::Error;
+/* static */ bool Logger::_loggingEnabled = true;
 /* static */ bool Logger::formatter_addTs = true;
 /* static */ bool Logger::formatter_addThreadId = true;
 /* static */ bool Logger::formatter_addLocation = false;
@@ -72,6 +163,23 @@ void Logger::setLogLevel(LogLevel logLevel)
     }
 }
 
+LogLevel Logger::resolveLogLevelFromEnvironment(LogLevel defaultLevel)
+{
+    if (isEnvLogDisabled("FIREBOLT_TRANSPORT_LOG_LEVEL"))
+    {
+        _loggingEnabled = false;
+        return defaultLevel;
+    }
+
+    _loggingEnabled = true;
+    if (const auto level = parseEnvLogLevel("FIREBOLT_TRANSPORT_LOG_LEVEL"))
+    {
+        return *level;
+    }
+
+    return defaultLevel;
+}
+
 void Logger::setFormat(bool addTs, bool addLocation, bool addFunction, bool addThreadId)
 {
     formatter_addTs = addTs;
@@ -83,7 +191,7 @@ void Logger::setFormat(bool addTs, bool addLocation, bool addFunction, bool addT
 void Logger::log(LogLevel logLevel, const std::string& module, const std::string file, const std::string function,
                  const uint16_t line, const char* format, ...)
 {
-    if (logLevel > _logLevel)
+    if (!_loggingEnabled || logLevel > _logLevel)
     {
         return;
     }
@@ -96,9 +204,14 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
     int length = vsnprintf(msg, Logger::MaxBufSize, format, arg);
     va_end(arg);
 
-    uint32_t position = (length >= Logger::MaxBufSize) ? (Logger::MaxBufSize - 1) : length;
+    size_t position = 0;
+    if (length > 0)
+    {
+        position = (static_cast<size_t>(length) >= Logger::MaxBufSize) ? (Logger::MaxBufSize - 1)
+                                                                        : static_cast<size_t>(length);
+    }
     msg[position] = '\0';
-    if (msg[position - 1] == '\n')
+    if (position > 0 && msg[position - 1] == '\n')
     {
         msg[position - 1] = '\0';
     }
@@ -133,7 +246,7 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
         len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "%s: ", time.c_str());
     }
     len +=
-        snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[Firebolt|%s|%s]", module.c_str(), levelName.c_str());
+        snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[FireboltNative|%s|%s]", module.c_str(), levelName.c_str());
     if (formatter_addLocation || formatter_addFunction)
     {
         if (formatter_addLocation && formatter_addFunction)
@@ -157,11 +270,14 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
     len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, ": %s", msg);
 #pragma GCC diagnostic pop
 
+    if (!tryWriteToConfiguredLogFile(formattedMsg))
+    {
 #ifdef ENABLE_SYSLOG
-    syslog(_logLevel2SysLog[logLevel], "%s", formattedMsg);
+        syslog(_logLevel2SysLog[logLevel], "%s", formattedMsg);
 #else
-    fprintf(stderr, "%s\n", formattedMsg);
-    fflush(stderr);
+        fprintf(stderr, "%s\n", formattedMsg);
+        fflush(stderr);
 #endif
+    }
 }
 } // namespace Firebolt

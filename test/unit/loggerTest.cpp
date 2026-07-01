@@ -18,7 +18,9 @@
 
 #include "firebolt/logger.h"
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <regex>
 #include <string>
@@ -34,11 +36,19 @@ using namespace Firebolt;
 class LoggerFormatUTest : public ::testing::Test
 {
 protected:
-    void SetUp() override { Logger::setLogLevel(LogLevel::Debug); }
+    void SetUp() override
+    {
+        unsetenv("FIREBOLT_TRANSPORT_LOG_LEVEL");
+        Logger::resolveLogLevelFromEnvironment(LogLevel::Debug);
+        Logger::setLogLevel(LogLevel::Debug);
+    }
 
     void TearDown() override
     {
         // Restore defaults
+        unsetenv("FIREBOLT_TRANSPORT_LOG_LEVEL");
+        unsetenv("FIREBOLT_TRANSPORT_LOG_FILE");
+        Logger::resolveLogLevelFromEnvironment(LogLevel::Error);
         Logger::setFormat(true, false, true, true);
         Logger::setLogLevel(LogLevel::Error);
     }
@@ -93,7 +103,7 @@ TEST_F(LoggerFormatUTest, LocationTrue_FunctionTrue)
 
     std::string output = captureLogCall(LogLevel::Error, "Test", "hello");
     // Expect [filename:line,function] pattern
-    EXPECT_NE(output.find("[Firebolt|Test|Error]"), std::string::npos);
+    EXPECT_NE(output.find("[FireboltNative|Test|Error]"), std::string::npos);
     // Should contain file:line,function format (e.g. [loggerTest.cpp:72,captureLog])
     std::regex pattern(R"(\[.*\.cpp:\d+,\w+\])");
     EXPECT_TRUE(std::regex_search(output, pattern)) << "Output: " << output;
@@ -101,6 +111,101 @@ TEST_F(LoggerFormatUTest, LocationTrue_FunctionTrue)
     // Timestamp format is HH:MM:SS.mmm:
     std::regex tsPattern(R"(\d{2}:\d{2}:\d{2}\.\d{3}:)");
     EXPECT_FALSE(std::regex_search(output, tsPattern)) << "Timestamp should not be present. Output: " << output;
+}
+
+// ---------------------------------------------------------------------------
+// Test name: LoggerFormatUTest.ResolveLogLevelFromEnvironment
+// Covers: logger.cpp env log-level parser used by resolveLogLevelFromEnvironment
+// Scenario type: success + edge case
+// ---------------------------------------------------------------------------
+TEST_F(LoggerFormatUTest, ResolveLogLevelFromEnvironment)
+{
+    unsetenv("FIREBOLT_TRANSPORT_LOG_LEVEL");
+    EXPECT_EQ(Logger::resolveLogLevelFromEnvironment(LogLevel::Warning), LogLevel::Warning);
+
+    setenv("FIREBOLT_TRANSPORT_LOG_LEVEL", "debug", 1);
+    EXPECT_EQ(Logger::resolveLogLevelFromEnvironment(LogLevel::Error), LogLevel::Debug);
+
+    setenv("FIREBOLT_TRANSPORT_LOG_LEVEL", "bogus", 1);
+    EXPECT_EQ(Logger::resolveLogLevelFromEnvironment(LogLevel::Notice), LogLevel::Notice);
+
+    setenv("FIREBOLT_TRANSPORT_LOG_LEVEL", "off", 1);
+    EXPECT_EQ(Logger::resolveLogLevelFromEnvironment(LogLevel::Info), LogLevel::Info);
+    EXPECT_FALSE(Logger::isLogLevelEnabled(LogLevel::Error));
+}
+
+// ---------------------------------------------------------------------------
+// Test name: LoggerFormatUTest.LogLevelOffDisablesAllLogging
+// Covers: logger.cpp env parser and runtime suppression when level is set to off
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(LoggerFormatUTest, LogLevelOffDisablesAllLogging)
+{
+    Logger::setFormat(false, false, false, false);
+    Logger::setLogLevel(LogLevel::Debug);
+
+    setenv("FIREBOLT_TRANSPORT_LOG_LEVEL", "off", 1);
+    Logger::setLogLevel(Logger::resolveLogLevelFromEnvironment(LogLevel::Debug));
+
+    // No output should be emitted at any level while disabled.
+    std::string output = captureLogCall(LogLevel::Error, "Test", "should not appear");
+    EXPECT_TRUE(output.empty()) << "Expected no output when log level is off. Output: " << output;
+
+    // Restoring env should re-enable logging.
+    unsetenv("FIREBOLT_TRANSPORT_LOG_LEVEL");
+    Logger::setLogLevel(Logger::resolveLogLevelFromEnvironment(LogLevel::Debug));
+    output = captureLogCall(LogLevel::Error, "Test", "should appear");
+    EXPECT_NE(output.find("[FireboltNative|Test|Error]"), std::string::npos) << output;
+}
+
+// ---------------------------------------------------------------------------
+// Test name: LoggerFormatUTest.LogFileSink
+// Covers: logger.cpp env logfile sink + stderr fallback bypass when file sink works
+// Scenario type: success
+// ---------------------------------------------------------------------------
+TEST_F(LoggerFormatUTest, LogFileSink)
+{
+    Logger::setFormat(false, false, false, false);
+    Logger::setLogLevel(LogLevel::Error);
+
+    char pathTemplate[] = "/tmp/firebolt-transport-logger-test-XXXXXX";
+    int fd = mkstemp(pathTemplate);
+    ASSERT_GE(fd, 0);
+    close(fd);
+
+    setenv("FIREBOLT_TRANSPORT_LOG_FILE", pathTemplate, 1);
+
+    // With file sink configured, this should not go to stderr.
+    const std::string stderrOutput = captureLogCall(LogLevel::Error, "Test", "file sink payload");
+    EXPECT_TRUE(stderrOutput.empty()) << "Expected file sink to bypass stderr. Output: " << stderrOutput;
+
+    std::ifstream in(pathTemplate);
+    ASSERT_TRUE(in.good()) << "Could not open log file: " << pathTemplate;
+    std::string fileContents((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    EXPECT_NE(fileContents.find("[FireboltNative|Test|Error]"), std::string::npos) << fileContents;
+    EXPECT_NE(fileContents.find("file sink payload"), std::string::npos) << fileContents;
+
+    std::remove(pathTemplate);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: LoggerFormatUTest.LogFileSinkFallbackToStderrOnOpenFailure
+// Covers: logger.cpp fallback path when FIREBOLT_TRANSPORT_LOG_FILE cannot be opened
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(LoggerFormatUTest, LogFileSinkFallbackToStderrOnOpenFailure)
+{
+    Logger::setFormat(false, false, false, false);
+    Logger::setLogLevel(LogLevel::Error);
+
+    // A directory path is not writable as a regular file with fopen("a").
+    setenv("FIREBOLT_TRANSPORT_LOG_FILE", "/tmp", 1);
+
+    const std::string stderrOutput = captureLogCall(LogLevel::Error, "Test", "fallback payload");
+
+    EXPECT_NE(stderrOutput.find("[FireboltNative|Test|Error]"), std::string::npos) << stderrOutput;
+    EXPECT_NE(stderrOutput.find("fallback payload"), std::string::npos) << stderrOutput;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +254,7 @@ TEST_F(LoggerFormatUTest, LocationFalse_FunctionFalse)
 
     std::string output = captureLogCall(LogLevel::Error, "Test", "msg");
     // Should contain the module/level tag but no location/function brackets after it
-    EXPECT_NE(output.find("[Firebolt|Test|Error]"), std::string::npos);
+    EXPECT_NE(output.find("[FireboltNative|Test|Error]"), std::string::npos);
     // No file:line or function()
     EXPECT_EQ(output.find(".cpp:"), std::string::npos) << "Output: " << output;
     std::regex funcPattern(R"(\[\w+\(\)\])");
@@ -215,7 +320,7 @@ TEST_F(LoggerFormatUTest, AllFlagsEnabled)
     std::regex tsPattern(R"(\d{2}:\d{2}:\d{2}\.\d{3}:)");
     EXPECT_TRUE(std::regex_search(output, tsPattern)) << "Output: " << output;
     // Module|Level
-    EXPECT_NE(output.find("[Firebolt|Test|Error]"), std::string::npos);
+    EXPECT_NE(output.find("[FireboltNative|Test|Error]"), std::string::npos);
     // File:line,function
     std::regex locPattern(R"(\[.*\.cpp:\d+,\w+\])");
     EXPECT_TRUE(std::regex_search(output, locPattern)) << "Output: " << output;
@@ -279,7 +384,7 @@ TEST_F(LoggerFormatUTest, MessageTruncation)
     // Generate a message larger than MaxBufSize (1024)
     std::string longMsg(2000, 'X');
     std::string output = captureLogCall(LogLevel::Error, "Test", longMsg.c_str());
-    EXPECT_NE(output.find("[Firebolt|Test|Error]"), std::string::npos);
+    EXPECT_NE(output.find("[FireboltNative|Test|Error]"), std::string::npos);
     // The raw message is truncated to MaxBufSize-1 chars, and the formatted
     // output buffer (also MaxBufSize) further limits it because the prefix
     // consumes space.  Verify truncation actually occurred:
@@ -423,4 +528,39 @@ TEST_F(LoggerFormatUTest, LocationWithSlashInPath)
     // Should show just "myfile.cpp" (stripped the directory), not "/myfile.cpp"
     EXPECT_NE(output.find("myfile.cpp:99"), std::string::npos) << "Output: " << output;
     EXPECT_EQ(output.find("/myfile.cpp"), std::string::npos) << "Should strip leading slash. Output: " << output;
+}
+
+// ---------------------------------------------------------------------------
+// Test name: LoggerFormatUTest.EmptyMessageDoesNotCrash
+// Covers: logger.cpp empty formatted message handling
+// Scenario type: negative / stability
+// ---------------------------------------------------------------------------
+TEST_F(LoggerFormatUTest, EmptyMessageDoesNotCrash)
+{
+    EXPECT_EXIT(
+        {
+            Logger::setFormat(false, false, false, false);
+            Logger::setLogLevel(LogLevel::Error);
+            Logger::log(LogLevel::Error, "Test", "f.cpp", "fn", 1, "%s", "");
+            _exit(0);
+        },
+        ::testing::ExitedWithCode(0), ".*");
+}
+
+// ---------------------------------------------------------------------------
+// Test name: LoggerFormatUTest.MalformedFormatDoesNotCrash
+// Covers: logger.cpp behavior when vsnprintf reports formatting error
+// Scenario type: negative / stability
+// ---------------------------------------------------------------------------
+TEST_F(LoggerFormatUTest, MalformedFormatDoesNotCrash)
+{
+    EXPECT_EXIT(
+        {
+            Logger::setFormat(false, false, false, false);
+            Logger::setLogLevel(LogLevel::Error);
+            const char* malformedFormat = "%";
+            Logger::log(LogLevel::Error, "Test", "f.cpp", "fn", 1, malformedFormat);
+            _exit(0);
+        },
+        ::testing::ExitedWithCode(0), ".*");
 }
