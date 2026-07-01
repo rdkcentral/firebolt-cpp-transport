@@ -122,8 +122,8 @@ bool tryWriteToConfiguredLogFile(const char* message)
 }
 } // namespace
 
-/* static */ LogLevel Logger::_logLevel = LogLevel::Error;
-/* static */ bool Logger::_loggingEnabled = true;
+/* static */ std::atomic<LogLevel> Logger::_logLevel{LogLevel::Error};
+/* static */ std::atomic<bool> Logger::_loggingEnabled{true};
 /* static */ bool Logger::formatter_addTs = true;
 /* static */ bool Logger::formatter_addThreadId = true;
 /* static */ bool Logger::formatter_addLocation = false;
@@ -155,11 +155,11 @@ void Logger::setLogLevel(LogLevel logLevel)
 {
     if (logLevel < LogLevel::MaxLevel)
     {
-        _logLevel = logLevel;
+        _logLevel.store(logLevel);
     }
     else if (logLevel == LogLevel::MaxLevel)
     {
-        _logLevel = LogLevel::Debug;
+        _logLevel.store(LogLevel::Debug);
     }
 }
 
@@ -167,11 +167,11 @@ LogLevel Logger::resolveLogLevelFromEnvironment(LogLevel defaultLevel)
 {
     if (isEnvLogDisabled("FIREBOLT_TRANSPORT_LOG_LEVEL"))
     {
-        _loggingEnabled = false;
+        _loggingEnabled.store(false);
         return defaultLevel;
     }
 
-    _loggingEnabled = true;
+    _loggingEnabled.store(true);
     if (const auto level = parseEnvLogLevel("FIREBOLT_TRANSPORT_LOG_LEVEL"))
     {
         return *level;
@@ -191,7 +191,7 @@ void Logger::setFormat(bool addTs, bool addLocation, bool addFunction, bool addT
 void Logger::log(LogLevel logLevel, const std::string& module, const std::string file, const std::string function,
                  const uint16_t line, const char* format, ...)
 {
-    if (!_loggingEnabled || logLevel > _logLevel)
+    if (!_loggingEnabled.load() || logLevel > _logLevel.load())
     {
         return;
     }

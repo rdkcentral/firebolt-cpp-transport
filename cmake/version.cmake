@@ -31,6 +31,20 @@ if (NOT PROJECT_VERSION)
             OUTPUT_STRIP_TRAILING_WHITESPACE
             ERROR_QUIET
         )
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_SHA
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} describe --tags --always --dirty
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_DESCRIBE
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
     endif ()
 
     if (GIT_VERSION)
@@ -45,6 +59,28 @@ if (NOT PROJECT_VERSION)
     set(PROJECT_VERSION "${VERSION_STRING}" CACHE STRING "Project version string")
     set(PROJECT_VERSION "${VERSION_STRING}")
 endif ()
+
+if (NOT GIT_SHA)
+    set(GIT_SHA "unknown")
+endif ()
+if (NOT GIT_DESCRIBE)
+    set(GIT_DESCRIBE "${GIT_SHA}")
+endif ()
+
+# Allow build system (e.g. Yocto) to override the git ref label when no .git
+# directory is present (tarball builds). Pass -DFIREBOLT_GIT_REF=<value> from
+# EXTRA_OECMAKE in a dev bbappend (e.g. -DFIREBOLT_GIT_REF=${SRCREV}).
+if (FIREBOLT_GIT_REF)
+    string(SUBSTRING "${FIREBOLT_GIT_REF}" 0 8 GIT_SHA)
+    set(GIT_DESCRIBE "${GIT_SHA}")
+elseif (GIT_DESCRIBE STREQUAL "unknown")
+    # No git and no override: this is a release tarball build — use the version
+    # as the ref since it corresponds to the tagged release.
+    set(GIT_DESCRIBE "v${PROJECT_VERSION}")
+    set(GIT_SHA "v${PROJECT_VERSION}")
+endif ()
+
+string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
 
 set(VERSION "${PROJECT_VERSION}")
 string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\1" PROJECT_VERSION_MAJOR "${VERSION}")

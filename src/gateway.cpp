@@ -60,11 +60,13 @@ class Client
 {
     struct Caller
     {
-        Caller(MessageID id_)
-            : id(id_)
+        Caller(MessageID id_, std::string method_)
+            : id(id_),
+              method(std::move(method_))
         {
         }
         const MessageID id;
+        const std::string method;
         std::promise<Result<nlohmann::json>> promise;
         Timestamp timestamp = std::chrono::steady_clock::now();
     };
@@ -85,13 +87,18 @@ public:
     void checkPromises()
     {
         std::lock_guard<std::mutex> lock(queue_mtx);
+        if (!queue.empty())
+        {
+            FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] pending request queue size=%zu", queue.size());
+        }
         auto now = std::chrono::steady_clock::now();
         for (auto it = queue.begin(); it != queue.end();)
         {
             if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
                 runtime_waitTime_ms)
             {
-                FIREBOLT_LOG_WARNING("Gateway", "Request timed out, id: %u", it->second->id);
+                FIREBOLT_LOG_WARNING("Gateway", "Request timed out, id=%u, method='%s'", it->second->id,
+                                     it->second->method.c_str());
                 it->second->promise.set_value(Result<nlohmann::json>(Firebolt::Error::Timedout));
                 it = queue.erase(it);
             }
@@ -109,6 +116,7 @@ public:
             std::lock_guard lck(invokes_mtx);
             invokes.insert(id);
         }
+        FIREBOLT_LOG_DEBUG("Gateway", "[send] upstream produce method='%s' id=%u", method.c_str(), id);
         return transport_.send(method, parameters, id);
     }
 
@@ -124,17 +132,21 @@ public:
         {
             id = transport_.getNextMessageID();
         }
-        std::shared_ptr<Caller> c = std::make_shared<Caller>(id);
+        std::shared_ptr<Caller> c = std::make_shared<Caller>(id, method);
         auto future = c->promise.get_future();
 
         {
             std::lock_guard lck(queue_mtx);
             queue[id] = c;
+            FIREBOLT_LOG_DEBUG("Gateway", "[request] queued method='%s' id=%u, pending=%zu", method.c_str(), id,
+                               queue.size());
         }
 
         Firebolt::Error result = transport_.send(method, parameters, id);
         if (result != Firebolt::Error::None)
         {
+            FIREBOLT_LOG_WARNING("Gateway", "[request] transport send failed for method='%s' id=%u status=%d",
+                                 method.c_str(), id, static_cast<int>(result));
             c->promise.set_value(Result<nlohmann::json>{result});
             std::lock_guard lck(queue_mtx);
             queue.erase(id);
@@ -150,6 +162,7 @@ public:
             std::lock_guard lck(invokes_mtx);
             if (invokes.find(id) != invokes.end())
             {
+                FIREBOLT_LOG_DEBUG("Gateway", "[response] dropping self-originated invoke ack id=%u", id);
                 invokes.erase(id);
                 return;
             }
@@ -160,15 +173,20 @@ public:
             std::lock_guard lck(queue_mtx);
             c = queue.at(id);
             queue.erase(id);
+            FIREBOLT_LOG_DEBUG("Gateway", "[response] matched id=%u method='%s', remaining_pending=%zu", id,
+                               c->method.c_str(), queue.size());
 
             if (!message.contains("error"))
             {
+                FIREBOLT_LOG_DEBUG("Gateway", "[response] success id=%u method='%s'", id, c->method.c_str());
                 c->promise.set_value(Result<nlohmann::json>{message["result"]});
             }
             else
             {
                 Firebolt::ErrorInfo errorInfo(static_cast<int32_t>(message["error"]["code"]),
                                               message["error"]["message"].get<std::string>());
+                FIREBOLT_LOG_WARNING("Gateway", "[response] error id=%u method='%s' code=%d message='%s'", id,
+                                     c->method.c_str(), errorInfo.error(), errorInfo.message().c_str());
                 c->promise.set_value(
                     Result<nlohmann::json>{static_cast<Firebolt::Error>(message["error"]["code"]), errorInfo});
             }
@@ -220,12 +238,14 @@ public:
 
     void stopNotificationWorker()
     {
+        FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] stop requested");
         stopNotificationWorker_ = true;
         notificationQueueCv_.notify_all();
 
         if (notificationWorkerThread_.joinable())
         {
             notificationWorkerThread_.join();
+            FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] joined");
         }
     }
 
@@ -235,6 +255,7 @@ public:
         {
             stopNotificationWorker_ = false;
             notificationWorkerThread_ = std::thread(&Server::processQueuedNotifications, this);
+            FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] started");
         }
     }
 
@@ -252,6 +273,7 @@ public:
                 {
                     if (stopNotificationWorker_)
                     {
+                        FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] exiting (stop flag set, queue drained)");
                         return;
                     }
                     continue;
@@ -259,6 +281,8 @@ public:
 
                 notification = std::move(notificationQueue_.front());
                 notificationQueue_.pop();
+                FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] dequeued notification callbacks=%zu remaining=%zu",
+                                   notification.callbacks.size(), notificationQueue_.size());
             }
 
             for (auto& callback : notification.callbacks)
@@ -280,10 +304,13 @@ public:
 
         if (eventIt != eventList.end())
         {
+            FIREBOLT_LOG_WARNING("Gateway", "[subscribe] duplicate subscriber ignored for event='%s'", event.c_str());
             return Firebolt::Error::General;
         }
 
         eventList.push_back(callbackData);
+        FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] local subscriber added event='%s', total_subscribers=%zu",
+                           event.c_str(), eventList.size());
         return Firebolt::Error::None;
     }
 
@@ -296,10 +323,13 @@ public:
 
         if (it == eventList.end())
         {
+            FIREBOLT_LOG_WARNING("Gateway", "[unsubscribe] local subscriber not found for event='%s'", event.c_str());
             return Firebolt::Error::General;
         }
 
         eventList.erase(it);
+        FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] local subscriber removed event='%s', remaining=%zu",
+                           event.c_str(), eventList.size());
         return Firebolt::Error::None;
     }
 
@@ -350,6 +380,8 @@ public:
         {
             std::lock_guard<std::mutex> lock(notificationQueueMutex_);
             notificationQueue_.push(QueuedNotification{std::move(callbacks), params});
+            FIREBOLT_LOG_DEBUG("Gateway", "[notify] event='%s' queued, queue_depth=%zu", method.c_str(),
+                               notificationQueue_.size());
         }
         notificationQueueCv_.notify_one();
     }
@@ -390,6 +422,13 @@ private:
     std::map<MessageID, std::string> rpcv1_eventMap;
     std::mutex rpcv1_eventMap_mtx;
 
+    std::mutex connectionLog_mtx;
+    bool hasLastConnectionLog{false};
+    bool lastConnectionState{false};
+    Firebolt::Error lastConnectionError{Firebolt::Error::None};
+    std::chrono::steady_clock::time_point lastConnectionLogTs{};
+    size_t suppressedConnectionNoticeCount{0};
+
 public:
     GatewayImpl()
         : client(*this),
@@ -426,12 +465,19 @@ public:
         runtime_waitTime_ms = cfg.waitTime_ms;
         legacyRPCv1 = cfg.legacyRPCv1;
 
+        FIREBOLT_LOG_NOTICE("Gateway", "[connect] config waitTime_ms=%u watchdog_interval_ms=%u headers=%zu",
+                    runtime_waitTime_ms, watchdog_interval_ms, cfg.headers.size());
+        FIREBOLT_LOG_NOTICE("Gateway", "[connect] log level resolved=%d (cfg=%d), transport masks include=%s exclude=%s",
+                    static_cast<int>(logLevel), static_cast<int>(cfg.log.level),
+                    cfg.log.transportInclude.has_value() ? "set" : "unset",
+                    cfg.log.transportExclude.has_value() ? "set" : "unset");
+
         std::string url = buildGatewayUrl(cfg.wsUrl, legacyRPCv1);
 
         std::optional<unsigned> transportLoggingInclude = cfg.log.transportInclude;
         std::optional<unsigned> transportLoggingExclude = cfg.log.transportExclude;
 
-        FIREBOLT_LOG_NOTICE("Transport", "Version: %s", Version::String);
+        FIREBOLT_LOG_NOTICE("Transport", "%s", Version::Banner);
         if (legacyRPCv1)
         {
             FIREBOLT_LOG_NOTICE("Transport", "Legacy RPCv1");
@@ -445,11 +491,13 @@ public:
 
         if (status != Firebolt::Error::None)
         {
+            FIREBOLT_LOG_ERROR("Gateway", "[connect] transport connect failed status=%d", static_cast<int>(status));
             return status;
         }
 
         if (!watchdogRunning.exchange(true))
         {
+            FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] starting thread (interval=%u ms)", watchdog_interval_ms);
             watchdogThread = std::thread(
                 [this]()
                 {
@@ -459,6 +507,7 @@ public:
                         client.checkPromises();
                     }
                 });
+                    FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] thread started");
         }
 
         return status;
@@ -501,11 +550,13 @@ public:
 
     Firebolt::Error send(const std::string& method, const nlohmann::json& parameters) override
     {
+        FIREBOLT_LOG_DEBUG("Gateway", "[send] request from helper layer method='%s'", method.c_str());
         return client.send(method, parameters);
     }
 
     std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters) override
     {
+        FIREBOLT_LOG_DEBUG("Gateway", "[request] request from helper layer method='%s'", method.c_str());
         return request(method, parameters, std::nullopt);
     }
 
@@ -520,6 +571,8 @@ public:
 
         if (alreadySubscribed)
         {
+            FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] upstream subscribe skipped; already subscribed event='%s'",
+                               event.c_str());
             return Firebolt::Error::None;
         }
 
@@ -561,6 +614,8 @@ public:
 
         if (status != Firebolt::Error::None)
         {
+            FIREBOLT_LOG_WARNING("Gateway", "[subscribe] failed for event='%s' status=%d", event.c_str(),
+                                 static_cast<int>(status));
             server.unsubscribe(event, usercb);
             if (legacyRPCv1)
             {
@@ -584,6 +639,8 @@ public:
 
         if (server.isAnySubscriber(event))
         {
+            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] retaining upstream subscription for event='%s' (other listeners remain)",
+                               event.c_str());
             return Firebolt::Error::None;
         }
 
@@ -644,6 +701,7 @@ private:
     {
         if (message.contains("id") && (message.contains("result") || message.contains("error")))
         {
+            FIREBOLT_LOG_DEBUG("Gateway", "[onMessage] classified as response id=%u", message["id"].get<MessageID>());
             if (legacyRPCv1)
             {
                 if (message.contains("result") && !message["result"].empty() &&
@@ -661,6 +719,7 @@ private:
                     }
                     if (!eventName.empty())
                     {
+                        FIREBOLT_LOG_DEBUG("Gateway", "[onMessage] legacy response mapped to event='%s'", eventName.c_str());
                         server.notify(eventName, message["result"]);
                         return;
                     }
@@ -683,6 +742,8 @@ private:
                     FIREBOLT_LOG_ERROR("Gateway", "Invalid notification-payload received: %s", message.dump().c_str());
                     return;
                 }
+                FIREBOLT_LOG_DEBUG("Gateway", "[onMessage] classified as notification method='%s'",
+                                   message["method"].get<std::string>().c_str());
                 server.notify(message["method"], message["params"]);
             }
             return;
@@ -690,12 +751,47 @@ private:
         FIREBOLT_LOG_ERROR("Gateway", "Invalid payload received: %s", message.dump().c_str());
     }
 
-    void onConnectionChange(const bool connected, Firebolt::Error error) { connectionChangeListener(connected, error); }
+    void onConnectionChange(const bool connected, Firebolt::Error error)
+    {
+        constexpr auto kConnectionNoticeMinInterval = std::chrono::seconds(5);
+        const auto now = std::chrono::steady_clock::now();
+
+        bool emitNotice = false;
+        size_t suppressedCount = 0;
+        {
+            std::lock_guard<std::mutex> lock(connectionLog_mtx);
+            const bool sameState = hasLastConnectionLog && (connected == lastConnectionState) && (error == lastConnectionError);
+            const bool windowElapsed = hasLastConnectionLog && ((now - lastConnectionLogTs) >= kConnectionNoticeMinInterval);
+
+            emitNotice = !sameState || !hasLastConnectionLog || windowElapsed;
+            if (emitNotice)
+            {
+                suppressedCount = suppressedConnectionNoticeCount;
+                suppressedConnectionNoticeCount = 0;
+                hasLastConnectionLog = true;
+                lastConnectionState = connected;
+                lastConnectionError = error;
+                lastConnectionLogTs = now;
+            }
+            else
+            {
+                ++suppressedConnectionNoticeCount;
+            }
+        }
+
+        if (emitNotice)
+        {
+            FIREBOLT_LOG_NOTICE("Gateway", "[connection] state=%s error=%d suppressed_repeats=%zu",
+                                connected ? "connected" : "disconnected", static_cast<int>(error), suppressedCount);
+        }
+        connectionChangeListener(connected, error);
+    }
 
     MessageID getNextMessageID() override { return transport.getNextMessageID(); }
 
     Firebolt::Error send(const std::string& method, const nlohmann::json& parameters, MessageID id) override
     {
+        FIREBOLT_LOG_DEBUG("Gateway", "[transport-send] method='%s' id=%u", method.c_str(), id);
         return transport.send(method, parameters, id);
     }
 

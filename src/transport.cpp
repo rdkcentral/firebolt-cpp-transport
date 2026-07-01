@@ -71,6 +71,8 @@ Transport::~Transport()
 
 void Transport::start()
 {
+    FIREBOLT_LOG_DEBUG("Transport", "[start] initializing websocket client (state=%d)",
+                       static_cast<int>(connectionStatus_.load()));
     client_->clear_access_channels(websocketpp::log::alevel::all);
     client_->clear_error_channels(websocketpp::log::elevel::all);
 
@@ -78,28 +80,35 @@ void Transport::start()
     client_->start_perpetual();
 
     connectionThread_.reset(new websocketpp::lib::thread(&client::run, client_.get()));
+    FIREBOLT_LOG_DEBUG("Transport", "[start] connection thread started");
     startMessageWorker();
     connectionStatus_ = TransportState::Disconnected;
+    FIREBOLT_LOG_DEBUG("Transport", "[start] transport state transitioned to %d",
+                       static_cast<int>(connectionStatus_.load()));
 }
 
 void Transport::startMessageWorker()
 {
     if (messageWorkerThread_.joinable())
     {
+        FIREBOLT_LOG_DEBUG("Transport", "[message-worker] start requested but worker already running");
         return;
     }
     stopMessageWorker_ = false;
     messageWorkerThread_ = std::thread(&Transport::processQueuedMessages, this);
+    FIREBOLT_LOG_DEBUG("Transport", "[message-worker] started");
 }
 
 void Transport::stopMessageWorker()
 {
+    FIREBOLT_LOG_DEBUG("Transport", "[message-worker] stop requested");
     stopMessageWorker_ = true;
     messageQueueCv_.notify_all();
 
     if (messageWorkerThread_.joinable())
     {
         messageWorkerThread_.join();
+        FIREBOLT_LOG_DEBUG("Transport", "[message-worker] joined");
     }
 }
 
@@ -116,6 +125,7 @@ void Transport::processQueuedMessages()
             {
                 if (stopMessageWorker_)
                 {
+                    FIREBOLT_LOG_DEBUG("Transport", "[message-worker] exiting (stop flag set, queue drained)");
                     return;
                 }
                 continue;
@@ -123,6 +133,8 @@ void Transport::processQueuedMessages()
 
             payload = std::move(messageQueue_.front());
             messageQueue_.pop();
+            FIREBOLT_LOG_DEBUG("Transport", "[message-worker] dequeued payload bytes=%zu, remaining_queue=%zu",
+                               payload.size(), messageQueue_.size());
         }
         try
         {
@@ -151,9 +163,13 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
         return Firebolt::Error::AlreadyConnected;
     }
 
+    FIREBOLT_LOG_DEBUG("Transport", "[connect] requested url=%s, current_state=%d, header_count=%zu", url.c_str(),
+                       static_cast<int>(connectionStatus_.load()), headers.size());
+
     if (connectionStatus_ == TransportState::NotStarted)
     {
         debugEnabled_ = Logger::isLogLevelEnabled(Firebolt::LogLevel::Debug);
+        FIREBOLT_LOG_DEBUG("Transport", "[connect] debugEnabled=%s", debugEnabled_ ? "true" : "false");
         start();
     }
 
@@ -183,6 +199,8 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
         exclude |= websocketpp::log::alevel::frame_payload;
     }
     setLogging(include, exclude);
+    FIREBOLT_LOG_DEBUG("Transport", "[connect] websocket logging masks include=0x%x exclude=0x%x",
+                       static_cast<unsigned>(include), static_cast<unsigned>(exclude));
 
     websocketpp::lib::error_code ec;
     client::connection_ptr con = client_->get_connection(url, ec);
@@ -203,6 +221,7 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     for (const auto& header : headers)
     {
         con->replace_header(header.first, header.second);
+        FIREBOLT_LOG_DEBUG("Transport", "[connect] injected header '%s'", header.first.c_str());
     }
 
     connectionHandle_ = con->get_handle();
@@ -218,12 +237,14 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
                                                     websocketpp::lib::placeholders::_2));
 
     client_->connect(con);
+    FIREBOLT_LOG_DEBUG("Transport", "[connect] connect() dispatched to websocket client");
 
     return Firebolt::Error::None;
 }
 
 Firebolt::Error Transport::disconnect()
 {
+    FIREBOLT_LOG_DEBUG("Transport", "[disconnect] requested, state=%d", static_cast<int>(connectionStatus_.load()));
     if (connectionStatus_ == TransportState::NotStarted)
     {
         return Firebolt::Error::None;
@@ -277,6 +298,8 @@ Firebolt::Error Transport::disconnect()
 
     client_ = std::make_unique<client>();
     connectionStatus_ = TransportState::NotStarted;
+    FIREBOLT_LOG_DEBUG("Transport", "[disconnect] transport reset complete, state=%d",
+                       static_cast<int>(connectionStatus_.load()));
     return Firebolt::Error::None;
 }
 
@@ -289,6 +312,8 @@ Firebolt::Error Transport::send(const std::string& method, const nlohmann::json&
 {
     if (connectionStatus_ != TransportState::Connected)
     {
+        FIREBOLT_LOG_WARNING("Transport", "[send] rejected method='%s' id=%u (state=%d)", method.c_str(), id,
+                             static_cast<int>(connectionStatus_.load()));
         return Firebolt::Error::NotConnected;
     }
 
@@ -319,6 +344,8 @@ Firebolt::Error Transport::send(const std::string& method, const nlohmann::json&
 
 void Transport::setLogging(websocketpp::log::level include, websocketpp::log::level exclude)
 {
+    FIREBOLT_LOG_DEBUG("Transport", "[setLogging] include=0x%x exclude=0x%x", static_cast<unsigned>(include),
+                       static_cast<unsigned>(exclude));
     client_->set_access_channels(include);
     client_->clear_access_channels(exclude);
 }
@@ -339,6 +366,8 @@ void Transport::onMessage(websocketpp::connection_hdl /* hdl */,
     {
         std::lock_guard<std::mutex> lock(messageQueueMutex_);
         messageQueue_.push(msg->get_payload());
+        FIREBOLT_LOG_DEBUG("Transport", "[onMessage] enqueued payload bytes=%zu, queue_depth=%zu",
+                           msg->get_payload().size(), messageQueue_.size());
     }
     messageQueueCv_.notify_one();
 }
@@ -359,23 +388,61 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
             {
                 responseHeaders_[header.first] = header.second;
             }
+            FIREBOLT_LOG_DEBUG("Transport", "[onOpen] stored response headers=%zu", responseHeaders_.size());
         }
     }
+    FIREBOLT_LOG_NOTICE("Transport", "Connection opened (state=%d)", static_cast<int>(connectionStatus_.load()));
     connectionReceiver_(true, Firebolt::Error::None);
 }
 
 void Transport::onClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
     connectionStatus_ = TransportState::Disconnected;
-    client::connection_ptr con = c->get_con_from_hdl(hdl);
-    connectionReceiver_(false, mapError(con->get_ec()));
+    Firebolt::Error mappedError = Firebolt::Error::General;
+    try
+    {
+        client::connection_ptr con = c->get_con_from_hdl(hdl);
+        if (con)
+        {
+            mappedError = mapError(con->get_ec());
+            FIREBOLT_LOG_WARNING("Transport", "Connection closed: ws_ec=%d ('%s'), mapped_error=%d", con->get_ec().value(),
+                                 con->get_ec().message().c_str(), static_cast<int>(mappedError));
+        }
+        else
+        {
+            FIREBOLT_LOG_WARNING("Transport", "Connection closed: connection handle resolved to null");
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        FIREBOLT_LOG_WARNING("Transport", "Connection closed: failed to resolve handle (%s)", ex.what());
+    }
+    connectionReceiver_(false, mappedError);
 }
 
 void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
     connectionStatus_ = TransportState::Disconnected;
-    client::connection_ptr con = c->get_con_from_hdl(hdl);
-    connectionReceiver_(false, mapError(con->get_ec()));
+    Firebolt::Error mappedError = Firebolt::Error::General;
+    try
+    {
+        client::connection_ptr con = c->get_con_from_hdl(hdl);
+        if (con)
+        {
+            mappedError = mapError(con->get_ec());
+            FIREBOLT_LOG_ERROR("Transport", "Connection failed: ws_ec=%d ('%s'), mapped_error=%d", con->get_ec().value(),
+                               con->get_ec().message().c_str(), static_cast<int>(mappedError));
+        }
+        else
+        {
+            FIREBOLT_LOG_ERROR("Transport", "Connection failed: connection handle resolved to null");
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        FIREBOLT_LOG_ERROR("Transport", "Connection failed: failed to resolve handle (%s)", ex.what());
+    }
+    connectionReceiver_(false, mappedError);
 }
 
 std::optional<std::string> Transport::getResponseHeader(const std::string& headerName)

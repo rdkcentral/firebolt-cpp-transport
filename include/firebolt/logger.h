@@ -20,6 +20,7 @@
 
 #include "firebolt/transport_export.h"
 #include "firebolt/types.h"
+#include <atomic>
 #include <stdint.h>
 #include <string>
 
@@ -43,11 +44,14 @@ public:
     static void log(LogLevel logLevel, const std::string& module, const std::string file, const std::string function,
                     const uint16_t line, const char* format, ...) __attribute__((format(printf, 6, 7)));
 
-    static bool isLogLevelEnabled(LogLevel logLevel) { return _loggingEnabled && (logLevel <= _logLevel); }
+    static bool isLogLevelEnabled(LogLevel logLevel)
+    {
+        return _loggingEnabled.load() && (logLevel <= _logLevel.load());
+    }
 
 private:
-    static LogLevel _logLevel;
-    static bool _loggingEnabled;
+    static std::atomic<LogLevel> _logLevel;
+    static std::atomic<bool> _loggingEnabled;
     static bool formatter_addTs;
     static bool formatter_addThreadId;
     static bool formatter_addLocation;

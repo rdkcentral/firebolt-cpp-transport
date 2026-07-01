@@ -34,6 +34,7 @@ add_executable(${UNIT_TESTS_APP}
 )
 
 target_compile_options(${UNIT_TESTS_APP} PRIVATE --coverage -g -O0 -fno-inline)
+target_compile_definitions(${UNIT_TESTS_APP} PRIVATE FIREBOLT_TRANSPORT_TESTING=1)
 target_link_options(${UNIT_TESTS_APP} PRIVATE --coverage)
 
 target_link_libraries(${UNIT_TESTS_APP}
