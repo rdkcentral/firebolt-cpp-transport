@@ -27,7 +27,6 @@
 #include <gtest/gtest.h>
 #include <regex>
 #include <string>
-#include <sys/stat.h>
 #include <unistd.h>
 
 using namespace Firebolt;
