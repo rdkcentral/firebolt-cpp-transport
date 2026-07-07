@@ -86,26 +86,34 @@ public:
 
     void checkPromises()
     {
-        std::lock_guard<std::mutex> lock(queue_mtx);
-        if (!queue.empty())
+        std::vector<std::shared_ptr<Caller>> timedOut;
         {
-            FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] pending request queue size=%zu", queue.size());
+            std::lock_guard<std::mutex> lock(queue_mtx);
+            if (!queue.empty())
+            {
+                FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] pending request queue size=%zu", queue.size());
+            }
+            auto now = std::chrono::steady_clock::now();
+            for (auto it = queue.begin(); it != queue.end();)
+            {
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
+                    runtime_waitTime_ms)
+                {
+                    FIREBOLT_LOG_WARNING("Gateway", "Request timed out, id=%u, method='%s'", it->second->id,
+                                         it->second->method.c_str());
+                    timedOut.push_back(it->second);
+                    it = queue.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
         }
-        auto now = std::chrono::steady_clock::now();
-        for (auto it = queue.begin(); it != queue.end();)
+        // Fulfill promises outside the critical section to avoid lock contention
+        for (auto& caller : timedOut)
         {
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
-                runtime_waitTime_ms)
-            {
-                FIREBOLT_LOG_WARNING("Gateway", "Request timed out, id=%u, method='%s'", it->second->id,
-                                     it->second->method.c_str());
-                it->second->promise.set_value(Result<nlohmann::json>(Firebolt::Error::Timedout));
-                it = queue.erase(it);
-            }
-            else
-            {
-                ++it;
-            }
+            caller->promise.set_value(Result<nlohmann::json>(Firebolt::Error::Timedout));
         }
     }
 

@@ -40,9 +40,9 @@ protected:
     void SetUp() override
     {
         unsetenv("FIREBOLT_TRANSPORT_LOG_LEVEL");
-        // Force the file sink to an unwritable path so that stderr-based assertions
-        // are not silently swallowed when /opt/logs/firebolt-native.log happens to
-        // be writable on the build/CI host.  Individual file-sink tests override this.
+        // Force the file sink to an unwritable path (a directory) so that stderr-based
+        // assertions are not silently swallowed when FIREBOLT_TRANSPORT_LOG_FILE env var
+        // might otherwise direct logs to a file. Individual file-sink tests override this.
         setenv("FIREBOLT_TRANSPORT_LOG_FILE", "/tmp", 1);
         Logger::resolveLogLevelFromEnvironment(LogLevel::Debug);
         Logger::setLogLevel(LogLevel::Debug);
