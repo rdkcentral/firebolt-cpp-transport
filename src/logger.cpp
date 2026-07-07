@@ -92,7 +92,7 @@ bool isEnvLogDisabled(const char* name)
     return value == "off" || value == "none" || value == "disable" || value == "disabled";
 }
 
-std::optional<std::string> resolveLogFilePathFromEnvironment()
+std::string resolveLogFilePathFromEnvironment()
 {
     const char* raw = std::getenv("FIREBOLT_TRANSPORT_LOG_FILE");
     if (raw != nullptr && *raw != '\0')
@@ -100,13 +100,13 @@ std::optional<std::string> resolveLogFilePathFromEnvironment()
         return std::string(raw);
     }
     // No env var set: do not use a file sink; fall back to stderr/syslog.
-    return std::nullopt;
+    return "";
 }
 
 bool tryWriteToConfiguredLogFile(const char* message)
 {
     const auto logFilePath = resolveLogFilePathFromEnvironment();
-    if (!logFilePath.has_value())
+    if (logFilePath.empty())
     {
         return false;
     }
@@ -116,7 +116,7 @@ bool tryWriteToConfiguredLogFile(const char* message)
     // O_CLOEXEC prevents the FD from being inherited by child processes.
     // A single write() keeps each log line atomic across threads (avoids the
     // multi-write interleaving that stdio fprintf can produce).
-    int fd = open(logFilePath->c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    int fd = open(logFilePath.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (fd < 0)
     {
         return false;
