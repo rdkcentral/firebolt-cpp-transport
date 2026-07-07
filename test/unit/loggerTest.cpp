@@ -18,8 +18,11 @@
 
 #include "firebolt/logger.h"
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <regex>
@@ -174,18 +177,16 @@ TEST_F(LoggerFormatUTest, LogFileSink)
     Logger::setLogLevel(LogLevel::Error);
 
     char pathTemplate[] = "/tmp/firebolt-transport-logger-test-XXXXXX";
-    // Restrict permissions on the temp file to 0600 before mkstemp creates it.
-    mode_t old_umask = umask(0177);
-    int fd = mkstemp(pathTemplate);
-    umask(old_umask);
-    // Close the FD immediately — we only need the path, not an open descriptor.
-    // Guard with fd >= 0 so static analysis (Coverity NEGATIVE_RETURNS) can see
-    // that close() is never called with a negative value.
+    // mkostemp() creates the temp file with 0600 permissions regardless of umask
+    // (no SECURE_TEMP concern) and sets O_CLOEXEC to prevent FD inheritance.
+    // Close immediately — we only need the path, not an open descriptor.
+    // Guard with fd >= 0 so Coverity NEGATIVE_RETURNS is satisfied on close().
+    int fd = mkostemp(pathTemplate, O_CLOEXEC);
     if (fd >= 0)
     {
         close(fd);
     }
-    ASSERT_GE(fd, 0) << "mkstemp failed: " << strerror(errno);
+    ASSERT_GE(fd, 0) << "mkostemp failed: " << strerror(errno);
 
     setenv("FIREBOLT_TRANSPORT_LOG_FILE", pathTemplate, 1);
 
