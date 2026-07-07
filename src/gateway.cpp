@@ -111,14 +111,21 @@ public:
 
     void cancelAll()
     {
-        std::lock_guard lck(queue_mtx);
-        for (auto& [id, caller] : queue)
+        // Move all pending callers out of the map under the mutex, then fulfill
+        // their promises after releasing the lock.  Fulfilling under the lock can
+        // wake waiting threads and adds avoidable contention; it also risks
+        // deadlock if a future continuation ever calls back into the gateway.
+        std::map<MessageID, std::shared_ptr<Caller>> toCancel;
+        {
+            std::lock_guard lck(queue_mtx);
+            toCancel = std::move(queue);
+        }
+        for (auto& [id, caller] : toCancel)
         {
             FIREBOLT_LOG_WARNING("Gateway", "[disconnect] cancelling pending request id=%u method='%s'", caller->id,
                                  caller->method.c_str());
             caller->promise.set_value(Result<nlohmann::json>(Firebolt::Error::NotConnected));
         }
-        queue.clear();
     }
 
     Firebolt::Error send(const std::string& method, const nlohmann::json& parameters)
@@ -160,9 +167,10 @@ public:
             FIREBOLT_LOG_WARNING("Gateway", "[request] transport send failed for method='%s' id=%u status=%d",
                                  method.c_str(), id, static_cast<int>(result));
             // Erase from queue under the mutex BEFORE fulfilling the promise.
-            // cancelAll() holds queue_mtx for its entire loop+clear, so exactly one of:
-            //   (a) we erase successfully → cancelAll() won't see this entry → we set_value
-            //   (b) cancelAll() already erased it → erase returns 0 → we skip set_value
+            // cancelAll() moves the entire map out under the lock first, so exactly one
+            // of these paths will see this entry:
+            //   (a) we erase successfully (count > 0) → we call set_value
+            //   (b) cancelAll() already moved it out → erase returns 0 → we skip
             // This prevents double set_value() → std::future_error → std::terminate.
             bool ownedByUs = false;
             {
@@ -190,33 +198,41 @@ public:
                 return;
             }
         }
-        try
+        // Grab and erase the caller under the mutex, then fulfill the promise
+        // after releasing it.  Holding the mutex across set_value() / logging
+        // adds unnecessary contention and risks deadlock if a continuation
+        // calls back into the gateway.
+        std::shared_ptr<Caller> c;
+        size_t remaining = 0;
         {
-            std::shared_ptr<Caller> c;
             std::lock_guard lck(queue_mtx);
-            c = queue.at(id);
-            queue.erase(id);
-            FIREBOLT_LOG_DEBUG("Gateway", "[response] matched id=%u method='%s', remaining_pending=%zu", id,
-                               c->method.c_str(), queue.size());
-
-            if (!message.contains("error"))
+            auto it = queue.find(id);
+            if (it == queue.end())
             {
-                FIREBOLT_LOG_DEBUG("Gateway", "[response] success id=%u method='%s'", id, c->method.c_str());
-                c->promise.set_value(Result<nlohmann::json>{message["result"]});
+                FIREBOLT_LOG_INFO("Gateway", "No receiver for a message, id: %u", id);
+                return;
             }
-            else
-            {
-                Firebolt::ErrorInfo errorInfo(static_cast<int32_t>(message["error"]["code"]),
-                                              message["error"]["message"].get<std::string>());
-                FIREBOLT_LOG_WARNING("Gateway", "[response] error id=%u method='%s' code=%d message='%s'", id,
-                                     c->method.c_str(), errorInfo.error(), errorInfo.message().c_str());
-                c->promise.set_value(
-                    Result<nlohmann::json>{static_cast<Firebolt::Error>(message["error"]["code"]), errorInfo});
-            }
+            c = it->second;
+            queue.erase(it);
+            remaining = queue.size();
         }
-        catch (const std::out_of_range& e)
+
+        FIREBOLT_LOG_DEBUG("Gateway", "[response] matched id=%u method='%s', remaining_pending=%zu", id,
+                           c->method.c_str(), remaining);
+
+        if (!message.contains("error"))
         {
-            FIREBOLT_LOG_INFO("Gateway", "No receiver for a message, id: %u", id);
+            FIREBOLT_LOG_DEBUG("Gateway", "[response] success id=%u method='%s'", id, c->method.c_str());
+            c->promise.set_value(Result<nlohmann::json>{message["result"]});
+        }
+        else
+        {
+            Firebolt::ErrorInfo errorInfo(static_cast<int32_t>(message["error"]["code"]),
+                                          message["error"]["message"].get<std::string>());
+            FIREBOLT_LOG_WARNING("Gateway", "[response] error id=%u method='%s' code=%d message='%s'", id,
+                                 c->method.c_str(), errorInfo.error(), errorInfo.message().c_str());
+            c->promise.set_value(
+                Result<nlohmann::json>{static_cast<Firebolt::Error>(message["error"]["code"]), errorInfo});
         }
     }
 };

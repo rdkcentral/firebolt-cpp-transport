@@ -113,22 +113,19 @@ bool tryWriteToConfiguredLogFile(const char* message)
 
     // Use open() with explicit mode 0644 to prevent world-writable file creation
     // (fopen("a") inherits the process umask which may allow 0666).
-    int fd = open(logFilePath->c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    // O_CLOEXEC prevents the FD from being inherited by child processes.
+    // A single write() keeps each log line atomic across threads (avoids the
+    // multi-write interleaving that stdio fprintf can produce).
+    int fd = open(logFilePath->c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (fd < 0)
     {
         return false;
     }
-    FILE* file = fdopen(fd, "a");
-    if (file == nullptr)
-    {
-        close(fd);
-        return false;
-    }
 
-    fprintf(file, "%s\n", message);
-    fflush(file);
-    fclose(file);
-    return true;
+    std::string line = std::string(message) + "\n";
+    ssize_t written = write(fd, line.c_str(), line.size());
+    close(fd);
+    return written == static_cast<ssize_t>(line.size());
 }
 } // namespace
 

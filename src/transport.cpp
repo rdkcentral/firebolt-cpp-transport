@@ -163,7 +163,9 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
         return Firebolt::Error::AlreadyConnected;
     }
 
-    FIREBOLT_LOG_DEBUG("Transport", "[connect] requested url=%s, current_state=%d, header_count=%zu", url.c_str(),
+    // Redact the URL to avoid leaking tokens/credentials that may appear in query parameters.
+    std::string safeUrl = url.substr(0, url.find('?'));
+    FIREBOLT_LOG_DEBUG("Transport", "[connect] requested url=%s, current_state=%d, header_count=%zu", safeUrl.c_str(),
                        static_cast<int>(connectionStatus_.load()), headers.size());
 
     if (connectionStatus_ == TransportState::NotStarted)

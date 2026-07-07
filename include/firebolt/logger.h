@@ -62,7 +62,10 @@ private:
 #define FIREBOLT_LOG(level, module, ...)                                                                               \
     do                                                                                                                 \
     {                                                                                                                  \
-        Firebolt::Logger::log(level, module, __FILE__, __func__, __LINE__, __VA_ARGS__);                               \
+        if (Firebolt::Logger::isLogLevelEnabled(level))                                                                \
+        {                                                                                                              \
+            Firebolt::Logger::log(level, module, __FILE__, __func__, __LINE__, __VA_ARGS__);                           \
+        }                                                                                                              \
     } while (0)
 #define FIREBOLT_LOG_ERROR(module, ...)                                                                                \
     do                                                                                                                 \

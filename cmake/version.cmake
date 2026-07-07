@@ -71,7 +71,12 @@ endif ()
 # directory is present (tarball builds). Pass -DFIREBOLT_GIT_REF=<value> from
 # EXTRA_OECMAKE in a dev bbappend (e.g. -DFIREBOLT_GIT_REF=${SRCREV}).
 if (FIREBOLT_GIT_REF)
-    string(SUBSTRING "${FIREBOLT_GIT_REF}" 0 8 GIT_SHA)
+    string(LENGTH "${FIREBOLT_GIT_REF}" _ref_len)
+    if (_ref_len GREATER 8)
+        string(SUBSTRING "${FIREBOLT_GIT_REF}" 0 8 GIT_SHA)
+    else ()
+        set(GIT_SHA "${FIREBOLT_GIT_REF}")
+    endif ()
     set(GIT_DESCRIBE "${GIT_SHA}")
 elseif (GIT_DESCRIBE STREQUAL "unknown")
     # No git and no override: this is a release tarball build — use the version
