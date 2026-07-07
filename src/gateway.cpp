@@ -114,8 +114,8 @@ public:
         std::lock_guard lck(queue_mtx);
         for (auto& [id, caller] : queue)
         {
-            FIREBOLT_LOG_WARNING("Gateway", "[disconnect] cancelling pending request id=%u method='%s'",
-                                 caller->id, caller->method.c_str());
+            FIREBOLT_LOG_WARNING("Gateway", "[disconnect] cancelling pending request id=%u method='%s'", caller->id,
+                                 caller->method.c_str());
             caller->promise.set_value(Result<nlohmann::json>(Firebolt::Error::NotConnected));
         }
         queue.clear();
@@ -159,9 +159,20 @@ public:
         {
             FIREBOLT_LOG_WARNING("Gateway", "[request] transport send failed for method='%s' id=%u status=%d",
                                  method.c_str(), id, static_cast<int>(result));
-            c->promise.set_value(Result<nlohmann::json>{result});
-            std::lock_guard lck(queue_mtx);
-            queue.erase(id);
+            // Erase from queue under the mutex BEFORE fulfilling the promise.
+            // cancelAll() holds queue_mtx for its entire loop+clear, so exactly one of:
+            //   (a) we erase successfully → cancelAll() won't see this entry → we set_value
+            //   (b) cancelAll() already erased it → erase returns 0 → we skip set_value
+            // This prevents double set_value() → std::future_error → std::terminate.
+            bool ownedByUs = false;
+            {
+                std::lock_guard lck(queue_mtx);
+                ownedByUs = queue.erase(id) > 0;
+            }
+            if (ownedByUs)
+            {
+                c->promise.set_value(Result<nlohmann::json>{result});
+            }
         }
 
         return future;
@@ -340,8 +351,8 @@ public:
         }
 
         eventList.erase(it);
-        FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] local subscriber removed event='%s', remaining=%zu",
-                           event.c_str(), eventList.size());
+        FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] local subscriber removed event='%s', remaining=%zu", event.c_str(),
+                           eventList.size());
         return Firebolt::Error::None;
     }
 
@@ -478,11 +489,11 @@ public:
         legacyRPCv1 = cfg.legacyRPCv1;
 
         FIREBOLT_LOG_NOTICE("Gateway", "[connect] config waitTime_ms=%u watchdog_interval_ms=%u headers=%zu",
-                    runtime_waitTime_ms, watchdog_interval_ms, cfg.headers.size());
+                            runtime_waitTime_ms, watchdog_interval_ms, cfg.headers.size());
         FIREBOLT_LOG_NOTICE("Gateway", "[connect] log level resolved=%d (cfg=%d), transport masks include=%s exclude=%s",
-                    static_cast<int>(logLevel), static_cast<int>(cfg.log.level),
-                    cfg.log.transportInclude.has_value() ? "set" : "unset",
-                    cfg.log.transportExclude.has_value() ? "set" : "unset");
+                            static_cast<int>(logLevel), static_cast<int>(cfg.log.level),
+                            cfg.log.transportInclude.has_value() ? "set" : "unset",
+                            cfg.log.transportExclude.has_value() ? "set" : "unset");
 
         std::string url = buildGatewayUrl(cfg.wsUrl, legacyRPCv1);
 
@@ -519,7 +530,7 @@ public:
                         client.checkPromises();
                     }
                 });
-                    FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] thread started");
+            FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] thread started");
         }
 
         return status;
@@ -530,9 +541,10 @@ public:
         FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] transport.disconnect() start");
         auto t0_disc = std::chrono::steady_clock::now();
         Firebolt::Error status = transport.disconnect();
-        FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() done in %ld ms, status=%d",
-                          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_disc)
-                              .count(),
+        FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() done in %lld ms, status=%d",
+                          static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                     std::chrono::steady_clock::now() - t0_disc)
+                                                     .count()),
                           static_cast<int>(status));
         if (status != Firebolt::Error::None)
         {
@@ -546,18 +558,19 @@ public:
             {
                 watchdogThread.join();
             }
-            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %ld ms",
-                               std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                                                     t0_wdog)
-                                   .count());
+            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %lld ms",
+                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                          std::chrono::steady_clock::now() - t0_wdog)
+                                                          .count()));
         }
         client.cancelAll();
         FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] stopping notification worker...");
         auto t0_nw = std::chrono::steady_clock::now();
         server.stopNotificationWorker();
-        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %ld ms",
-                           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_nw)
-                               .count());
+        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %lld ms",
+                           static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                      std::chrono::steady_clock::now() - t0_nw)
+                                                      .count()));
         return Error::None;
     }
 
@@ -652,7 +665,8 @@ public:
 
         if (server.isAnySubscriber(event))
         {
-            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] retaining upstream subscription for event='%s' (other listeners remain)",
+            FIREBOLT_LOG_DEBUG("Gateway",
+                               "[unsubscribe] retaining upstream subscription for event='%s' (other listeners remain)",
                                event.c_str());
             return Firebolt::Error::None;
         }
@@ -732,7 +746,8 @@ private:
                     }
                     if (!eventName.empty())
                     {
-                        FIREBOLT_LOG_DEBUG("Gateway", "[onMessage] legacy response mapped to event='%s'", eventName.c_str());
+                        FIREBOLT_LOG_DEBUG("Gateway", "[onMessage] legacy response mapped to event='%s'",
+                                           eventName.c_str());
                         server.notify(eventName, message["result"]);
                         return;
                     }
@@ -773,8 +788,10 @@ private:
         size_t suppressedCount = 0;
         {
             std::lock_guard<std::mutex> lock(connectionLog_mtx);
-            const bool sameState = hasLastConnectionLog && (connected == lastConnectionState) && (error == lastConnectionError);
-            const bool windowElapsed = hasLastConnectionLog && ((now - lastConnectionLogTs) >= kConnectionNoticeMinInterval);
+            const bool sameState = hasLastConnectionLog && (connected == lastConnectionState) &&
+                                   (error == lastConnectionError);
+            const bool windowElapsed = hasLastConnectionLog &&
+                                       ((now - lastConnectionLogTs) >= kConnectionNoticeMinInterval);
 
             emitNotice = !sameState || !hasLastConnectionLog || windowElapsed;
             if (emitNotice)

@@ -138,11 +138,11 @@ Header operations are thread-safe. Access to response headers is protected by a 
 
 ## Runtime Logging Overrides (Environment Variables)
 
-To make logging configurable without changing app code, the transport reads optional environment variables at connect time.
-When set, this value overrides `config.log.level` passed by the app.
+To make logging configurable without changing app code, the transport reads optional environment variables on each log call (changes take effect immediately without reconnecting).
+When set, `FIREBOLT_TRANSPORT_LOG_LEVEL` overrides `config.log.level` passed by the app.
 
 - `FIREBOLT_TRANSPORT_LOG_LEVEL`: `off|error|warning|notice|info|debug` (or `0..4`)
-- `FIREBOLT_TRANSPORT_LOG_FILE`: absolute or relative path to append logs to (default: `/opt/logs/firebolt-native.log`)
+- `FIREBOLT_TRANSPORT_LOG_FILE`: absolute or relative path to append logs to; if unset, logs go to stderr (or syslog when built with `ENABLE_SYSLOG`)
 
 Example:
 

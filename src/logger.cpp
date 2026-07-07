@@ -18,16 +18,18 @@
 #include "firebolt/logger.h"
 #include "firebolt/types.h"
 #include <algorithm>
-#include <chrono>
 #include <cctype>
+#include <chrono>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <fcntl.h>
 #include <filesystem>
 #include <map>
 #include <optional>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 #ifdef ENABLE_SYSLOG
@@ -97,8 +99,8 @@ std::optional<std::string> resolveLogFilePathFromEnvironment()
     {
         return std::string(raw);
     }
-
-    return std::string("/opt/logs/firebolt-native.log");
+    // No env var set: do not use a file sink; fall back to stderr/syslog.
+    return std::nullopt;
 }
 
 bool tryWriteToConfiguredLogFile(const char* message)
@@ -109,9 +111,17 @@ bool tryWriteToConfiguredLogFile(const char* message)
         return false;
     }
 
-    FILE* file = fopen(logFilePath->c_str(), "a");
+    // Use open() with explicit mode 0644 to prevent world-writable file creation
+    // (fopen("a") inherits the process umask which may allow 0666).
+    int fd = open(logFilePath->c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0)
+    {
+        return false;
+    }
+    FILE* file = fdopen(fd, "a");
     if (file == nullptr)
     {
+        close(fd);
         return false;
     }
 
@@ -208,7 +218,7 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
     if (length > 0)
     {
         position = (static_cast<size_t>(length) >= Logger::MaxBufSize) ? (Logger::MaxBufSize - 1)
-                                                                        : static_cast<size_t>(length);
+                                                                       : static_cast<size_t>(length);
     }
     msg[position] = '\0';
     if (position > 0 && msg[position - 1] == '\n')
@@ -245,8 +255,8 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
     {
         len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "%s: ", time.c_str());
     }
-    len +=
-        snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[FireboltNative|%s|%s]", module.c_str(), levelName.c_str());
+    len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[FireboltNative|%s|%s]", module.c_str(),
+                    levelName.c_str());
     if (formatter_addLocation || formatter_addFunction)
     {
         if (formatter_addLocation && formatter_addFunction)

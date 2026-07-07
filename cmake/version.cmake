@@ -80,7 +80,21 @@ elseif (GIT_DESCRIBE STREQUAL "unknown")
     set(GIT_SHA "v${PROJECT_VERSION}")
 endif ()
 
-string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
+# Honor SOURCE_DATE_EPOCH for reproducible/cached builds (common Yocto/Debian convention).
+if (DEFINED ENV{SOURCE_DATE_EPOCH})
+    execute_process(
+        COMMAND date --utc "--date=@$ENV{SOURCE_DATE_EPOCH}" "+%Y-%m-%dT%H:%M:%SZ"
+        OUTPUT_VARIABLE BUILD_TIMESTAMP
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _sde_result
+        ERROR_QUIET
+    )
+    if (NOT _sde_result EQUAL 0)
+        string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
+    endif ()
+else ()
+    string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
+endif ()
 
 set(VERSION "${PROJECT_VERSION}")
 string(REGEX REPLACE "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+).*" "\\1" PROJECT_VERSION_MAJOR "${VERSION}")

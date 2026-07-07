@@ -18,8 +18,8 @@
 
 #include "firebolt/logger.h"
 #include <algorithm>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <regex>
@@ -39,6 +39,10 @@ protected:
     void SetUp() override
     {
         unsetenv("FIREBOLT_TRANSPORT_LOG_LEVEL");
+        // Force the file sink to an unwritable path so that stderr-based assertions
+        // are not silently swallowed when /opt/logs/firebolt-native.log happens to
+        // be writable on the build/CI host.  Individual file-sink tests override this.
+        setenv("FIREBOLT_TRANSPORT_LOG_FILE", "/tmp", 1);
         Logger::resolveLogLevelFromEnvironment(LogLevel::Debug);
         Logger::setLogLevel(LogLevel::Debug);
     }
@@ -169,7 +173,10 @@ TEST_F(LoggerFormatUTest, LogFileSink)
     Logger::setLogLevel(LogLevel::Error);
 
     char pathTemplate[] = "/tmp/firebolt-transport-logger-test-XXXXXX";
+    // Restrict permissions on the temp file to 0600 before mkstemp creates it.
+    mode_t old_umask = umask(0177);
     int fd = mkstemp(pathTemplate);
+    umask(old_umask);
     ASSERT_GE(fd, 0);
     close(fd);
 
@@ -186,7 +193,7 @@ TEST_F(LoggerFormatUTest, LogFileSink)
     EXPECT_NE(fileContents.find("[FireboltNative|Test|Error]"), std::string::npos) << fileContents;
     EXPECT_NE(fileContents.find("file sink payload"), std::string::npos) << fileContents;
 
-    std::remove(pathTemplate);
+    (void)std::remove(pathTemplate);
 }
 
 // ---------------------------------------------------------------------------
