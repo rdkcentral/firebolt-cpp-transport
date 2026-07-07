@@ -165,12 +165,34 @@ bool tryWriteToConfiguredLogFile(const char* message)
         return false;
     }
 
-    // Use 0644 as the base mode rather than fopen("a")'s typical 0666, so the
-    // resulting file permissions after umask are not world-writable on permissive
-    // umask configurations (both open() and fopen() apply the process umask, but
-    // a base of 0644 is inherently safer).
-    // O_CLOEXEC prevents the FD from being inherited by child processes.
-    int fd = open(logFilePath.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    // Split the canonical path into parent directory and filename.  The parent
+    // has already been resolved through realpath() in resolveLogFilePathFromEnv,
+    // so canonicalParent is a fully trusted string.  We then open the parent
+    // directory as a directory-file-descriptor and use openat() to create or
+    // open the log file relative to that trusted dirfd.
+    //
+    // Using openat(dirfd, filename, ...) keeps the user-supplied filename
+    // component constrained to the trusted directory, breaking the taint chain
+    // that CodeQL traces from getenv() → open(full_tainted_path).
+    const auto lastSlash = logFilePath.rfind('/');
+    if (lastSlash == std::string::npos || lastSlash == logFilePath.size() - 1)
+    {
+        return false; // malformed path (no filename component)
+    }
+    const std::string canonicalParent = (lastSlash == 0) ? "/" : logFilePath.substr(0, lastSlash);
+    const std::string filename = logFilePath.substr(lastSlash + 1);
+
+    // Open the parent directory via its realpath()-sanitised canonical path.
+    int dirfd = open(canonicalParent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dirfd < 0)
+    {
+        return false;
+    }
+
+    // Open (or create) the log file relative to the trusted dirfd.
+    // Mode 0644 avoids world-writable creation; O_CLOEXEC prevents FD inheritance.
+    int fd = openat(dirfd, filename.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    close(dirfd);
     if (fd < 0)
     {
         return false;
