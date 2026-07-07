@@ -724,12 +724,12 @@ public:
         auto t0_unsub = std::chrono::steady_clock::now();
         auto future_unsub = request(event, params);
         constexpr auto kUnsubscribeAckTimeout = std::chrono::milliseconds(50);
-        long unsub_ms = 0;
+        long long unsub_ms = 0;
         if (future_unsub.wait_for(kUnsubscribeAckTimeout) == std::future_status::ready)
         {
-            unsub_ms = static_cast<long>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count());
-            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK received after %ld ms", unsub_ms);
+            unsub_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
+            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK received after %lld ms", unsub_ms);
             auto result = future_unsub.get();
             if (!result)
             {
@@ -738,9 +738,9 @@ public:
         }
         else
         {
-            unsub_ms = static_cast<long>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count());
-            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK timed out after %ld ms (server unresponsive)", unsub_ms);
+            unsub_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
+            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK timed out after %lld ms (server unresponsive)", unsub_ms);
         }
 
         return status;
