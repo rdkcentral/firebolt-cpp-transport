@@ -199,24 +199,16 @@ bool tryWriteToConfiguredLogFile(const char* message)
     }
 
     std::string line = std::string(message) + "\n";
-    // Loop until all bytes are written. write() can return a short count on some
-    // systems (e.g., signals, buffering), so we must not treat a short write as
-    // success.
-    size_t written = 0;
-    while (written < line.size())
-    {
-        ssize_t ret = write(fd, line.c_str() + written, line.size() - written);
-        if (ret <= 0)
-        {
-            // ret < 0: error; ret == 0: no progress (shouldn't happen but guard
-            // against an infinite loop).
-            close(fd);
-            return false;
-        }
-        written += static_cast<size_t>(ret);
-    }
+    // A single write() on a file opened with O_APPEND is atomic: POSIX
+    // guarantees the seek-to-end and write happen as one operation, so
+    // concurrent threads cannot interleave their lines.
+    // A retry loop would break this atomicity — if a short write occurred
+    // between loop iterations another thread could insert bytes mid-line.
+    // For log lines (typically << PIPE_BUF), a genuine short write is
+    // vanishingly rare; treat it as a failure and fall back to stderr.
+    const ssize_t ret = write(fd, line.c_str(), line.size());
     close(fd);
-    return true;
+    return ret == static_cast<ssize_t>(line.size());
 }
 } // namespace
 
