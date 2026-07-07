@@ -109,6 +109,18 @@ public:
         }
     }
 
+    void cancelAll()
+    {
+        std::lock_guard lck(queue_mtx);
+        for (auto& [id, caller] : queue)
+        {
+            FIREBOLT_LOG_WARNING("Gateway", "[disconnect] cancelling pending request id=%u method='%s'",
+                                 caller->id, caller->method.c_str());
+            caller->promise.set_value(Result<nlohmann::json>(Firebolt::Error::NotConnected));
+        }
+        queue.clear();
+    }
+
     Firebolt::Error send(const std::string& method, const nlohmann::json& parameters)
     {
         MessageID id = transport_.getNextMessageID();
@@ -539,6 +551,7 @@ public:
                                                                                      t0_wdog)
                                    .count());
         }
+        client.cancelAll();
         FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] stopping notification worker...");
         auto t0_nw = std::chrono::steady_clock::now();
         server.stopNotificationWorker();
