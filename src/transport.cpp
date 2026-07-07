@@ -163,8 +163,26 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
         return Firebolt::Error::AlreadyConnected;
     }
 
-    // Redact the URL to avoid leaking tokens/credentials that may appear in query parameters.
-    std::string safeUrl = url.substr(0, url.find('?'));
+    // Redact the URL to avoid leaking tokens/credentials that may appear in query
+    // parameters or userinfo (e.g., wss://user:pass@host/).
+    std::string safeUrl = url;
+    size_t userinfoPosEnd = safeUrl.find('@');
+    size_t queryPos = safeUrl.find('?');
+    if (userinfoPosEnd != std::string::npos && (queryPos == std::string::npos || userinfoPosEnd < queryPos))
+    {
+        // Strip userinfo by replacing user:pass@ with just the scheme and ://
+        size_t schemeEnd = safeUrl.find("://");
+        if (schemeEnd != std::string::npos)
+        {
+            safeUrl = safeUrl.substr(0, schemeEnd + 3) + safeUrl.substr(userinfoPosEnd + 1);
+        }
+    }
+    // Strip query parameters
+    size_t queryEnd = safeUrl.find('?');
+    if (queryEnd != std::string::npos)
+    {
+        safeUrl = safeUrl.substr(0, queryEnd);
+    }
     FIREBOLT_LOG_DEBUG("Transport", "[connect] requested url=%s, current_state=%d, header_count=%zu", safeUrl.c_str(),
                        static_cast<int>(connectionStatus_.load()), headers.size());
 

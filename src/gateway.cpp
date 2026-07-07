@@ -86,7 +86,7 @@ public:
 
     void checkPromises()
     {
-        std::vector<std::shared_ptr<Caller>> timedOut;
+        std::vector<std::pair<std::shared_ptr<Caller>, std::string>> timedOut;
         {
             std::lock_guard<std::mutex> lock(queue_mtx);
             if (!queue.empty())
@@ -99,9 +99,12 @@ public:
                 if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
                     runtime_waitTime_ms)
                 {
-                    FIREBOLT_LOG_WARNING("Gateway", "Request timed out, id=%u, method='%s'", it->second->id,
-                                         it->second->method.c_str());
-                    timedOut.push_back(it->second);
+                    // Capture timeout info before erasing for logging outside critical section
+                    const auto& caller = it->second;
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "Request timed out, id=%u, method='%s'", caller->id,
+                             caller->method.c_str());
+                    timedOut.emplace_back(caller, std::string(buf));
                     it = queue.erase(it);
                 }
                 else
@@ -110,9 +113,11 @@ public:
                 }
             }
         }
-        // Fulfill promises outside the critical section to avoid lock contention
-        for (auto& caller : timedOut)
+        // Log and fulfill promises outside the critical section to minimize lock
+        // contention and avoid blocking other gateway operations.
+        for (auto& [caller, message] : timedOut)
         {
+            FIREBOLT_LOG_WARNING("Gateway", "%s", message.c_str());
             caller->promise.set_value(Result<nlohmann::json>(Firebolt::Error::Timedout));
         }
     }

@@ -123,9 +123,22 @@ bool tryWriteToConfiguredLogFile(const char* message)
     }
 
     std::string line = std::string(message) + "\n";
-    ssize_t written = write(fd, line.c_str(), line.size());
+    // Loop until all bytes are written. write() can return a short count on some
+    // systems (e.g., signals, buffering), so we must not treat a short write as
+    // success.
+    size_t written = 0;
+    while (written < line.size())
+    {
+        ssize_t ret = write(fd, line.c_str() + written, line.size() - written);
+        if (ret < 0)
+        {
+            close(fd);
+            return false; // write error
+        }
+        written += ret;
+    }
     close(fd);
-    return written == static_cast<ssize_t>(line.size());
+    return true;
 }
 } // namespace
 

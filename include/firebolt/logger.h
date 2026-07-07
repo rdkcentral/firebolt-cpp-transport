@@ -59,6 +59,10 @@ private:
 };
 } // namespace Firebolt
 
+// FIREBOLT_LOG macro — logs a message at the specified level to the configured backend.
+// NOTE: Arguments are only evaluated if the log level is enabled. Callers must not rely
+// on argument side effects (e.g., function calls with state mutation) in disabled levels,
+// as these will not be executed.
 #define FIREBOLT_LOG(level, module, ...)                                                                               \
     do                                                                                                                 \
     {                                                                                                                  \
