@@ -405,8 +405,8 @@ void Transport::onClose(websocketpp::client<websocketpp::config::asio_client>* c
         if (con)
         {
             mappedError = mapError(con->get_ec());
-            FIREBOLT_LOG_WARNING("Transport", "Connection closed: ws_ec=%d ('%s'), mapped_error=%d", con->get_ec().value(),
-                                 con->get_ec().message().c_str(), static_cast<int>(mappedError));
+            FIREBOLT_LOG_WARNING("Transport", "Connection closed: ws_ec=%d ('%s'), mapped_error=%d",
+                                 con->get_ec().value(), con->get_ec().message().c_str(), static_cast<int>(mappedError));
         }
         else
         {
@@ -430,8 +430,8 @@ void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c,
         if (con)
         {
             mappedError = mapError(con->get_ec());
-            FIREBOLT_LOG_ERROR("Transport", "Connection failed: ws_ec=%d ('%s'), mapped_error=%d", con->get_ec().value(),
-                               con->get_ec().message().c_str(), static_cast<int>(mappedError));
+            FIREBOLT_LOG_ERROR("Transport", "Connection failed: ws_ec=%d ('%s'), mapped_error=%d",
+                               con->get_ec().value(), con->get_ec().message().c_str(), static_cast<int>(mappedError));
         }
         else
         {
