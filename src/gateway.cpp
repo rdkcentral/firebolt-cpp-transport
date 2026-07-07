@@ -130,7 +130,7 @@ public:
         // deadlock if a future continuation ever calls back into the gateway.
         std::map<MessageID, std::shared_ptr<Caller>> toCancel;
         {
-            std::lock_guard lck(queue_mtx);
+            std::lock_guard<std::mutex> lck(queue_mtx);
             toCancel = std::move(queue);
         }
         for (auto& [id, caller] : toCancel)
@@ -187,7 +187,7 @@ public:
             // This prevents double set_value() → std::future_error → std::terminate.
             bool ownedByUs = false;
             {
-                std::lock_guard lck(queue_mtx);
+                std::lock_guard<std::mutex> lck(queue_mtx);
                 ownedByUs = queue.erase(id) > 0;
             }
             if (ownedByUs)
