@@ -50,8 +50,8 @@ std::string toLowerCopy(std::string value)
 
 std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
 {
-    // Use a local buffer to safely capture the env var value before any further
-    // getenv() calls that might invalidate the pointer.
+    // Copy to a local buffer immediately: the pointer returned by getenv() can
+    // become stale if another thread calls setenv/unsetenv/putenv.
     char buffer[256];
     const char* raw = std::getenv(name);
     if (raw == nullptr || *raw == '\0')
@@ -59,7 +59,6 @@ std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
         return std::nullopt;
     }
 
-    // Immediately copy to buffer to ensure safety across function calls.
     std::strncpy(buffer, raw, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
 
@@ -90,8 +89,8 @@ std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
 
 bool isEnvLogDisabled(const char* name)
 {
-    // Use a local buffer to safely capture the env var value before any further
-    // getenv() calls that might invalidate the pointer.
+    // Copy to a local buffer immediately: the pointer returned by getenv() can
+    // become stale if another thread calls setenv/unsetenv/putenv.
     char buffer[256];
     const char* raw = std::getenv(name);
     if (raw == nullptr || *raw == '\0')
@@ -99,7 +98,6 @@ bool isEnvLogDisabled(const char* name)
         return false;
     }
 
-    // Immediately copy to buffer to ensure safety across function calls.
     std::strncpy(buffer, raw, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
 
@@ -109,19 +107,26 @@ bool isEnvLogDisabled(const char* name)
 
 std::string resolveLogFilePathFromEnvironment()
 {
-    // Use a local buffer to safely capture the env var value before any further
-    // getenv() calls that might invalidate the pointer.
+    // Copy to a local buffer immediately: the pointer returned by getenv() can
+    // become stale if another thread calls setenv/unsetenv/putenv.
     char buffer[PATH_MAX];
     const char* raw = std::getenv("FIREBOLT_TRANSPORT_LOG_FILE");
-    if (raw != nullptr && *raw != '\0')
+    if (raw == nullptr || *raw == '\0')
     {
-        // Immediately copy to buffer to ensure safety across function calls.
-        std::strncpy(buffer, raw, sizeof(buffer) - 1);
-        buffer[sizeof(buffer) - 1] = '\0';
-        return std::string(buffer);
+        return "";
     }
-    // No env var set: do not use a file sink; fall back to stderr/syslog.
-    return "";
+
+    std::strncpy(buffer, raw, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+
+    // Only accept absolute paths to prevent path-traversal attacks via a
+    // user-controlled environment variable.
+    const std::string path(buffer);
+    if (path[0] != '/' || path.find("../") != std::string::npos)
+    {
+        return ""; // reject relative or traversal paths
+    }
+    return path;
 }
 
 bool tryWriteToConfiguredLogFile(const char* message)
@@ -132,11 +137,11 @@ bool tryWriteToConfiguredLogFile(const char* message)
         return false;
     }
 
-    // Use open() with explicit mode 0644 to prevent world-writable file creation
-    // (fopen("a") inherits the process umask which may allow 0666).
+    // Use 0644 as the base mode rather than fopen("a")'s typical 0666, so the
+    // resulting file permissions after umask are not world-writable on permissive
+    // umask configurations (both open() and fopen() apply the process umask, but
+    // a base of 0644 is inherently safer).
     // O_CLOEXEC prevents the FD from being inherited by child processes.
-    // A single write() keeps each log line atomic across threads (avoids the
-    // multi-write interleaving that stdio fprintf can produce).
     int fd = open(logFilePath.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (fd < 0)
     {
@@ -151,12 +156,14 @@ bool tryWriteToConfiguredLogFile(const char* message)
     while (written < line.size())
     {
         ssize_t ret = write(fd, line.c_str() + written, line.size() - written);
-        if (ret < 0)
+        if (ret <= 0)
         {
+            // ret < 0: error; ret == 0: no progress (shouldn't happen but guard
+            // against an infinite loop).
             close(fd);
-            return false; // write error
+            return false;
         }
-        written += ret;
+        written += static_cast<size_t>(ret);
     }
     close(fd);
     return true;

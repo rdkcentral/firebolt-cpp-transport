@@ -63,7 +63,7 @@ public:
     std::optional<std::string> getResponseHeader(const std::string& headerName);
 
 #ifdef FIREBOLT_TRANSPORT_TESTING
-    void testSetConnectionReceiver(ConnectionCallback callback) { connectionReceiver_ = std::move(callback); }
+    void testSetConnectionReceiver(ConnectionCallback callback) { connectionReceiver_ = callback; }
 
     void testInvokeOnClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
     {

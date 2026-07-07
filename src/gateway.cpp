@@ -25,6 +25,7 @@
 #include <assert.h>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <future>
 #include <list>
 #include <map>
@@ -101,10 +102,9 @@ public:
                 {
                     // Capture timeout info before erasing for logging outside critical section
                     const auto& caller = it->second;
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "Request timed out, id=%u, method='%s'", caller->id,
-                             caller->method.c_str());
-                    timedOut.emplace_back(caller, std::string(buf));
+                    const std::string msg = "Request timed out, id=" + std::to_string(caller->id) + ", method='" +
+                                            caller->method + "'";
+                    timedOut.emplace_back(caller, msg);
                     it = queue.erase(it);
                 }
                 else
