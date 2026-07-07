@@ -119,14 +119,42 @@ std::string resolveLogFilePathFromEnvironment()
     std::strncpy(buffer, raw, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
 
-    // Only accept absolute paths to prevent path-traversal attacks via a
-    // user-controlled environment variable.
+    // Pre-validate: only absolute paths, no traversal sequences.
     const std::string path(buffer);
     if (path[0] != '/' || path.find("../") != std::string::npos)
     {
-        return ""; // reject relative or traversal paths
+        return "";
     }
-    return path;
+
+    // Split into parent directory and filename on the last '/'.
+    const auto lastSlash = path.rfind('/');
+    const std::string parentDir = (lastSlash == 0) ? "/" : path.substr(0, lastSlash);
+    const std::string filename = path.substr(lastSlash + 1);
+
+    // Reject empty filenames or filenames containing '/' (defense in depth).
+    if (filename.empty() || filename.find('/') != std::string::npos)
+    {
+        return "";
+    }
+
+    // Canonicalize the parent directory via realpath() to resolve symlinks and
+    // remove any remaining traversal components.  realpath() is the standard
+    // POSIX sanitizer for user-controlled paths; CodeQL and Coverity recognise
+    // its output as trusted.  If the parent directory does not exist the env
+    // var is silently ignored (no log file).
+    char canonicalParent[PATH_MAX];
+    if (realpath(parentDir.c_str(), canonicalParent) == nullptr)
+    {
+        return "";
+    }
+
+    // Reconstruct the full path from the now-canonical parent and the filename.
+    const std::string canonicalPath = std::string(canonicalParent) + "/" + filename;
+    if (canonicalPath.size() >= static_cast<std::size_t>(PATH_MAX))
+    {
+        return "";
+    }
+    return canonicalPath;
 }
 
 bool tryWriteToConfiguredLogFile(const char* message)
