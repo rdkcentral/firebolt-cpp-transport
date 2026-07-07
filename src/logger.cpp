@@ -26,6 +26,7 @@
 #include <ctime>
 #include <fcntl.h>
 #include <filesystem>
+#include <limits.h>
 #include <map>
 #include <optional>
 #include <stdio.h>
@@ -49,13 +50,20 @@ std::string toLowerCopy(std::string value)
 
 std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
 {
+    // Use a local buffer to safely capture the env var value before any further
+    // getenv() calls that might invalidate the pointer.
+    char buffer[256];
     const char* raw = std::getenv(name);
-    if (raw == nullptr)
+    if (raw == nullptr || *raw == '\0')
     {
         return std::nullopt;
     }
 
-    const std::string value = toLowerCopy(raw);
+    // Immediately copy to buffer to ensure safety across function calls.
+    std::strncpy(buffer, raw, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+
+    const std::string value = toLowerCopy(buffer);
     if (value == "error" || value == "0")
     {
         return Firebolt::LogLevel::Error;
@@ -82,22 +90,35 @@ std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
 
 bool isEnvLogDisabled(const char* name)
 {
+    // Use a local buffer to safely capture the env var value before any further
+    // getenv() calls that might invalidate the pointer.
+    char buffer[256];
     const char* raw = std::getenv(name);
-    if (raw == nullptr)
+    if (raw == nullptr || *raw == '\0')
     {
         return false;
     }
 
-    const std::string value = toLowerCopy(raw);
+    // Immediately copy to buffer to ensure safety across function calls.
+    std::strncpy(buffer, raw, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+
+    const std::string value = toLowerCopy(buffer);
     return value == "off" || value == "none" || value == "disable" || value == "disabled";
 }
 
 std::string resolveLogFilePathFromEnvironment()
 {
+    // Use a local buffer to safely capture the env var value before any further
+    // getenv() calls that might invalidate the pointer.
+    char buffer[PATH_MAX];
     const char* raw = std::getenv("FIREBOLT_TRANSPORT_LOG_FILE");
     if (raw != nullptr && *raw != '\0')
     {
-        return std::string(raw);
+        // Immediately copy to buffer to ensure safety across function calls.
+        std::strncpy(buffer, raw, sizeof(buffer) - 1);
+        buffer[sizeof(buffer) - 1] = '\0';
+        return std::string(buffer);
     }
     // No env var set: do not use a file sink; fall back to stderr/syslog.
     return "";
