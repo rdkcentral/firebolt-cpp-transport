@@ -148,6 +148,6 @@ Example:
 
 ```bash
 export FIREBOLT_TRANSPORT_LOG_LEVEL=debug
-export FIREBOLT_TRANSPORT_LOG_FILE=/tmp/firebolt-transport.log
+export FIREBOLT_TRANSPORT_LOG_FILE=/opt/logs/firebolt-transport.log
 ```
 
