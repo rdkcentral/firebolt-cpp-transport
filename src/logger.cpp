@@ -269,9 +269,14 @@ bool tryWriteToConfiguredLogFile(const char* message)
     // between loop iterations another thread could insert bytes mid-line.
     // For log lines (typically << PIPE_BUF), a genuine short write is
     // vanishingly rare; treat it as a failure and fall back to stderr.
-    const ssize_t ret = write(fd, line.c_str(), line.size());
+    ssize_t ret = write(fd, line.c_str(), line.size());
+    if (ret < 0 && errno == EINTR)
+    {
+        ret = write(fd, line.c_str(), line.size());
+    }
     close(fd);
-    return ret == static_cast<ssize_t>(line.size());
+    // If a short write occurred, don't fall back to stderr (it would duplicate a partial line).
+    return ret > 0;
 }
 } // namespace
 
