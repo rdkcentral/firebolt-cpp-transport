@@ -98,6 +98,10 @@ bool isEnvLogDisabled(const char* name)
     {
         return false;
     }
+    if (std::strlen(raw) >= sizeof(buffer))
+    {
+        return false;
+    }
 
     std::strncpy(buffer, raw, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
