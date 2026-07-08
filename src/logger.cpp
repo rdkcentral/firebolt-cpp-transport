@@ -133,7 +133,7 @@ std::string resolveLogFilePathFromEnvironment()
     }
 
     // Fast path: env var unchanged since last call in this thread.
-    if (raw == cachedEnvValue || std::strcmp(raw, cachedEnvValue.c_str()) == 0)
+    if (cachedEnvValue == raw)
     {
         return cachedCanonicalPath;
     }

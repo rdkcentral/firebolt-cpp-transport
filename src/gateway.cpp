@@ -556,7 +556,18 @@ public:
                     while (watchdogRunning)
                     {
                         std::this_thread::sleep_for(std::chrono::milliseconds(watchdog_interval_ms));
-                        client.checkPromises();
+                        try
+                        {
+                            client.checkPromises();
+                        }
+                        catch (const std::exception& e)
+                        {
+                            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw: %s", e.what());
+                        }
+                        catch (...)
+                        {
+                            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
+                        }
                     }
                 });
             FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] thread started");
