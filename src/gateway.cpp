@@ -102,10 +102,9 @@ public:
                 if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
                     runtime_waitTime_ms)
                 {
-                    // Only capture the Caller pointer under the lock — no string
-                    // allocation here. A std::bad_alloc thrown inside the lock
-                    // after queue.erase() would leave the caller's promise
-                    // unfulfilled and block the waiting thread indefinitely.
+                    // Capture the Caller pointer under the lock. timedOut.push_back() may allocate;
+                    // if it throws, the entry remains in the queue because we erase only after
+                    // the push, so a later watchdog iteration can retry.
                     timedOut.push_back(it->second);
                     it = queue.erase(it);
                 }
