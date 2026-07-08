@@ -38,7 +38,9 @@ target_link_options(${UNIT_TESTS_APP} PRIVATE --coverage)
 
 # Apply FIREBOLT_TRANSPORT_TESTING to both library and test app to avoid ODR
 # violations (different class definitions in library vs test translation units).
-target_compile_definitions(FireboltTransport PUBLIC FIREBOLT_TRANSPORT_TESTING=1)
+# PRIVATE on the library avoids leaking the test-hook definition into any other
+# target that happens to link FireboltTransport during the test build.
+target_compile_definitions(FireboltTransport PRIVATE FIREBOLT_TRANSPORT_TESTING=1)
 target_compile_definitions(${UNIT_TESTS_APP} PRIVATE FIREBOLT_TRANSPORT_TESTING=1)
 
 target_link_libraries(${UNIT_TESTS_APP}

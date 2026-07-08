@@ -25,7 +25,6 @@
 #include <assert.h>
 #include <chrono>
 #include <condition_variable>
-#include <cstdio>
 #include <future>
 #include <list>
 #include <map>
@@ -36,6 +35,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace Firebolt::Transport
 {

@@ -131,8 +131,9 @@ std::string resolveLogFilePathFromEnvironment()
     const std::string parentDir = (lastSlash == 0) ? "/" : path.substr(0, lastSlash);
     const std::string filename = path.substr(lastSlash + 1);
 
-    // Reject empty filenames or filenames containing '/' (defense in depth).
-    if (filename.empty() || filename.find('/') != std::string::npos)
+    // Reject empty filenames, filenames containing '/', and dot/dotdot entries
+    // that could traverse outside the parent directory via openat().
+    if (filename.empty() || filename == "." || filename == ".." || filename.find('/') != std::string::npos)
     {
         return "";
     }

@@ -117,6 +117,7 @@ void Transport::processQueuedMessages()
     while (true)
     {
         std::string payload;
+        std::size_t remaining = 0;
         {
             std::unique_lock<std::mutex> lock(messageQueueMutex_);
             messageQueueCv_.wait(lock, [this] { return stopMessageWorker_ || !messageQueue_.empty(); });
@@ -133,9 +134,10 @@ void Transport::processQueuedMessages()
 
             payload = std::move(messageQueue_.front());
             messageQueue_.pop();
-            FIREBOLT_LOG_DEBUG("Transport", "[message-worker] dequeued payload bytes=%zu, remaining_queue=%zu",
-                               payload.size(), messageQueue_.size());
+            remaining = messageQueue_.size();
         }
+        FIREBOLT_LOG_DEBUG("Transport", "[message-worker] dequeued payload bytes=%zu, remaining_queue=%zu",
+                           payload.size(), remaining);
         try
         {
             nlohmann::json jsonMsg = nlohmann::json::parse(payload);
@@ -182,6 +184,12 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     if (queryEnd != std::string::npos)
     {
         safeUrl = safeUrl.substr(0, queryEnd);
+    }
+    // Strip fragment (can carry tokens in some deployments)
+    size_t fragmentPos = safeUrl.find('#');
+    if (fragmentPos != std::string::npos)
+    {
+        safeUrl = safeUrl.substr(0, fragmentPos);
     }
     FIREBOLT_LOG_DEBUG("Transport", "[connect] requested url=%s, current_state=%d, header_count=%zu", safeUrl.c_str(),
                        static_cast<int>(connectionStatus_.load()), headers.size());
