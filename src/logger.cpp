@@ -387,33 +387,46 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
 #pragma GCC diagnostic ignored "-Wformat-truncation"
     char formattedMsg[Logger::MaxBufSize] = {0};
     size_t len = 0;
+
+    // snprintf returns the would-have-been-written length on truncation, which
+    // would make len > sizeof(formattedMsg) and the next formattedMsg+len OOB.
+    // This lambda advances len by the actual bytes written (clamped to remaining
+    // space) and silently ignores errors (ret < 0).
+    const auto snAppend = [&](int ret)
+    {
+        if (ret > 0 && len < sizeof(formattedMsg) - 1)
+        {
+            len += std::min(static_cast<size_t>(ret), sizeof(formattedMsg) - len - 1);
+        }
+    };
+
     if (formatter_addTs)
     {
-        len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "%s: ", time.c_str());
+        snAppend(snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "%s: ", time.c_str()));
     }
-    len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[FireboltNative|%s|%s]", module.c_str(),
-                    levelName.c_str());
+    snAppend(snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[FireboltNative|%s|%s]", module.c_str(),
+                      levelName.c_str()));
     if (formatter_addLocation || formatter_addFunction)
     {
         if (formatter_addLocation && formatter_addFunction)
         {
-            len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[%s:%d,%s]", fileName.c_str(), line,
-                            function.c_str());
+            snAppend(snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[%s:%d,%s]", fileName.c_str(), line,
+                              function.c_str()));
         }
         else if (formatter_addLocation)
         {
-            len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[%s:%d]", fileName.c_str(), line);
+            snAppend(snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[%s:%d]", fileName.c_str(), line));
         }
         else
         {
-            len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[%s()]", function.c_str());
+            snAppend(snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "[%s()]", function.c_str()));
         }
     }
     if (formatter_addThreadId)
     {
-        len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "<tid:%u>", ::gettid());
+        snAppend(snprintf(formattedMsg + len, sizeof(formattedMsg) - len, "<tid:%u>", ::gettid()));
     }
-    len += snprintf(formattedMsg + len, sizeof(formattedMsg) - len, ": %s", msg);
+    snAppend(snprintf(formattedMsg + len, sizeof(formattedMsg) - len, ": %s", msg));
 #pragma GCC diagnostic pop
 
     if (!tryWriteToConfiguredLogFile(formattedMsg))
