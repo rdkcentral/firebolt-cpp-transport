@@ -249,12 +249,26 @@ public:
         }
         else
         {
-            Firebolt::ErrorInfo errorInfo(static_cast<int32_t>(message["error"]["code"]),
-                                          message["error"]["message"].get<std::string>());
+            // Defensively extract error fields: a malformed gateway payload
+            // (missing/wrong-type keys) would otherwise throw and crash the
+            // process since the exception would escape the calling thread.
+            int32_t code = static_cast<int32_t>(Firebolt::Error::General);
+            std::string msg = "unknown error";
+            try
+            {
+                if (message["error"].contains("code") && message["error"]["code"].is_number())
+                    code = message["error"]["code"].get<int32_t>();
+                if (message["error"].contains("message") && message["error"]["message"].is_string())
+                    msg = message["error"]["message"].get<std::string>();
+            }
+            catch (const std::exception& e)
+            {
+                FIREBOLT_LOG_WARNING("Gateway", "[response] malformed error payload id=%u: %s", id, e.what());
+            }
+            Firebolt::ErrorInfo errorInfo(code, msg);
             FIREBOLT_LOG_WARNING("Gateway", "[response] error id=%u method='%s' code=%d message='%s'", id,
                                  c->method.c_str(), errorInfo.error(), errorInfo.message().c_str());
-            c->promise.set_value(
-                Result<nlohmann::json>{static_cast<Firebolt::Error>(message["error"]["code"]), errorInfo});
+            c->promise.set_value(Result<nlohmann::json>{static_cast<Firebolt::Error>(code), errorInfo});
         }
     }
 };
