@@ -19,6 +19,7 @@
 #include "firebolt/types.h"
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cstdarg>
 #include <cstdlib>
