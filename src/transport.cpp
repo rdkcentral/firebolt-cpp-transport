@@ -167,16 +167,20 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
 
     // Redact the URL to avoid leaking tokens/credentials that may appear in query
     // parameters or userinfo (e.g., wss://user:pass@host/).
+    // Restrict '@' search to the authority component (between "://" and the first
+    // path/query/fragment delimiter) to avoid mis-redacting '@' in the path.
     std::string safeUrl = url;
-    size_t userinfoPosEnd = safeUrl.find('@');
-    size_t queryPos = safeUrl.find('?');
-    if (userinfoPosEnd != std::string::npos && (queryPos == std::string::npos || userinfoPosEnd < queryPos))
+    size_t schemeEnd = safeUrl.find("://");
+    if (schemeEnd != std::string::npos)
     {
-        // Strip userinfo by replacing user:pass@ with just the scheme and ://
-        size_t schemeEnd = safeUrl.find("://");
-        if (schemeEnd != std::string::npos)
+        const size_t authorityStart = schemeEnd + 3;
+        const size_t authorityEnd = safeUrl.find_first_of("/?#", authorityStart);
+        const size_t limit = (authorityEnd != std::string::npos) ? authorityEnd : safeUrl.size();
+        const size_t atPos = safeUrl.find('@', authorityStart);
+        if (atPos != std::string::npos && atPos < limit)
         {
-            safeUrl = safeUrl.substr(0, schemeEnd + 3) + safeUrl.substr(userinfoPosEnd + 1);
+            // Strip userinfo: wss://user:pass@host -> wss://host
+            safeUrl = safeUrl.substr(0, authorityStart) + safeUrl.substr(atPos + 1);
         }
     }
     // Strip query parameters

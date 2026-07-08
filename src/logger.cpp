@@ -108,12 +108,21 @@ bool isEnvLogDisabled(const char* name)
 
 std::string resolveLogFilePathFromEnvironment()
 {
+    // Cache the validated canonical path per-thread to avoid a realpath() syscall
+    // on every log call when the env var hasn't changed.  thread_local is safe
+    // here: each thread gets its own cache and picks up env var changes on the
+    // next log call in that thread.
+    thread_local std::string cachedEnvValue;
+    thread_local std::string cachedCanonicalPath;
+
     // Copy to a local buffer immediately: the pointer returned by getenv() can
     // become stale if another thread calls setenv/unsetenv/putenv.
     char buffer[PATH_MAX];
     const char* raw = std::getenv("FIREBOLT_TRANSPORT_LOG_FILE");
     if (raw == nullptr || *raw == '\0')
     {
+        cachedEnvValue.clear();
+        cachedCanonicalPath.clear();
         return "";
     }
 
@@ -121,6 +130,12 @@ std::string resolveLogFilePathFromEnvironment()
     if (std::strlen(raw) >= sizeof(buffer))
     {
         return "";
+    }
+
+    // Fast path: env var unchanged since last call in this thread.
+    if (raw == cachedEnvValue || std::strcmp(raw, cachedEnvValue.c_str()) == 0)
+    {
+        return cachedCanonicalPath;
     }
 
     std::strncpy(buffer, raw, sizeof(buffer) - 1);
@@ -163,6 +178,9 @@ std::string resolveLogFilePathFromEnvironment()
     {
         return "";
     }
+    // Update the per-thread cache.
+    cachedEnvValue = buffer;
+    cachedCanonicalPath = canonicalPath;
     return canonicalPath;
 }
 

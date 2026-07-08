@@ -87,7 +87,7 @@ public:
 
     void checkPromises()
     {
-        std::vector<std::pair<std::shared_ptr<Caller>, std::string>> timedOut;
+        std::vector<std::shared_ptr<Caller>> timedOut;
         {
             std::lock_guard<std::mutex> lock(queue_mtx);
             if (!queue.empty())
@@ -100,11 +100,11 @@ public:
                 if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
                     runtime_waitTime_ms)
                 {
-                    // Capture timeout info before erasing for logging outside critical section
-                    const auto& caller = it->second;
-                    const std::string msg = "Request timed out, id=" + std::to_string(caller->id) + ", method='" +
-                                            caller->method + "'";
-                    timedOut.emplace_back(caller, msg);
+                    // Only capture the Caller pointer under the lock — no string
+                    // allocation here. A std::bad_alloc thrown inside the lock
+                    // after queue.erase() would leave the caller's promise
+                    // unfulfilled and block the waiting thread indefinitely.
+                    timedOut.push_back(it->second);
                     it = queue.erase(it);
                 }
                 else
@@ -115,9 +115,9 @@ public:
         }
         // Log and fulfill promises outside the critical section to minimize lock
         // contention and avoid blocking other gateway operations.
-        for (auto& [caller, message] : timedOut)
+        for (auto& caller : timedOut)
         {
-            FIREBOLT_LOG_WARNING("Gateway", "%s", message.c_str());
+            FIREBOLT_LOG_WARNING("Gateway", "Request timed out, id=%u method='%s'", caller->id, caller->method.c_str());
             caller->promise.set_value(Result<nlohmann::json>(Firebolt::Error::Timedout));
         }
     }
