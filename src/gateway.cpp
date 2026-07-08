@@ -28,7 +28,6 @@
 #include <future>
 #include <list>
 #include <map>
-#include <vector>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
