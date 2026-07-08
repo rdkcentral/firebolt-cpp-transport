@@ -143,6 +143,7 @@ When set, `FIREBOLT_TRANSPORT_LOG_LEVEL` overrides `config.log.level` passed by 
 
 - `FIREBOLT_TRANSPORT_LOG_LEVEL`: `off|error|warning|notice|info|debug` (or `0..4`) — resolved once at connect time; overrides `config.log.level` passed by the app. Changes require reconnect.
 - `FIREBOLT_TRANSPORT_LOG_FILE`: absolute path to append logs to (relative paths are ignored for safety); if unset, logs go to stderr (or syslog when built with `ENABLE_SYSLOG`). Read on each log call, so changes take effect immediately.
+- Note: changing environment variables at runtime is not guaranteed to be thread-safe on all platforms; prefer setting these variables before starting the transport, or avoid updating them while multiple threads are logging.
 
 Example:
 
