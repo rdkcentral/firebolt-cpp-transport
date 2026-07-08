@@ -66,9 +66,10 @@ private:
 #define FIREBOLT_LOG(level, module, ...)                                                                               \
     do                                                                                                                 \
     {                                                                                                                  \
-        if (Firebolt::Logger::isLogLevelEnabled(level))                                                                \
+        const auto _fb_level = (level);                                                                                \
+        if (Firebolt::Logger::isLogLevelEnabled(_fb_level))                                                            \
         {                                                                                                              \
-            Firebolt::Logger::log(level, module, __FILE__, __func__, __LINE__, __VA_ARGS__);                           \
+            Firebolt::Logger::log(_fb_level, module, __FILE__, __func__, __LINE__, __VA_ARGS__);                       \
         }                                                                                                              \
     } while (0)
 #define FIREBOLT_LOG_ERROR(module, ...)                                                                                \

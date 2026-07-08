@@ -235,7 +235,9 @@ bool tryWriteToConfiguredLogFile(const char* message)
     // This is a false positive: the tainted filename cannot escape the trusted
     // dirfd scope. Suppress the alert.
     // lgtm[cpp/path-injection]
-    int fd = openat(dirfd, filename.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    // O_NOFOLLOW prevents writing through a symlink: if the filename is a symlink
+    // the open fails with ELOOP and we fall back to stderr.
+    int fd = openat(dirfd, filename.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0644);
     close(dirfd);
     if (fd < 0)
     {

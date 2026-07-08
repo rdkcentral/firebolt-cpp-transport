@@ -135,7 +135,7 @@ public:
         }
         for (auto& [id, caller] : toCancel)
         {
-            FIREBOLT_LOG_WARNING("Gateway", "[disconnect] cancelling pending request id=%u method='%s'", caller->id,
+            FIREBOLT_LOG_WARNING("Gateway", "[disconnect] cancelling pending request id=%u method='%s'", id,
                                  caller->method.c_str());
             caller->promise.set_value(Result<nlohmann::json>(Firebolt::Error::NotConnected));
         }
