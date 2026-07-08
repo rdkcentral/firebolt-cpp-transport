@@ -191,6 +191,17 @@ bool tryWriteToConfiguredLogFile(const char* message)
 
     // Open (or create) the log file relative to the trusted dirfd.
     // Mode 0644 avoids world-writable creation; O_CLOEXEC prevents FD inheritance.
+    //
+    // CodeQL cpp/path-injection: filename originates from getenv() and remains
+    // tainted despite validation. The security controls are:
+    //   1. Only absolute paths accepted (path[0] == '/').
+    //   2. No path-traversal sequences ("../") in the full path.
+    //   3. filename contains no '/' (checked in resolveLogFilePathFromEnvironment).
+    //   4. Parent directory canonicalised via realpath(); dirfd is bound to it.
+    //   5. openat(dirfd, ...) confines access to the realpath'd directory.
+    // This is a false positive: the tainted filename cannot escape the trusted
+    // dirfd scope. Suppress the alert.
+    // lgtm[cpp/path-injection]
     int fd = openat(dirfd, filename.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     close(dirfd);
     if (fd < 0)
