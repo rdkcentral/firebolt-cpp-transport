@@ -172,8 +172,14 @@ std::string resolveLogFilePathFromEnvironment()
     }
 
     // Reconstruct the full path from the now-canonical parent and the filename.
+    // Avoid a double leading slash when canonicalParent is exactly "/".
     // Non-const so NRVO/implicit move applies on return (Coverity COPY_INSTEAD_OF_MOVE).
-    std::string canonicalPath = std::string(canonicalParent) + "/" + filename;
+    std::string canonicalPath = std::string(canonicalParent);
+    if (canonicalPath.back() != '/')
+    {
+        canonicalPath += '/';
+    }
+    canonicalPath += filename;
     if (canonicalPath.size() >= static_cast<std::size_t>(PATH_MAX))
     {
         return "";
@@ -236,7 +242,17 @@ bool tryWriteToConfiguredLogFile(const char* message)
         return false;
     }
 
-    std::string line = std::string(message) + "\n";
+    std::string line;
+    try
+    {
+        line = std::string(message) + "\n";
+    }
+    catch (...)
+    {
+        // Logging must be best-effort and must never crash the process.
+        close(fd);
+        return false;
+    }
     // A single write() on a file opened with O_APPEND is atomic: POSIX
     // guarantees the seek-to-end and write happen as one operation, so
     // concurrent threads cannot interleave their lines.
