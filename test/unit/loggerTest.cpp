@@ -577,9 +577,11 @@ TEST_F(LoggerFormatUTest, MalformedFormatDoesNotCrash)
             Logger::setFormat(false, false, false, false);
             Logger::setLogLevel(LogLevel::Error);
             const char* malformedFormat = "%";
-            // Pass a non-literal malformed format string to avoid -Wformat warnings while still
-            // exercising the branch where vsnprintf() reports an error (returns < 0) on some libcs.
-            Logger::log(LogLevel::Error, "Test", "f.cpp", "fn", 1, malformedFormat);
+            // Exercise the vsnprintf() error path with a malformed format string.
+            // A trailing 0 argument is passed so -Wformat-security does not fire
+            // (it only warns when there are no format arguments at all); the '%'
+            // specifier with an extra int still exercises the malformed-format branch.
+            Logger::log(LogLevel::Error, "Test", "f.cpp", "fn", 1, malformedFormat, 0);
             _exit(0);
         },
         ::testing::ExitedWithCode(0), ".*");
