@@ -139,7 +139,7 @@ Header operations are thread-safe. Access to response headers is protected by a 
 ## Runtime Logging Overrides (Environment Variables)
 
 To make logging configurable without changing app code, the transport resolves `FIREBOLT_TRANSPORT_LOG_LEVEL` during `IGateway::connect()` (changes require reconnect) and reads `FIREBOLT_TRANSPORT_LOG_FILE` on each log call.
-When set, `FIREBOLT_TRANSPORT_LOG_LEVEL` overrides `config.log.level` passed by the app.
+When set, `FIREBOLT_TRANSPORT_LOG_LEVEL` overrides `config.log.level` passed by the app. Log lines are prefixed with `[FireboltNative|<module>|<level>]`.
 
 - `FIREBOLT_TRANSPORT_LOG_LEVEL`: `off|error|warning|notice|info|debug` (or `0..4`) — resolved once at connect time; overrides `config.log.level` passed by the app. Changes require reconnect.
 - `FIREBOLT_TRANSPORT_LOG_FILE`: absolute path to append logs to (relative paths are ignored for safety); if unset, logs go to stderr (or syslog when built with `ENABLE_SYSLOG`). Read on each log call, so changes take effect immediately.
