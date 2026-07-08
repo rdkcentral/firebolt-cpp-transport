@@ -133,19 +133,18 @@ std::string resolveLogFilePathFromEnvironment()
         return "";
     }
 
-    // Copy to local buffer FIRST — all subsequent operations (path validation,
-    // cache comparison) must use the buffer, not the raw getenv() pointer, which
-    // could be invalidated by a concurrent setenv/unsetenv/putenv call.
-    std::strncpy(buffer, raw, sizeof(buffer) - 1);
-    buffer[sizeof(buffer) - 1] = '\0';
-
-    // Detect truncation: if the original string reaches or exceeds sizeof(buffer),
-    // raw[sizeof(buffer)-1] will be non-null (strncpy didn't place a terminator there).
-    // Reject overlong values.
-    if (raw[sizeof(buffer) - 1] != '\0')
+    // Reject overlong values before copying. strlen() reads only up to the null
+    // terminator, so it is always safe regardless of string length. Checking
+    // raw[PATH_MAX-1] instead would be UB when the string is shorter than PATH_MAX.
+    const size_t rawLen = std::strlen(raw);
+    if (rawLen >= sizeof(buffer))
     {
         return ""; // env var exceeds PATH_MAX-1; reject.
     }
+
+    // Copy to local buffer so all subsequent operations use the buffer, not the
+    // raw getenv() pointer (which can be invalidated by setenv/unsetenv/putenv).
+    std::memcpy(buffer, raw, rawLen + 1); // +1 for null terminator; safe: rawLen < sizeof(buffer)
 
     // Fast path: env var unchanged since last call in this thread.
     if (cachedEnvValue == buffer)
