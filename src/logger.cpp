@@ -117,6 +117,12 @@ std::string resolveLogFilePathFromEnvironment()
         return "";
     }
 
+    // Reject overlong values rather than silently truncating.
+    if (std::strlen(raw) >= sizeof(buffer))
+    {
+        return "";
+    }
+
     std::strncpy(buffer, raw, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
 
