@@ -88,12 +88,14 @@ public:
     void checkPromises()
     {
         std::vector<std::shared_ptr<Caller>> timedOut;
+        std::size_t queueSizeSnapshot = 0;
         {
             std::lock_guard<std::mutex> lock(queue_mtx);
-            if (!queue.empty())
-            {
-                FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] pending request queue size=%zu", queue.size());
-            }
+            // Reserve upfront (before any erases) so push_back() cannot
+            // reallocate mid-loop. If reserve() throws here, no entries have
+            // been erased yet, so all promises remain fulfillable.
+            timedOut.reserve(queue.size());
+            queueSizeSnapshot = queue.size();
             auto now = std::chrono::steady_clock::now();
             for (auto it = queue.begin(); it != queue.end();)
             {
@@ -112,6 +114,11 @@ public:
                     ++it;
                 }
             }
+        }
+        // Log after releasing the lock to avoid blocking I/O under the mutex.
+        if (queueSizeSnapshot > 0)
+        {
+            FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] pending request queue size=%zu", queueSizeSnapshot);
         }
         // Log and fulfill promises outside the critical section to minimize lock
         // contention and avoid blocking other gateway operations.
@@ -167,12 +174,14 @@ public:
         std::shared_ptr<Caller> c = std::make_shared<Caller>(id, method);
         auto future = c->promise.get_future();
 
+        std::size_t pendingAfterEnqueue = 0;
         {
             std::lock_guard lck(queue_mtx);
             queue[id] = c;
-            FIREBOLT_LOG_DEBUG("Gateway", "[request] queued method='%s' id=%u, pending=%zu", method.c_str(), id,
-                               queue.size());
+            pendingAfterEnqueue = queue.size();
         }
+        FIREBOLT_LOG_DEBUG("Gateway", "[request] queued method='%s' id=%u, pending=%zu", method.c_str(), id,
+                           pendingAfterEnqueue);
 
         Firebolt::Error result = transport_.send(method, parameters, id);
         if (result != Firebolt::Error::None)
@@ -535,7 +544,27 @@ public:
             FIREBOLT_LOG_NOTICE("Transport", "Legacy RPCv1");
         }
 
-        FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s", url.c_str());
+        // Redact URL before logging: may contain credentials (userinfo) or tokens (query/fragment).
+        std::string safeConnectUrl = url;
+        {
+            const size_t schemeEnd = safeConnectUrl.find("://");
+            if (schemeEnd != std::string::npos)
+            {
+                const size_t authStart = schemeEnd + 3;
+                const size_t authEnd = safeConnectUrl.find_first_of("/?#", authStart);
+                const size_t limit = (authEnd != std::string::npos) ? authEnd : safeConnectUrl.size();
+                const size_t atPos = safeConnectUrl.find('@', authStart);
+                if (atPos != std::string::npos && atPos < limit)
+                    safeConnectUrl = safeConnectUrl.substr(0, authStart) + safeConnectUrl.substr(atPos + 1);
+            }
+            const size_t qPos = safeConnectUrl.find('?');
+            if (qPos != std::string::npos)
+                safeConnectUrl = safeConnectUrl.substr(0, qPos);
+            const size_t fPos = safeConnectUrl.find('#');
+            if (fPos != std::string::npos)
+                safeConnectUrl = safeConnectUrl.substr(0, fPos);
+        }
+        FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s", safeConnectUrl.c_str());
         Firebolt::Error status = transport.connect(
             url, [this](const nlohmann::json& message) { this->onMessage(message); },
             [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
