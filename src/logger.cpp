@@ -275,8 +275,9 @@ bool tryWriteToConfiguredLogFile(const char* message)
         ret = write(fd, line.c_str(), line.size());
     }
     close(fd);
-    // If a short write occurred, don't fall back to stderr (it would duplicate a partial line).
-    return ret > 0;
+    // A partial write means the line is truncated; treat as failure so the
+    // caller falls back to stderr rather than silently losing log content.
+    return ret == static_cast<ssize_t>(line.size());
 }
 } // namespace
 

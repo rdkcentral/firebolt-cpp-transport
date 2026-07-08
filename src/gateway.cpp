@@ -100,9 +100,11 @@ public:
                 if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
                     runtime_waitTime_ms)
                 {
-                    // Only capture the Caller pointer under the lock; avoid logging or
-                    // fulfilling the promise here. Fulfillment happens after releasing
-                    // the mutex to minimize contention and avoid re-entrancy issues.
+                    // Only capture the Caller pointer under the lock — no string
+                    // allocation here. A std::bad_alloc thrown inside the lock
+                    // after queue.erase() would leave the caller's promise
+                    // unfulfilled and block the waiting thread indefinitely.
+                    timedOut.push_back(it->second);
                     it = queue.erase(it);
                 }
                 else
