@@ -62,6 +62,20 @@ public:
      */
     std::optional<std::string> getResponseHeader(const std::string& headerName);
 
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    void testSetConnectionReceiver(ConnectionCallback callback) { connectionReceiver_ = callback; }
+
+    void testInvokeOnClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
+    {
+        onClose(c, hdl);
+    }
+
+    void testInvokeOnFail(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
+    {
+        onFail(c, hdl);
+    }
+#endif
+
 private:
     void start();
     void startMessageWorker();

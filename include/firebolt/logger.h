@@ -20,6 +20,7 @@
 
 #include "firebolt/transport_export.h"
 #include "firebolt/types.h"
+#include <atomic>
 #include <stdint.h>
 #include <string>
 
@@ -38,14 +39,19 @@ public:
 
 public:
     static void setLogLevel(LogLevel logLevel);
+    static LogLevel resolveLogLevelFromEnvironment(LogLevel defaultLevel);
     static void setFormat(bool addTs, bool addLocation, bool addFunction, bool addThreadId);
     static void log(LogLevel logLevel, const std::string& module, const std::string file, const std::string function,
                     const uint16_t line, const char* format, ...) __attribute__((format(printf, 6, 7)));
 
-    static bool isLogLevelEnabled(LogLevel logLevel) { return logLevel <= _logLevel; }
+    static bool isLogLevelEnabled(LogLevel logLevel)
+    {
+        return _loggingEnabled.load() && (logLevel <= _logLevel.load());
+    }
 
 private:
-    static LogLevel _logLevel;
+    static std::atomic<LogLevel> _logLevel;
+    static std::atomic<bool> _loggingEnabled;
     static bool formatter_addTs;
     static bool formatter_addThreadId;
     static bool formatter_addLocation;
@@ -53,10 +59,18 @@ private:
 };
 } // namespace Firebolt
 
+// FIREBOLT_LOG macro — logs a message at the specified level to the configured backend.
+// NOTE: The variadic format arguments are only evaluated if the log level is enabled. Callers must not rely
+// on argument side effects (e.g., function calls with state mutation) in disabled levels,
+// as these will not be executed.
 #define FIREBOLT_LOG(level, module, ...)                                                                               \
     do                                                                                                                 \
     {                                                                                                                  \
-        Firebolt::Logger::log(level, module, __FILE__, __func__, __LINE__, __VA_ARGS__);                               \
+        const auto _fb_level = (level);                                                                                \
+        if (Firebolt::Logger::isLogLevelEnabled(_fb_level))                                                            \
+        {                                                                                                              \
+            Firebolt::Logger::log(_fb_level, module, __FILE__, __func__, __LINE__, __VA_ARGS__);                       \
+        }                                                                                                              \
     } while (0)
 #define FIREBOLT_LOG_ERROR(module, ...)                                                                                \
     do                                                                                                                 \
