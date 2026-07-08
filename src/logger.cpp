@@ -157,7 +157,8 @@ std::string resolveLogFilePathFromEnvironment()
     }
 
     // Reconstruct the full path from the now-canonical parent and the filename.
-    const std::string canonicalPath = std::string(canonicalParent) + "/" + filename;
+    // Non-const so NRVO/implicit move applies on return (Coverity COPY_INSTEAD_OF_MOVE).
+    std::string canonicalPath = std::string(canonicalParent) + "/" + filename;
     if (canonicalPath.size() >= static_cast<std::size_t>(PATH_MAX))
     {
         return "";
