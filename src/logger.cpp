@@ -59,10 +59,13 @@ std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
     {
         return std::nullopt;
     }
+    if (std::strlen(raw) >= sizeof(buffer))
+    {
+        return std::nullopt;
+    }
 
     std::strncpy(buffer, raw, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
-
     const std::string value = toLowerCopy(buffer);
     if (value == "error" || value == "0")
     {
