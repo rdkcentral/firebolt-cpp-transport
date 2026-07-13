@@ -721,6 +721,62 @@ TEST_F(GatewayUTest, ConnectAlreadyConnected)
 }
 
 // ---------------------------------------------------------------------------
+// Test name: GatewayUTest.ConnectAlreadyConnectedPreservesOriginalListener
+// Covers: src/gateway.cpp listener restoration on AlreadyConnected path
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, ConnectAlreadyConnectedPreservesOriginalListener)
+{
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+
+    std::promise<void> connectedPromise;
+    auto connectedFuture = connectedPromise.get_future();
+    std::atomic<bool> connectedSet{false};
+    std::atomic<int> firstDisconnectedEvents{0};
+    std::atomic<int> secondDisconnectedEvents{0};
+
+    Firebolt::Error err = gateway.connect(
+        getTestConfig(),
+        [&](bool connected, const Firebolt::Error&)
+        {
+            if (connected)
+            {
+                bool expected = false;
+                if (connectedSet.compare_exchange_strong(expected, true))
+                {
+                    connectedPromise.set_value();
+                }
+            }
+            else
+            {
+                ++firstDisconnectedEvents;
+            }
+        });
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectedFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+
+    err = gateway.connect(
+        getTestConfig(),
+        [&](bool connected, const Firebolt::Error&)
+        {
+            if (!connected)
+            {
+                ++secondDisconnectedEvents;
+            }
+        });
+    EXPECT_EQ(err, Firebolt::Error::AlreadyConnected);
+
+    gateway.disconnect();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    EXPECT_GE(firstDisconnectedEvents.load(), 1);
+    EXPECT_EQ(secondDisconnectedEvents.load(), 0);
+}
+
+// ---------------------------------------------------------------------------
 // Test name: GatewayUTest.DuplicateSubscribeToSameEvent
 // Covers: src/gateway.cpp:server.subscribe returns Error::General on dup usercb
 // Scenario type: failure

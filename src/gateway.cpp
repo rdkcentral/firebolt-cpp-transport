@@ -537,6 +537,7 @@ public:
         Firebolt::Logger::setFormat(cfg.log.format.ts, cfg.log.format.location, cfg.log.format.function,
                                     cfg.log.format.thread);
 
+        ConnectionChangeCallback previousConnectionChangeListener = connectionChangeListener;
         connectionChangeListener = onConnectionChange;
 
         runtime_waitTime_ms = cfg.waitTime_ms;
@@ -588,6 +589,11 @@ public:
 
         if (status != Firebolt::Error::None)
         {
+            if (status == Firebolt::Error::AlreadyConnected)
+            {
+                // Keep the original listener bound to the active connection.
+                connectionChangeListener = previousConnectionChangeListener;
+            }
             FIREBOLT_LOG_ERROR("Gateway", "[connect] transport connect failed status=%d", static_cast<int>(status));
             return status;
         }
