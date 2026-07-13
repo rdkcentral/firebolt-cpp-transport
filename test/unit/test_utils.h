@@ -24,6 +24,29 @@
 #include <thread>
 #include <websocketpp/config/asio_no_tls.hpp>
 
+class ScopedThreadJoin
+{
+public:
+    explicit ScopedThreadJoin(std::thread& t)
+        : thread_(t)
+    {
+    }
+
+    ~ScopedThreadJoin()
+    {
+        if (thread_.joinable())
+        {
+            thread_.join();
+        }
+    }
+
+    ScopedThreadJoin(const ScopedThreadJoin&) = delete;
+    ScopedThreadJoin& operator=(const ScopedThreadJoin&) = delete;
+
+private:
+    std::thread& thread_;
+};
+
 inline uint16_t reserveUnusedLoopbackPort()
 {
     websocketpp::lib::asio::io_service io;

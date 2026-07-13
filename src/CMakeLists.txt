@@ -58,6 +58,8 @@ find_package(websocketpp CONFIG REQUIRED)
 find_package(Boost CONFIG REQUIRED COMPONENTS system)
 
 include(CheckCXXSourceCompiles)
+get_target_property(WEBSOCKETPP_INTERFACE_INCLUDES websocketpp::websocketpp INTERFACE_INCLUDE_DIRECTORIES)
+set(CMAKE_REQUIRED_INCLUDES ${WEBSOCKETPP_INTERFACE_INCLUDES})
 check_cxx_source_compiles(
 "#include <websocketpp/version.hpp>
 int main() {
@@ -68,6 +70,7 @@ int main() {
 }"
     WEBSOCKETPP_EXPECTED_VERSION_OK
 )
+unset(CMAKE_REQUIRED_INCLUDES)
 if(NOT WEBSOCKETPP_EXPECTED_VERSION_OK)
     message(FATAL_ERROR "Unsupported websocketpp version detected. This project currently vendors an endpoint.hpp "
                         "override validated against websocketpp 0.8.2. Please align the system websocketpp version "

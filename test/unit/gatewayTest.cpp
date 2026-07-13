@@ -228,6 +228,7 @@ TEST_F(GatewayUTest, ConnectRetriesUntilServerComesUp)
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
             this->startServer();
         });
+    ScopedThreadJoin delayedServerJoin(delayedServer);
 
     Firebolt::Error err = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& connectErr)
                                           { onConnectionChange(connected, connectErr); });
@@ -238,7 +239,6 @@ TEST_F(GatewayUTest, ConnectRetriesUntilServerComesUp)
     EXPECT_TRUE(connectionFuture.get());
 
     gateway.disconnect();
-    delayedServer.join();
 }
 
 TEST_F(GatewayUTest, ConnectRetriesExhaustAndReportsDisconnectedOnce)
@@ -312,6 +312,7 @@ TEST_F(GatewayUTest, DisconnectInterruptsReconnectDelayPromptly)
                 connectResultPromise.set_value(err);
             }
         });
+    ScopedThreadJoin connectThreadJoin(connectThread);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -331,8 +332,6 @@ TEST_F(GatewayUTest, DisconnectInterruptsReconnectDelayPromptly)
     EXPECT_NE(connectErr, Firebolt::Error::None);
     EXPECT_LT(connectElapsedMs.load(), 2000)
         << "connect() took " << connectElapsedMs.load() << " ms and likely waited out reconnect_delay_ms";
-
-    connectThread.join();
 }
 
 TEST_F(GatewayUTest, RetryThenSuccessEmitsOnlyFinalConnectedCallback)
@@ -355,6 +354,7 @@ TEST_F(GatewayUTest, RetryThenSuccessEmitsOnlyFinalConnectedCallback)
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
             this->startServer();
         });
+    ScopedThreadJoin delayedServerJoin(delayedServer);
 
     Firebolt::Error err = gateway.connect(cfg,
                                           [&](bool connected, const Firebolt::Error&)
@@ -382,7 +382,6 @@ TEST_F(GatewayUTest, RetryThenSuccessEmitsOnlyFinalConnectedCallback)
     EXPECT_EQ(disconnectedCount.load(), 0) << "Retry success path should not emit transient disconnected callbacks";
 
     gateway.disconnect();
-    delayedServer.join();
 }
 
 TEST_F(GatewayUTest, RetryExhaustionEmitsOnlyFinalDisconnectedCallback)
