@@ -281,6 +281,57 @@ TEST_F(GatewayUTest, ConnectRetriesExhaustAndReportsDisconnectedOnce)
     gateway.disconnect();
 }
 
+TEST_F(GatewayUTest, DisconnectInterruptsReconnectDelayPromptly)
+{
+    IGateway& gateway = GetGatewayInstance();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.wsUrl = "ws://localhost:49196"; // intentionally no server
+    cfg.reconnect_max_attempts = 50;
+    cfg.reconnect_delay_ms = 5000; // large delay to verify interrupt behavior
+
+    std::promise<Firebolt::Error> connectResultPromise;
+    auto connectResultFuture = connectResultPromise.get_future();
+    std::atomic<bool> promiseSet{false};
+    std::atomic<long long> connectElapsedMs{0};
+
+    std::thread connectThread([&]()
+                              {
+                                  auto t0 = std::chrono::steady_clock::now();
+                                  Firebolt::Error err = gateway.connect(cfg, [](bool, const Firebolt::Error&) {});
+                                  connectElapsedMs.store(
+                                      std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now() - t0)
+                                          .count());
+                                  bool expected = false;
+                                  if (promiseSet.compare_exchange_strong(expected, true))
+                                  {
+                                      connectResultPromise.set_value(err);
+                                  }
+                              });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    auto t0Disconnect = std::chrono::steady_clock::now();
+    Firebolt::Error disconnectErr = gateway.disconnect();
+    auto disconnectElapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0Disconnect);
+
+    ASSERT_EQ(disconnectErr, Firebolt::Error::None);
+    EXPECT_LT(disconnectElapsed.count(), 500)
+        << "disconnect() took " << disconnectElapsed.count() << " ms while reconnect delay was active";
+
+    auto status = connectResultFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready) << "connect() did not return promptly after disconnect()";
+
+    Firebolt::Error connectErr = connectResultFuture.get();
+    EXPECT_NE(connectErr, Firebolt::Error::None);
+    EXPECT_LT(connectElapsedMs.load(), 2000)
+        << "connect() took " << connectElapsedMs.load() << " ms and likely waited out reconnect_delay_ms";
+
+    connectThread.join();
+}
+
 TEST_F(GatewayUTest, Request)
 {
     IGateway& gateway = connectAndWait();
