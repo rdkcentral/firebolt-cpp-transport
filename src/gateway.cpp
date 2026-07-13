@@ -507,7 +507,7 @@ private:
     bool connectResultReady{false};
     bool connectResultOk{false};
     Firebolt::Error connectResultError{Firebolt::Error::None};
-    std::atomic<bool> disconnectRequested_{false};
+    bool disconnectRequested_{false};
 
     std::mutex connectionLog_mtx;
     bool hasLastConnectionLog{false};
@@ -639,7 +639,10 @@ public:
             if (fPos != std::string::npos)
                 safeConnectUrl = safeConnectUrl.substr(0, fPos);
         }
-        disconnectRequested_ = false;
+        {
+            std::lock_guard<std::mutex> lk(connectResultMtx);
+            disconnectRequested_ = false;
+        }
 
         Firebolt::Error status = Firebolt::Error::None;
         if (cfg.reconnect_max_attempts == 0)
@@ -673,7 +676,12 @@ public:
             Firebolt::Error finalConnectError = Firebolt::Error::NotConnected;
             for (unsigned attempt = 1; attempt <= maxAttempts; ++attempt)
             {
-                if (disconnectRequested_.load())
+                bool disconnectRequested = false;
+                {
+                    std::lock_guard<std::mutex> lk(connectResultMtx);
+                    disconnectRequested = disconnectRequested_;
+                }
+                if (disconnectRequested)
                 {
                     break;
                 }
@@ -684,8 +692,8 @@ public:
                                         cfg.reconnect_delay_ms);
                     std::unique_lock<std::mutex> lk(connectResultMtx);
                     connectResultCv.wait_for(lk, std::chrono::milliseconds(cfg.reconnect_delay_ms),
-                                             [this]() { return disconnectRequested_.load(); });
-                    if (disconnectRequested_.load())
+                                             [this]() { return disconnectRequested_; });
+                    if (disconnectRequested_)
                     {
                         break;
                     }
@@ -724,15 +732,14 @@ public:
                 {
                     constexpr auto kConnectTimeout = std::chrono::seconds(10);
                     std::unique_lock<std::mutex> lk(connectResultMtx);
-                    waitSatisfied =
-                        connectResultCv.wait_for(lk, kConnectTimeout, [this]()
-                                                 { return connectResultReady || disconnectRequested_.load(); });
+                    waitSatisfied = connectResultCv.wait_for(lk, kConnectTimeout, [this]()
+                                                             { return connectResultReady || disconnectRequested_; });
                     attemptReady = connectResultReady;
                     attemptOk = connectResultOk;
                     attemptError = connectResultError;
                 }
 
-                if (disconnectRequested_.load())
+                if (disconnectRequested_)
                 {
                     status = Firebolt::Error::NotConnected;
                     finalConnectError = status;
@@ -818,7 +825,10 @@ public:
 
     virtual Firebolt::Error disconnect() override
     {
-        disconnectRequested_ = true;
+        {
+            std::lock_guard<std::mutex> lk(connectResultMtx);
+            disconnectRequested_ = true;
+        }
         connectResultCv.notify_all();
         FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] transport.disconnect() start");
         auto t0_disc = std::chrono::steady_clock::now();
