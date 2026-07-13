@@ -221,11 +221,12 @@ TEST_F(GatewayUTest, ConnectRetriesUntilServerComesUp)
     cfg.reconnect_max_attempts = 10;
     cfg.reconnect_delay_ms = 100;
 
-    std::thread delayedServer([this]()
-                              {
-                                  std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                                  this->startServer();
-                              });
+    std::thread delayedServer(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            this->startServer();
+        });
 
     Firebolt::Error err = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& connectErr)
                                           { onConnectionChange(connected, connectErr); });
@@ -253,20 +254,19 @@ TEST_F(GatewayUTest, ConnectRetriesExhaustAndReportsDisconnectedOnce)
     std::atomic<int> disconnectedCount{0};
     std::atomic<bool> disconnectedSet{false};
 
-    Firebolt::Error err = gateway.connect(
-        cfg,
-        [&](bool connected, const Firebolt::Error& connectErr)
-        {
-            if (!connected)
-            {
-                ++disconnectedCount;
-                bool expected = false;
-                if (disconnectedSet.compare_exchange_strong(expected, true))
-                {
-                    disconnectedPromise.set_value(connectErr);
-                }
-            }
-        });
+    Firebolt::Error err = gateway.connect(cfg,
+                                          [&](bool connected, const Firebolt::Error& connectErr)
+                                          {
+                                              if (!connected)
+                                              {
+                                                  ++disconnectedCount;
+                                                  bool expected = false;
+                                                  if (disconnectedSet.compare_exchange_strong(expected, true))
+                                                  {
+                                                      disconnectedPromise.set_value(connectErr);
+                                                  }
+                                              }
+                                          });
 
     EXPECT_NE(err, Firebolt::Error::None);
 
@@ -275,8 +275,7 @@ TEST_F(GatewayUTest, ConnectRetriesExhaustAndReportsDisconnectedOnce)
 
     Firebolt::Error callbackError = disconnectedFuture.get();
     EXPECT_NE(callbackError, Firebolt::Error::None);
-    EXPECT_EQ(disconnectedCount.load(), 1)
-        << "Expected only final disconnected callback after retries exhausted";
+    EXPECT_EQ(disconnectedCount.load(), 1) << "Expected only final disconnected callback after retries exhausted";
 
     gateway.disconnect();
 }
@@ -295,20 +294,19 @@ TEST_F(GatewayUTest, DisconnectInterruptsReconnectDelayPromptly)
     std::atomic<bool> promiseSet{false};
     std::atomic<long long> connectElapsedMs{0};
 
-    std::thread connectThread([&]()
-                              {
-                                  auto t0 = std::chrono::steady_clock::now();
-                                  Firebolt::Error err = gateway.connect(cfg, [](bool, const Firebolt::Error&) {});
-                                  connectElapsedMs.store(
-                                      std::chrono::duration_cast<std::chrono::milliseconds>(
-                                          std::chrono::steady_clock::now() - t0)
-                                          .count());
-                                  bool expected = false;
-                                  if (promiseSet.compare_exchange_strong(expected, true))
-                                  {
-                                      connectResultPromise.set_value(err);
-                                  }
-                              });
+    std::thread connectThread(
+        [&]()
+        {
+            auto t0 = std::chrono::steady_clock::now();
+            Firebolt::Error err = gateway.connect(cfg, [](bool, const Firebolt::Error&) {});
+            connectElapsedMs.store(
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+            bool expected = false;
+            if (promiseSet.compare_exchange_strong(expected, true))
+            {
+                connectResultPromise.set_value(err);
+            }
+        });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -346,39 +344,37 @@ TEST_F(GatewayUTest, RetryThenSuccessEmitsOnlyFinalConnectedCallback)
     auto connectedFuture = connectedPromise.get_future();
     std::atomic<bool> connectedSet{false};
 
-    std::thread delayedServer([this]()
-                              {
-                                  std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                                  this->startServer();
-                              });
-
-    Firebolt::Error err = gateway.connect(
-        cfg,
-        [&](bool connected, const Firebolt::Error&)
+    std::thread delayedServer(
+        [this]()
         {
-            if (connected)
-            {
-                ++connectedCount;
-                bool expected = false;
-                if (connectedSet.compare_exchange_strong(expected, true))
-                {
-                    connectedPromise.set_value();
-                }
-            }
-            else
-            {
-                ++disconnectedCount;
-            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            this->startServer();
         });
+
+    Firebolt::Error err = gateway.connect(cfg,
+                                          [&](bool connected, const Firebolt::Error&)
+                                          {
+                                              if (connected)
+                                              {
+                                                  ++connectedCount;
+                                                  bool expected = false;
+                                                  if (connectedSet.compare_exchange_strong(expected, true))
+                                                  {
+                                                      connectedPromise.set_value();
+                                                  }
+                                              }
+                                              else
+                                              {
+                                                  ++disconnectedCount;
+                                              }
+                                          });
     ASSERT_EQ(err, Firebolt::Error::None);
 
     auto status = connectedFuture.wait_for(std::chrono::seconds(3));
     ASSERT_EQ(status, std::future_status::ready) << "Connection timed out after retries";
 
-    EXPECT_EQ(connectedCount.load(), 1)
-        << "Retry success path should emit only one final connected callback";
-    EXPECT_EQ(disconnectedCount.load(), 0)
-        << "Retry success path should not emit transient disconnected callbacks";
+    EXPECT_EQ(connectedCount.load(), 1) << "Retry success path should emit only one final connected callback";
+    EXPECT_EQ(disconnectedCount.load(), 0) << "Retry success path should not emit transient disconnected callbacks";
 
     gateway.disconnect();
     delayedServer.join();
@@ -399,24 +395,23 @@ TEST_F(GatewayUTest, RetryExhaustionEmitsOnlyFinalDisconnectedCallback)
     auto disconnectedFuture = disconnectedPromise.get_future();
     std::atomic<bool> disconnectedSet{false};
 
-    Firebolt::Error err = gateway.connect(
-        cfg,
-        [&](bool connected, const Firebolt::Error& cbErr)
-        {
-            if (connected)
-            {
-                ++connectedCount;
-            }
-            else
-            {
-                ++disconnectedCount;
-                bool expected = false;
-                if (disconnectedSet.compare_exchange_strong(expected, true))
-                {
-                    disconnectedPromise.set_value(cbErr);
-                }
-            }
-        });
+    Firebolt::Error err = gateway.connect(cfg,
+                                          [&](bool connected, const Firebolt::Error& cbErr)
+                                          {
+                                              if (connected)
+                                              {
+                                                  ++connectedCount;
+                                              }
+                                              else
+                                              {
+                                                  ++disconnectedCount;
+                                                  bool expected = false;
+                                                  if (disconnectedSet.compare_exchange_strong(expected, true))
+                                                  {
+                                                      disconnectedPromise.set_value(cbErr);
+                                                  }
+                                              }
+                                          });
 
     EXPECT_NE(err, Firebolt::Error::None);
 
@@ -425,10 +420,8 @@ TEST_F(GatewayUTest, RetryExhaustionEmitsOnlyFinalDisconnectedCallback)
 
     Firebolt::Error cbErr = disconnectedFuture.get();
     EXPECT_NE(cbErr, Firebolt::Error::None);
-    EXPECT_EQ(connectedCount.load(), 0)
-        << "Retry exhaustion path should not emit connected callbacks";
-    EXPECT_EQ(disconnectedCount.load(), 1)
-        << "Retry exhaustion path should emit only one final disconnected callback";
+    EXPECT_EQ(connectedCount.load(), 0) << "Retry exhaustion path should not emit connected callbacks";
+    EXPECT_EQ(disconnectedCount.load(), 1) << "Retry exhaustion path should emit only one final disconnected callback";
 
     gateway.disconnect();
 }
@@ -957,37 +950,35 @@ TEST_F(GatewayUTest, ConnectAlreadyConnectedPreservesOriginalListener)
     std::atomic<int> firstDisconnectedEvents{0};
     std::atomic<int> secondDisconnectedEvents{0};
 
-    Firebolt::Error err = gateway.connect(
-        getTestConfig(),
-        [&](bool connected, const Firebolt::Error&)
-        {
-            if (connected)
-            {
-                bool expected = false;
-                if (connectedSet.compare_exchange_strong(expected, true))
-                {
-                    connectedPromise.set_value();
-                }
-            }
-            else
-            {
-                ++firstDisconnectedEvents;
-            }
-        });
+    Firebolt::Error err = gateway.connect(getTestConfig(),
+                                          [&](bool connected, const Firebolt::Error&)
+                                          {
+                                              if (connected)
+                                              {
+                                                  bool expected = false;
+                                                  if (connectedSet.compare_exchange_strong(expected, true))
+                                                  {
+                                                      connectedPromise.set_value();
+                                                  }
+                                              }
+                                              else
+                                              {
+                                                  ++firstDisconnectedEvents;
+                                              }
+                                          });
     ASSERT_EQ(err, Firebolt::Error::None);
 
     auto status = connectedFuture.wait_for(std::chrono::seconds(2));
     ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
 
-    err = gateway.connect(
-        getTestConfig(),
-        [&](bool connected, const Firebolt::Error&)
-        {
-            if (!connected)
-            {
-                ++secondDisconnectedEvents;
-            }
-        });
+    err = gateway.connect(getTestConfig(),
+                          [&](bool connected, const Firebolt::Error&)
+                          {
+                              if (!connected)
+                              {
+                                  ++secondDisconnectedEvents;
+                              }
+                          });
     EXPECT_EQ(err, Firebolt::Error::AlreadyConnected);
 
     gateway.disconnect();
@@ -1013,23 +1004,22 @@ TEST_F(GatewayUTest, ConnectAlreadyConnectedRepeatedPreservesOriginalListener)
     std::atomic<int> firstDisconnectedEvents{0};
     std::atomic<int> secondDisconnectedEvents{0};
 
-    Firebolt::Error err = gateway.connect(
-        getTestConfig(),
-        [&](bool connected, const Firebolt::Error&)
-        {
-            if (connected)
-            {
-                bool expected = false;
-                if (connectedSet.compare_exchange_strong(expected, true))
-                {
-                    connectedPromise.set_value();
-                }
-            }
-            else
-            {
-                ++firstDisconnectedEvents;
-            }
-        });
+    Firebolt::Error err = gateway.connect(getTestConfig(),
+                                          [&](bool connected, const Firebolt::Error&)
+                                          {
+                                              if (connected)
+                                              {
+                                                  bool expected = false;
+                                                  if (connectedSet.compare_exchange_strong(expected, true))
+                                                  {
+                                                      connectedPromise.set_value();
+                                                  }
+                                              }
+                                              else
+                                              {
+                                                  ++firstDisconnectedEvents;
+                                              }
+                                          });
     ASSERT_EQ(err, Firebolt::Error::None);
 
     auto status = connectedFuture.wait_for(std::chrono::seconds(2));
@@ -1037,15 +1027,14 @@ TEST_F(GatewayUTest, ConnectAlreadyConnectedRepeatedPreservesOriginalListener)
 
     for (int i = 0; i < 5; ++i)
     {
-        err = gateway.connect(
-            getTestConfig(),
-            [&](bool connected, const Firebolt::Error&)
-            {
-                if (!connected)
-                {
-                    ++secondDisconnectedEvents;
-                }
-            });
+        err = gateway.connect(getTestConfig(),
+                              [&](bool connected, const Firebolt::Error&)
+                              {
+                                  if (!connected)
+                                  {
+                                      ++secondDisconnectedEvents;
+                                  }
+                              });
         EXPECT_EQ(err, Firebolt::Error::AlreadyConnected);
     }
 
@@ -1073,9 +1062,8 @@ TEST_F(GatewayUTest, DisconnectWakesWatchdogImmediately)
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
 
     ASSERT_EQ(err, Firebolt::Error::None);
-    EXPECT_LT(elapsed.count(), 200)
-        << "disconnect() took " << elapsed.count()
-        << " ms, watchdog wake on shutdown may be missing";
+    EXPECT_LT(elapsed.count(), 200) << "disconnect() took " << elapsed.count()
+                                    << " ms, watchdog wake on shutdown may be missing";
 }
 
 // ---------------------------------------------------------------------------
@@ -1099,9 +1087,7 @@ TEST_F(GatewayUTest, DisconnectDuringInFlightConnectAllowsReconnect)
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
 
     ASSERT_EQ(err, Firebolt::Error::None);
-    EXPECT_LT(elapsed.count(), 500)
-        << "disconnect() took " << elapsed.count()
-        << " ms while connect was in flight";
+    EXPECT_LT(elapsed.count(), 500) << "disconnect() took " << elapsed.count() << " ms while connect was in flight";
 
     // Validate gateway remains healthy by reconnecting to a live server.
     startServer();
@@ -1110,19 +1096,18 @@ TEST_F(GatewayUTest, DisconnectDuringInFlightConnectAllowsReconnect)
     std::atomic<bool> connectedSet{false};
 
     Firebolt::Config goodCfg = getTestConfig();
-    err = gateway.connect(
-        goodCfg,
-        [&](bool connected, const Firebolt::Error&)
-        {
-            if (connected)
-            {
-                bool expected = false;
-                if (connectedSet.compare_exchange_strong(expected, true))
-                {
-                    connectedPromise.set_value();
-                }
-            }
-        });
+    err = gateway.connect(goodCfg,
+                          [&](bool connected, const Firebolt::Error&)
+                          {
+                              if (connected)
+                              {
+                                  bool expected = false;
+                                  if (connectedSet.compare_exchange_strong(expected, true))
+                                  {
+                                      connectedPromise.set_value();
+                                  }
+                              }
+                          });
     ASSERT_EQ(err, Firebolt::Error::None);
 
     auto status = connectedFuture.wait_for(std::chrono::seconds(2));

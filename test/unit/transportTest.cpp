@@ -1141,8 +1141,9 @@ protected:
                 {
                 }
             });
-        m_server.listen(websocketpp::lib::asio::ip::tcp::endpoint(
-            websocketpp::lib::asio::ip::address::from_string("127.0.0.1"), 9005));
+        m_server.listen(
+            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("127.0.0.1"),
+                                                      9005));
         m_server.start_accept();
         m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
     }
@@ -1179,9 +1180,8 @@ TEST_F(TransportNumericIPUTest, ConnectViaNumericLoopbackIP)
     ASSERT_EQ(err, Firebolt::Error::None);
 
     auto status = connectionFuture.wait_for(std::chrono::milliseconds(500));
-    ASSERT_EQ(status, std::future_status::ready)
-        << "Connection to ws://127.0.0.1 timed out -- "
-           "AI_ADDRCONFIG bypass may be missing (see RDKEMW-16441)";
+    ASSERT_EQ(status, std::future_status::ready) << "Connection to ws://127.0.0.1 timed out -- "
+                                                    "AI_ADDRCONFIG bypass may be missing (see RDKEMW-16441)";
     EXPECT_TRUE(connectionFuture.get());
 
     err = transport.disconnect();
@@ -1253,10 +1253,10 @@ TEST(TransportNumericIPResolverTest, ConnectFailureViaNumericIP)
             }
         }
     };
-    auto onMessage = [](const nlohmann::json& /*msg*/) { FAIL() << "Should not receive a message on a failed connection"; };
+    auto onMessage = [](const nlohmann::json& /*msg*/)
+    { FAIL() << "Should not receive a message on a failed connection"; };
 
-    ASSERT_EQ(transport.connect("ws://127.0.0.1:49152", onMessage, onConnectionChange),
-              Firebolt::Error::None);
+    ASSERT_EQ(transport.connect("ws://127.0.0.1:49152", onMessage, onConnectionChange), Firebolt::Error::None);
 
     ASSERT_EQ(connectedFuture.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
         << "onConnectionChange callback timed out";
@@ -1281,8 +1281,8 @@ protected:
         m_server.init_asio();
         m_server.set_reuse_addr(true);
         m_server.clear_access_channels(websocketpp::log::alevel::all);
-        m_server.listen(websocketpp::lib::asio::ip::tcp::endpoint(
-            websocketpp::lib::asio::ip::address::from_string("::1"), 9006));
+        m_server.listen(
+            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("::1"), 9006));
         m_server.start_accept();
         m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
     }

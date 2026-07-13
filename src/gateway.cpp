@@ -518,8 +518,8 @@ public:
         : client(*this),
           server(),
           watchdogRunning(false),
-            legacyRPCv1(false),
-            disconnectRequested_(false)
+          legacyRPCv1(false),
+          disconnectRequested_(false)
     {
     }
 
@@ -630,9 +630,8 @@ public:
                     FIREBOLT_LOG_NOTICE("Gateway", "Reconnect attempt %u/%u in %u ms ...", attempt, maxAttempts,
                                         cfg.reconnect_delay_ms);
                     std::unique_lock<std::mutex> lk(connectResultMtx);
-                    connectResultCv.wait_for(
-                        lk, std::chrono::milliseconds(cfg.reconnect_delay_ms),
-                        [this]() { return disconnectRequested_.load(); });
+                    connectResultCv.wait_for(lk, std::chrono::milliseconds(cfg.reconnect_delay_ms),
+                                             [this]() { return disconnectRequested_.load(); });
                     if (disconnectRequested_.load())
                     {
                         break;
@@ -666,9 +665,8 @@ public:
                 {
                     constexpr auto kConnectTimeout = std::chrono::seconds(10);
                     std::unique_lock<std::mutex> lk(connectResultMtx);
-                    connectResultCv.wait_for(
-                        lk, kConnectTimeout,
-                        [this]() { return connectResultReady || disconnectRequested_.load(); });
+                    connectResultCv.wait_for(lk, kConnectTimeout,
+                                             [this]() { return connectResultReady || disconnectRequested_.load(); });
                 }
 
                 if (disconnectRequested_.load())
@@ -683,14 +681,14 @@ public:
                     break;
                 }
 
-                status = (connectResultError == Firebolt::Error::None) ? Firebolt::Error::NotConnected : connectResultError;
+                status = (connectResultError == Firebolt::Error::None) ? Firebolt::Error::NotConnected
+                                                                       : connectResultError;
             }
 
             connectionChangeListener = onConnectionChange;
             if (status != Firebolt::Error::None)
             {
-                onConnectionChange(false,
-                                   (connectResultError == Firebolt::Error::None) ? status : connectResultError);
+                onConnectionChange(false, (connectResultError == Firebolt::Error::None) ? status : connectResultError);
             }
             else
             {
