@@ -16,7 +16,8 @@ RUN="docker run --rm -v $SCRIPT_DIR:/workspace $IMAGE"
 # Configure if no cache or if the cache was made from a different source path
 mkdir -p "$SCRIPT_DIR/build-dev"
 cached_src=$($RUN bash -c "grep '^CMAKE_HOME_DIRECTORY' build-dev/CMakeCache.txt 2>/dev/null | cut -d= -f2" || true)
-if [[ "$cached_src" != "/workspace" ]]; then
+cached_enable_tests=$($RUN bash -c "grep '^ENABLE_TESTS:BOOL=' build-dev/CMakeCache.txt 2>/dev/null | cut -d= -f2" || true)
+if [[ "$cached_src" != "/workspace" || "$cached_enable_tests" != "ON" ]]; then
     echo "Configuring..."
     $RUN cmake -B build-dev -S . -DCMAKE_BUILD_TYPE=Debug -DENABLE_TESTS=ON
 fi
@@ -25,6 +26,10 @@ echo "Building..."
 $RUN cmake --build build-dev --parallel
 
 echo "Testing..."
+if ! $RUN test -d build-dev/test; then
+    echo "error: build-dev/test was not generated. Re-run configure with -DENABLE_TESTS=ON." >&2
+    exit 1
+fi
 $RUN ctest --test-dir build-dev/test --output-on-failure
 
 if [[ "${ENABLE_COVERAGE:-0}" == "1" ]]; then
