@@ -491,6 +491,8 @@ private:
     Server server;
     std::thread watchdogThread;
     std::atomic<bool> watchdogRunning;
+    std::mutex watchdogMtx;
+    std::condition_variable watchdogCv;
     bool legacyRPCv1;
 
     std::map<MessageID, std::string> rpcv1_eventMap;
@@ -517,6 +519,7 @@ public:
         if (watchdogRunning)
         {
             watchdogRunning = false;
+            watchdogCv.notify_one();
             if (watchdogThread.joinable())
             {
                 watchdogThread.join();
@@ -597,7 +600,10 @@ public:
                 {
                     while (watchdogRunning)
                     {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(watchdog_interval_ms));
+                        std::unique_lock<std::mutex> lk(watchdogMtx);
+                        watchdogCv.wait_for(lk, std::chrono::milliseconds(watchdog_interval_ms));
+                        if (!watchdogRunning)
+                            break;
                         try
                         {
                             client.checkPromises();
@@ -634,6 +640,7 @@ public:
         }
         if (watchdogRunning.exchange(false))
         {
+            watchdogCv.notify_one();
             FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] waiting for watchdog thread join...");
             auto t0_wdog = std::chrono::steady_clock::now();
             if (watchdogThread.joinable())
