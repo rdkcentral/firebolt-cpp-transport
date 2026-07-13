@@ -1432,6 +1432,33 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
 }
 
 // ---------------------------------------------------------------------------
+// Test name: GatewayUTest.RequestDuringConnectingReturnsNotConnected
+// Covers: request/send path while transport is in Connecting state
+// Scenario type: regression
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, RequestDuringConnectingReturnsNotConnected)
+{
+    // Use an unroutable destination so connect() enters async Connecting state.
+    IGateway& gateway = GetGatewayInstance();
+    Firebolt::Config cfg = getTestConfig();
+    cfg.wsUrl = "ws://203.0.113.1:65530";
+
+    Firebolt::Error connectErr = gateway.connect(cfg, [](bool, const Firebolt::Error&) {});
+    ASSERT_EQ(connectErr, Firebolt::Error::None);
+
+    auto future = gateway.request("test.method", {{"k", "v"}});
+    auto status = future.wait_for(std::chrono::milliseconds(300));
+    ASSERT_EQ(status, std::future_status::ready) << "request() did not fail fast while connect was in-flight";
+
+    auto result = future.get();
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), Firebolt::Error::NotConnected);
+
+    Firebolt::Error disconnectErr = gateway.disconnect();
+    EXPECT_EQ(disconnectErr, Firebolt::Error::None);
+}
+
+// ---------------------------------------------------------------------------
 // Test name: GatewayUTest.LegacySubscribeFailureCleansEventMap
 // Covers: legacy RPC v1 subscribe error cleanup (erase rpcv1_eventMap)
 // Scenario type: failure
