@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <thread>
 #include <websocketpp/config/asio_no_tls.hpp>
 

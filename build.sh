@@ -64,7 +64,7 @@ if [[ -f "$_cache" ]]; then
   fi
 fi
 
-if [[ ! -f "$bdir/CMakeCache.txt" || -n "$@" ]]; then
+if [[ ! -f "$bdir/CMakeCache.txt" || $# -gt 0 ]]; then
   params+=" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
   command -v ccache >/dev/null 2>&1 && params+=" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
   cmake -B $bdir \
