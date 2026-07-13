@@ -28,6 +28,35 @@
 
 using namespace Firebolt::Transport;
 
+static uint16_t reserveUnusedLoopbackPort()
+{
+    websocketpp::lib::asio::io_service io;
+    websocketpp::lib::asio::ip::tcp::acceptor acceptor(io);
+    websocketpp::lib::asio::error_code ec;
+
+    acceptor.open(websocketpp::lib::asio::ip::tcp::v4(), ec);
+    if (ec)
+    {
+        return 0;
+    }
+    acceptor.bind(websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string(
+                                                                "127.0.0.1"),
+                                                            0),
+                  ec);
+    if (ec)
+    {
+        return 0;
+    }
+    acceptor.listen(websocketpp::lib::asio::socket_base::max_listen_connections, ec);
+    if (ec)
+    {
+        return 0;
+    }
+    uint16_t port = acceptor.local_endpoint(ec).port();
+    acceptor.close();
+    return ec ? 0 : port;
+}
+
 TEST(GatewayUrlUtilsUTest, VerifyUrls)
 {
     bool legacyRPCv1 = false;
@@ -245,7 +274,9 @@ TEST_F(GatewayUTest, ConnectRetriesExhaustAndReportsDisconnectedOnce)
     IGateway& gateway = GetGatewayInstance();
 
     Firebolt::Config cfg = getTestConfig();
-    cfg.wsUrl = "ws://localhost:49197"; // intentionally no server
+    const uint16_t unusedPort = reserveUnusedLoopbackPort();
+    ASSERT_NE(unusedPort, 0) << "Could not reserve an unused loopback port";
+    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(unusedPort); // intentionally no server
     cfg.reconnect_max_attempts = 2;
     cfg.reconnect_delay_ms = 50;
 
@@ -285,7 +316,9 @@ TEST_F(GatewayUTest, DisconnectInterruptsReconnectDelayPromptly)
     IGateway& gateway = GetGatewayInstance();
 
     Firebolt::Config cfg = getTestConfig();
-    cfg.wsUrl = "ws://localhost:49196"; // intentionally no server
+    const uint16_t unusedPort = reserveUnusedLoopbackPort();
+    ASSERT_NE(unusedPort, 0) << "Could not reserve an unused loopback port";
+    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(unusedPort); // intentionally no server
     cfg.reconnect_max_attempts = 50;
     cfg.reconnect_delay_ms = 5000; // large delay to verify interrupt behavior
 
@@ -385,7 +418,9 @@ TEST_F(GatewayUTest, RetryExhaustionEmitsOnlyFinalDisconnectedCallback)
     IGateway& gateway = GetGatewayInstance();
 
     Firebolt::Config cfg = getTestConfig();
-    cfg.wsUrl = "ws://localhost:49195"; // intentionally no server
+    const uint16_t unusedPort = reserveUnusedLoopbackPort();
+    ASSERT_NE(unusedPort, 0) << "Could not reserve an unused loopback port";
+    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(unusedPort); // intentionally no server
     cfg.reconnect_max_attempts = 3;
     cfg.reconnect_delay_ms = 50;
 

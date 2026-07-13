@@ -668,11 +668,13 @@ public:
                 bool attemptReady = false;
                 bool attemptOk = false;
                 Firebolt::Error attemptError = Firebolt::Error::None;
+                bool waitSatisfied = false;
                 {
                     constexpr auto kConnectTimeout = std::chrono::seconds(10);
                     std::unique_lock<std::mutex> lk(connectResultMtx);
-                    connectResultCv.wait_for(lk, kConnectTimeout,
-                                             [this]() { return connectResultReady || disconnectRequested_.load(); });
+                    waitSatisfied =
+                        connectResultCv.wait_for(lk, kConnectTimeout, [this]()
+                                                 { return connectResultReady || disconnectRequested_.load(); });
                     attemptReady = connectResultReady;
                     attemptOk = connectResultOk;
                     attemptError = connectResultError;
@@ -690,6 +692,17 @@ public:
                     status = Firebolt::Error::None;
                     finalConnectError = Firebolt::Error::None;
                     break;
+                }
+
+                if (!waitSatisfied && !attemptReady)
+                {
+                    // Prevent overlapping attempts when an async connect never reports a terminal callback.
+                    FIREBOLT_LOG_WARNING("Gateway", "[connect] connect attempt timed out waiting for callback; "
+                                                    "forcing disconnect before retry");
+                    transport.disconnect();
+                    status = Firebolt::Error::Timedout;
+                    finalConnectError = status;
+                    continue;
                 }
 
                 status = (attemptError == Firebolt::Error::None) ? Firebolt::Error::NotConnected : attemptError;
