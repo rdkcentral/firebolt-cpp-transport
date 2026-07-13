@@ -15,6 +15,7 @@ if [[ ! -x "$BINARY" ]]; then
 fi
 
 REL_BIN="${BINARY#"$REPO_ROOT"/}"
+REL_LIB_DIR="$(dirname "$REL_BIN")/../src"
 
 run_in_docker() {
     if ! docker image inspect "$IMAGE" &>/dev/null; then
@@ -26,7 +27,7 @@ run_in_docker() {
         --user "$(id -u):$(id -g)" \
         -v "$REPO_ROOT:/workspace" -w /workspace \
         "$IMAGE" \
-        "./$REL_BIN" --gtest_filter="$FILTER"
+        bash -lc "export LD_LIBRARY_PATH=/workspace/$REL_LIB_DIR:\${LD_LIBRARY_PATH:-}; ./$REL_BIN --gtest_filter='$FILTER'"
 }
 
 run_with_unshare() {
@@ -34,6 +35,7 @@ run_with_unshare() {
     unshare --net bash -c "
         set -euo pipefail
         ip link set lo up
+        export LD_LIBRARY_PATH=\"$(dirname "$BINARY")/../src:\${LD_LIBRARY_PATH:-}\"
         \"$BINARY\" --gtest_filter='$FILTER'
     "
 }
