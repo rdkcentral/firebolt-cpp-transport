@@ -723,14 +723,12 @@ public:
                 std::lock_guard<std::mutex> lock(connectionChangeListenerMtx);
                 connectionChangeListener = onConnectionChange;
             }
-            if (status != Firebolt::Error::None)
-            {
-                onConnectionChange(false, finalConnectError);
-            }
-            else
-            {
-                onConnectionChange(true, Firebolt::Error::None);
-            }
+            const bool finalConnected = (status == Firebolt::Error::None);
+            const Firebolt::Error finalError = finalConnected ? Firebolt::Error::None : finalConnectError;
+            // Preserve asynchronous callback delivery in retry mode to avoid caller-thread re-entrancy.
+            std::thread([onConnectionChange, finalConnected, finalError]()
+                        { onConnectionChange(finalConnected, finalError); })
+                .detach();
         }
 
         if (status != Firebolt::Error::None)

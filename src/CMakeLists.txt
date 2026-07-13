@@ -57,6 +57,23 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(websocketpp CONFIG REQUIRED)
 find_package(Boost CONFIG REQUIRED COMPONENTS system)
 
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles(
+"#include <websocketpp/version.hpp>
+int main() {
+    static_assert(websocketpp::major_version == 0, \"Unexpected websocketpp major version\");
+    static_assert(websocketpp::minor_version == 8, \"Unexpected websocketpp minor version\");
+    static_assert(websocketpp::patch_version == 2, \"Unexpected websocketpp patch version\");
+    return 0;
+}"
+    WEBSOCKETPP_EXPECTED_VERSION_OK
+)
+if(NOT WEBSOCKETPP_EXPECTED_VERSION_OK)
+    message(FATAL_ERROR "Unsupported websocketpp version detected. This project currently vendors an endpoint.hpp "
+                        "override validated against websocketpp 0.8.2. Please align the system websocketpp version "
+                        "or refresh the vendored override.")
+endif()
+
 generate_export_header(
     ${TARGET}
     EXPORT_FILE_NAME "firebolt/transport_export.h"
