@@ -498,6 +498,14 @@ private:
     std::map<MessageID, std::string> rpcv1_eventMap;
     std::mutex rpcv1_eventMap_mtx;
 
+    // Synchronization for connect() retry mode.
+    std::mutex connectResultMtx;
+    std::condition_variable connectResultCv;
+    bool connectResultReady{false};
+    bool connectResultOk{false};
+    Firebolt::Error connectResultError{Firebolt::Error::None};
+    std::atomic<bool> disconnectRequested_{false};
+
     std::mutex connectionLog_mtx;
     bool hasLastConnectionLog{false};
     bool lastConnectionState{false};
@@ -510,7 +518,8 @@ public:
         : client(*this),
           server(),
           watchdogRunning(false),
-          legacyRPCv1(false)
+            legacyRPCv1(false),
+            disconnectRequested_(false)
     {
     }
 
@@ -581,11 +590,113 @@ public:
             if (fPos != std::string::npos)
                 safeConnectUrl = safeConnectUrl.substr(0, fPos);
         }
-        FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s", safeConnectUrl.c_str());
-        Firebolt::Error status = transport.connect(
-            url, [this](const nlohmann::json& message) { this->onMessage(message); },
-            [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
-            transportLoggingInclude, transportLoggingExclude, cfg.headers);
+        disconnectRequested_ = false;
+
+        Firebolt::Error status = Firebolt::Error::None;
+        if (cfg.reconnect_max_attempts == 0)
+        {
+            FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s", safeConnectUrl.c_str());
+            status = transport.connect(
+                url, [this](const nlohmann::json& message) { this->onMessage(message); },
+                [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
+                transportLoggingInclude, transportLoggingExclude, cfg.headers);
+        }
+        else
+        {
+            // In retry mode, collapse intermediate async failures and only
+            // notify callers once the overall connect attempt settles.
+            connectionChangeListener = [this](bool connected, Firebolt::Error error)
+            {
+                {
+                    std::lock_guard<std::mutex> lk(connectResultMtx);
+                    connectResultReady = true;
+                    connectResultOk = connected;
+                    connectResultError = error;
+                }
+                connectResultCv.notify_all();
+            };
+
+            const unsigned maxAttempts = 1 + cfg.reconnect_max_attempts;
+            status = Firebolt::Error::NotConnected;
+            for (unsigned attempt = 1; attempt <= maxAttempts; ++attempt)
+            {
+                if (disconnectRequested_.load())
+                {
+                    break;
+                }
+
+                if (attempt > 1)
+                {
+                    FIREBOLT_LOG_NOTICE("Gateway", "Reconnect attempt %u/%u in %u ms ...", attempt, maxAttempts,
+                                        cfg.reconnect_delay_ms);
+                    std::unique_lock<std::mutex> lk(connectResultMtx);
+                    connectResultCv.wait_for(
+                        lk, std::chrono::milliseconds(cfg.reconnect_delay_ms),
+                        [this]() { return disconnectRequested_.load(); });
+                    if (disconnectRequested_.load())
+                    {
+                        break;
+                    }
+                }
+
+                {
+                    std::lock_guard<std::mutex> lk(connectResultMtx);
+                    connectResultReady = false;
+                    connectResultOk = false;
+                    connectResultError = Firebolt::Error::None;
+                }
+
+                FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s (attempt %u/%u)", safeConnectUrl.c_str(),
+                                    attempt, maxAttempts);
+                status = transport.connect(
+                    url, [this](const nlohmann::json& message) { this->onMessage(message); },
+                    [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
+                    transportLoggingInclude, transportLoggingExclude, cfg.headers);
+
+                if (status == Firebolt::Error::AlreadyConnected)
+                {
+                    connectionChangeListener = previousConnectionChangeListener;
+                    return status;
+                }
+                if (status != Firebolt::Error::None)
+                {
+                    break;
+                }
+
+                {
+                    constexpr auto kConnectTimeout = std::chrono::seconds(10);
+                    std::unique_lock<std::mutex> lk(connectResultMtx);
+                    connectResultCv.wait_for(
+                        lk, kConnectTimeout,
+                        [this]() { return connectResultReady || disconnectRequested_.load(); });
+                }
+
+                if (disconnectRequested_.load())
+                {
+                    status = Firebolt::Error::NotConnected;
+                    break;
+                }
+
+                if (connectResultReady && connectResultOk)
+                {
+                    status = Firebolt::Error::None;
+                    break;
+                }
+
+                status = (connectResultError == Firebolt::Error::None) ? Firebolt::Error::NotConnected : connectResultError;
+            }
+
+            connectionChangeListener = onConnectionChange;
+            if (status != Firebolt::Error::None)
+            {
+                onConnectionChange(false,
+                                   (connectResultError == Firebolt::Error::None) ? status : connectResultError);
+            }
+            else
+            {
+                onConnectionChange(true, Firebolt::Error::None);
+            }
+        }
 
         if (status != Firebolt::Error::None)
         {
@@ -632,6 +743,8 @@ public:
 
     virtual Firebolt::Error disconnect() override
     {
+        disconnectRequested_ = true;
+        connectResultCv.notify_all();
         FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] transport.disconnect() start");
         auto t0_disc = std::chrono::steady_clock::now();
         Firebolt::Error status = transport.disconnect();

@@ -212,6 +212,33 @@ TEST_F(GatewayUTest, ConnectAndDisconnect)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
+TEST_F(GatewayUTest, ConnectRetriesUntilServerComesUp)
+{
+    IGateway& gateway = GetGatewayInstance();
+    auto connectionFuture = m_connectionPromise.get_future();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.reconnect_max_attempts = 10;
+    cfg.reconnect_delay_ms = 100;
+
+    std::thread delayedServer([this]()
+                              {
+                                  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                                  this->startServer();
+                              });
+
+    Firebolt::Error err = gateway.connect(cfg, [this](bool connected, const Firebolt::Error& connectErr)
+                                          { onConnectionChange(connected, connectErr); });
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectionFuture.wait_for(std::chrono::seconds(3));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out after retries";
+    EXPECT_TRUE(connectionFuture.get());
+
+    gateway.disconnect();
+    delayedServer.join();
+}
+
 TEST_F(GatewayUTest, Request)
 {
     IGateway& gateway = connectAndWait();
