@@ -246,7 +246,7 @@ TEST_F(GatewayUTest, ConnectRetriesExhaustAndReportsDisconnectedOnce)
     IGateway& gateway = GetGatewayInstance();
 
     Firebolt::Config cfg = getTestConfig();
-    const uint16_t unusedPort = reserveUnusedLoopbackPort();
+    const uint16_t unusedPort = findLikelyUnusedLoopbackPort();
     ASSERT_NE(unusedPort, 0) << "Could not reserve an unused loopback port";
     cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(unusedPort); // intentionally no server
     cfg.reconnect_max_attempts = 2;
@@ -288,7 +288,7 @@ TEST_F(GatewayUTest, DisconnectInterruptsReconnectDelayPromptly)
     IGateway& gateway = GetGatewayInstance();
 
     Firebolt::Config cfg = getTestConfig();
-    const uint16_t unusedPort = reserveUnusedLoopbackPort();
+    const uint16_t unusedPort = findLikelyUnusedLoopbackPort();
     ASSERT_NE(unusedPort, 0) << "Could not reserve an unused loopback port";
     cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(unusedPort); // intentionally no server
     cfg.reconnect_max_attempts = 50;
@@ -389,7 +389,7 @@ TEST_F(GatewayUTest, RetryExhaustionEmitsOnlyFinalDisconnectedCallback)
     IGateway& gateway = GetGatewayInstance();
 
     Firebolt::Config cfg = getTestConfig();
-    const uint16_t unusedPort = reserveUnusedLoopbackPort();
+    const uint16_t unusedPort = findLikelyUnusedLoopbackPort();
     ASSERT_NE(unusedPort, 0) << "Could not reserve an unused loopback port";
     cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(unusedPort); // intentionally no server
     cfg.reconnect_max_attempts = 3;

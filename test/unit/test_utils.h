@@ -47,7 +47,7 @@ private:
     std::thread& thread_;
 };
 
-inline uint16_t reserveUnusedLoopbackPort()
+inline uint16_t findLikelyUnusedLoopbackPort()
 {
     websocketpp::lib::asio::io_service io;
     websocketpp::lib::asio::ip::tcp::acceptor acceptor(io);

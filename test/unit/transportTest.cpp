@@ -1248,6 +1248,7 @@ TEST(TransportNumericIPResolverTest, ConnectFailureViaNumericIP)
     std::promise<Firebolt::Error> errorPromise;
     auto errorFuture = errorPromise.get_future();
     std::atomic<bool> promiseSet{false};
+    std::atomic<bool> messageReceived{false};
 
     auto onConnectionChange = [&](bool connected, const Firebolt::Error& err)
     {
@@ -1260,10 +1261,9 @@ TEST(TransportNumericIPResolverTest, ConnectFailureViaNumericIP)
             }
         }
     };
-    auto onMessage = [](const nlohmann::json& /*msg*/)
-    { FAIL() << "Should not receive a message on a failed connection"; };
+    auto onMessage = [&](const nlohmann::json& /*msg*/) { messageReceived.store(true); };
 
-    const uint16_t unusedPort = reserveUnusedLoopbackPort();
+    const uint16_t unusedPort = findLikelyUnusedLoopbackPort();
     ASSERT_NE(unusedPort, 0) << "Could not reserve an unused loopback port";
     const std::string uri = "ws://127.0.0.1:" + std::to_string(unusedPort);
     ASSERT_EQ(transport.connect(uri, onMessage, onConnectionChange), Firebolt::Error::None);
@@ -1274,6 +1274,7 @@ TEST(TransportNumericIPResolverTest, ConnectFailureViaNumericIP)
 
     ASSERT_EQ(errorFuture.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
     EXPECT_NE(errorFuture.get(), Firebolt::Error::None);
+    EXPECT_FALSE(messageReceived.load()) << "Should not receive a message on a failed connection";
 }
 
 class TransportIPv6UTest : public ::testing::Test

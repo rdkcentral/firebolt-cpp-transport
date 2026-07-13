@@ -516,6 +516,47 @@ private:
     std::chrono::steady_clock::time_point lastConnectionLogTs{};
     size_t suppressedConnectionNoticeCount{0};
 
+    std::mutex callbackDispatchMtx;
+    std::vector<std::future<void>> callbackDispatchTasks;
+
+    void queueAsyncConnectionChangeCallback(ConnectionChangeCallback callback, bool connected, Firebolt::Error error)
+    {
+        if (!callback)
+        {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(callbackDispatchMtx);
+        for (auto it = callbackDispatchTasks.begin(); it != callbackDispatchTasks.end();)
+        {
+            if (it->wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+            {
+                it = callbackDispatchTasks.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        callbackDispatchTasks.emplace_back(
+            std::async(std::launch::async, [callback, connected, error]() { callback(connected, error); }));
+    }
+
+    void waitForQueuedConnectionCallbacks()
+    {
+        std::vector<std::future<void>> pending;
+        {
+            std::lock_guard<std::mutex> lock(callbackDispatchMtx);
+            pending.swap(callbackDispatchTasks);
+        }
+        for (auto& task : pending)
+        {
+            if (task.valid())
+            {
+                task.wait();
+            }
+        }
+    }
+
 public:
     GatewayImpl()
         : client(*this),
@@ -537,6 +578,7 @@ public:
                 watchdogThread.join();
             }
         }
+        waitForQueuedConnectionCallbacks();
     }
 
     virtual Firebolt::Error connect(const Firebolt::Config& cfg, ConnectionChangeCallback onConnectionChange) override
@@ -725,10 +767,8 @@ public:
             }
             const bool finalConnected = (status == Firebolt::Error::None);
             const Firebolt::Error finalError = finalConnected ? Firebolt::Error::None : finalConnectError;
-            // Preserve asynchronous callback delivery in retry mode to avoid caller-thread re-entrancy.
-            std::thread([onConnectionChange, finalConnected, finalError]()
-                        { onConnectionChange(finalConnected, finalError); })
-                .detach();
+            // Preserve asynchronous callback delivery in retry mode with explicit task ownership.
+            queueAsyncConnectionChangeCallback(onConnectionChange, finalConnected, finalError);
         }
 
         if (status != Firebolt::Error::None)
