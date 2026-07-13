@@ -777,6 +777,87 @@ TEST_F(GatewayUTest, ConnectAlreadyConnectedPreservesOriginalListener)
 }
 
 // ---------------------------------------------------------------------------
+// Test name: GatewayUTest.ConnectAlreadyConnectedRepeatedPreservesOriginalListener
+// Covers: repeated AlreadyConnected path should never replace active listener
+// Scenario type: edge case
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, ConnectAlreadyConnectedRepeatedPreservesOriginalListener)
+{
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+
+    std::promise<void> connectedPromise;
+    auto connectedFuture = connectedPromise.get_future();
+    std::atomic<bool> connectedSet{false};
+    std::atomic<int> firstDisconnectedEvents{0};
+    std::atomic<int> secondDisconnectedEvents{0};
+
+    Firebolt::Error err = gateway.connect(
+        getTestConfig(),
+        [&](bool connected, const Firebolt::Error&)
+        {
+            if (connected)
+            {
+                bool expected = false;
+                if (connectedSet.compare_exchange_strong(expected, true))
+                {
+                    connectedPromise.set_value();
+                }
+            }
+            else
+            {
+                ++firstDisconnectedEvents;
+            }
+        });
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectedFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+
+    for (int i = 0; i < 5; ++i)
+    {
+        err = gateway.connect(
+            getTestConfig(),
+            [&](bool connected, const Firebolt::Error&)
+            {
+                if (!connected)
+                {
+                    ++secondDisconnectedEvents;
+                }
+            });
+        EXPECT_EQ(err, Firebolt::Error::AlreadyConnected);
+    }
+
+    gateway.disconnect();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    EXPECT_GE(firstDisconnectedEvents.load(), 1);
+    EXPECT_EQ(secondDisconnectedEvents.load(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.DisconnectWakesWatchdogImmediately
+// Covers: src/gateway.cpp watchdog condition_variable wake on disconnect
+// Scenario type: regression
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, DisconnectWakesWatchdogImmediately)
+{
+    IGateway& gateway = connectAndWait();
+
+    // Give watchdog thread a chance to enter its wait state.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    auto t0 = std::chrono::steady_clock::now();
+    Firebolt::Error err = gateway.disconnect();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+
+    ASSERT_EQ(err, Firebolt::Error::None);
+    EXPECT_LT(elapsed.count(), 200)
+        << "disconnect() took " << elapsed.count()
+        << " ms, watchdog wake on shutdown may be missing";
+}
+
+// ---------------------------------------------------------------------------
 // Test name: GatewayUTest.DuplicateSubscribeToSameEvent
 // Covers: src/gateway.cpp:server.subscribe returns Error::General on dup usercb
 // Scenario type: failure
