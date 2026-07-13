@@ -737,9 +737,10 @@ public:
                     attemptReady = connectResultReady;
                     attemptOk = connectResultOk;
                     attemptError = connectResultError;
+                    disconnectRequested = disconnectRequested_;
                 }
 
-                if (disconnectRequested_)
+                if (disconnectRequested)
                 {
                     status = Firebolt::Error::NotConnected;
                     finalConnectError = status;
