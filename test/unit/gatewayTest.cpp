@@ -332,6 +332,107 @@ TEST_F(GatewayUTest, DisconnectInterruptsReconnectDelayPromptly)
     connectThread.join();
 }
 
+TEST_F(GatewayUTest, RetryThenSuccessEmitsOnlyFinalConnectedCallback)
+{
+    IGateway& gateway = GetGatewayInstance();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.reconnect_max_attempts = 10;
+    cfg.reconnect_delay_ms = 100;
+
+    std::atomic<int> connectedCount{0};
+    std::atomic<int> disconnectedCount{0};
+    std::promise<void> connectedPromise;
+    auto connectedFuture = connectedPromise.get_future();
+    std::atomic<bool> connectedSet{false};
+
+    std::thread delayedServer([this]()
+                              {
+                                  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                                  this->startServer();
+                              });
+
+    Firebolt::Error err = gateway.connect(
+        cfg,
+        [&](bool connected, const Firebolt::Error&)
+        {
+            if (connected)
+            {
+                ++connectedCount;
+                bool expected = false;
+                if (connectedSet.compare_exchange_strong(expected, true))
+                {
+                    connectedPromise.set_value();
+                }
+            }
+            else
+            {
+                ++disconnectedCount;
+            }
+        });
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectedFuture.wait_for(std::chrono::seconds(3));
+    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out after retries";
+
+    EXPECT_EQ(connectedCount.load(), 1)
+        << "Retry success path should emit only one final connected callback";
+    EXPECT_EQ(disconnectedCount.load(), 0)
+        << "Retry success path should not emit transient disconnected callbacks";
+
+    gateway.disconnect();
+    delayedServer.join();
+}
+
+TEST_F(GatewayUTest, RetryExhaustionEmitsOnlyFinalDisconnectedCallback)
+{
+    IGateway& gateway = GetGatewayInstance();
+
+    Firebolt::Config cfg = getTestConfig();
+    cfg.wsUrl = "ws://localhost:49195"; // intentionally no server
+    cfg.reconnect_max_attempts = 3;
+    cfg.reconnect_delay_ms = 50;
+
+    std::atomic<int> connectedCount{0};
+    std::atomic<int> disconnectedCount{0};
+    std::promise<Firebolt::Error> disconnectedPromise;
+    auto disconnectedFuture = disconnectedPromise.get_future();
+    std::atomic<bool> disconnectedSet{false};
+
+    Firebolt::Error err = gateway.connect(
+        cfg,
+        [&](bool connected, const Firebolt::Error& cbErr)
+        {
+            if (connected)
+            {
+                ++connectedCount;
+            }
+            else
+            {
+                ++disconnectedCount;
+                bool expected = false;
+                if (disconnectedSet.compare_exchange_strong(expected, true))
+                {
+                    disconnectedPromise.set_value(cbErr);
+                }
+            }
+        });
+
+    EXPECT_NE(err, Firebolt::Error::None);
+
+    auto status = disconnectedFuture.wait_for(std::chrono::seconds(3));
+    ASSERT_EQ(status, std::future_status::ready) << "Disconnected callback not delivered after retry exhaustion";
+
+    Firebolt::Error cbErr = disconnectedFuture.get();
+    EXPECT_NE(cbErr, Firebolt::Error::None);
+    EXPECT_EQ(connectedCount.load(), 0)
+        << "Retry exhaustion path should not emit connected callbacks";
+    EXPECT_EQ(disconnectedCount.load(), 1)
+        << "Retry exhaustion path should emit only one final disconnected callback";
+
+    gateway.disconnect();
+}
+
 TEST_F(GatewayUTest, Request)
 {
     IGateway& gateway = connectAndWait();
