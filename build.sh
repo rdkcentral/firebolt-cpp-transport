@@ -55,7 +55,16 @@ done
 
 $cleanFirst && rm -rf $bdir
 
-if [[ ! -e "$bdir" || -n "$@" ]]; then
+_cache="$PWD/$bdir/CMakeCache.txt"
+if [[ -f "$_cache" ]]; then
+  _cached=$(grep '^CMAKE_HOME_DIRECTORY' "$_cache" 2>/dev/null | cut -d= -f2 || true)
+  if [[ -n "$_cached" && "$_cached" != "$PWD" ]]; then
+    echo "Wiping stale $bdir (configured at $_cached, now at $PWD)..."
+    rm -rf "$bdir"
+  fi
+fi
+
+if [[ ! -f "$bdir/CMakeCache.txt" || -n "$@" ]]; then
   params+=" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
   command -v ccache >/dev/null 2>&1 && params+=" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
   cmake -B $bdir \
