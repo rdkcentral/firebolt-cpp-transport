@@ -858,6 +858,60 @@ TEST_F(GatewayUTest, DisconnectWakesWatchdogImmediately)
 }
 
 // ---------------------------------------------------------------------------
+// Test name: GatewayUTest.DisconnectDuringInFlightConnectAllowsReconnect
+// Covers: connect/disconnect race while Transport is in Connecting state
+// Scenario type: regression
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, DisconnectDuringInFlightConnectAllowsReconnect)
+{
+    IGateway& gateway = GetGatewayInstance();
+
+    // Use an unroutable address so connect() enters async Connecting state.
+    Firebolt::Config badCfg = getTestConfig();
+    badCfg.wsUrl = "ws://203.0.113.1:65530";
+
+    Firebolt::Error err = gateway.connect(badCfg, [](bool, const Firebolt::Error&) {});
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto t0 = std::chrono::steady_clock::now();
+    err = gateway.disconnect();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+
+    ASSERT_EQ(err, Firebolt::Error::None);
+    EXPECT_LT(elapsed.count(), 500)
+        << "disconnect() took " << elapsed.count()
+        << " ms while connect was in flight";
+
+    // Validate gateway remains healthy by reconnecting to a live server.
+    startServer();
+    std::promise<void> connectedPromise;
+    auto connectedFuture = connectedPromise.get_future();
+    std::atomic<bool> connectedSet{false};
+
+    Firebolt::Config goodCfg = getTestConfig();
+    err = gateway.connect(
+        goodCfg,
+        [&](bool connected, const Firebolt::Error&)
+        {
+            if (connected)
+            {
+                bool expected = false;
+                if (connectedSet.compare_exchange_strong(expected, true))
+                {
+                    connectedPromise.set_value();
+                }
+            }
+        });
+    ASSERT_EQ(err, Firebolt::Error::None);
+
+    auto status = connectedFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready) << "Reconnect timed out after in-flight disconnect";
+
+    err = gateway.disconnect();
+    EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+// ---------------------------------------------------------------------------
 // Test name: GatewayUTest.DuplicateSubscribeToSameEvent
 // Covers: src/gateway.cpp:server.subscribe returns Error::General on dup usercb
 // Scenario type: failure
