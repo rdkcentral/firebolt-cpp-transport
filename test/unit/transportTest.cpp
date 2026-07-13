@@ -18,6 +18,7 @@
 
 #include "transport.h"
 #include "firebolt/logger.h"
+#include "test_utils.h"
 #include <array>
 #include <chrono>
 #include <future>
@@ -30,35 +31,6 @@
 #include <websocketpp/sha1/sha1.hpp>
 
 using namespace Firebolt::Transport;
-
-static uint16_t reserveUnusedLoopbackPort()
-{
-    websocketpp::lib::asio::io_service io;
-    websocketpp::lib::asio::ip::tcp::acceptor acceptor(io);
-    websocketpp::lib::asio::error_code ec;
-
-    acceptor.open(websocketpp::lib::asio::ip::tcp::v4(), ec);
-    if (ec)
-    {
-        return 0;
-    }
-    acceptor.bind(websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string(
-                                                                "127.0.0.1"),
-                                                            0),
-                  ec);
-    if (ec)
-    {
-        return 0;
-    }
-    acceptor.listen(websocketpp::lib::asio::socket_base::max_listen_connections, ec);
-    if (ec)
-    {
-        return 0;
-    }
-    uint16_t port = acceptor.local_endpoint(ec).port();
-    acceptor.close();
-    return ec ? 0 : port;
-}
 
 class TransportUTest : public ::testing::Test
 {
@@ -1170,9 +1142,12 @@ protected:
                 {
                 }
             });
-        m_server.listen(
-            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("127.0.0.1"), 0));
         websocketpp::lib::asio::error_code ec;
+        m_server.listen(websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string(
+                                                                      "127.0.0.1"),
+                                                                  0),
+                        ec);
+        ASSERT_FALSE(ec) << "Failed to bind/listen IPv4 loopback endpoint: " << ec.message();
         auto localEndpoint = m_server.get_local_endpoint(ec);
         ASSERT_FALSE(ec) << "Failed to read local endpoint: " << ec.message();
         m_uri = "ws://127.0.0.1:" + std::to_string(localEndpoint.port());
@@ -1323,7 +1298,11 @@ protected:
             GTEST_SKIP() << "Skipping IPv6 loopback test: IPv6 not available (" << ec.message() << ")";
         }
 
-        m_server.listen(websocketpp::lib::asio::ip::tcp::endpoint(addr, 0));
+        m_server.listen(websocketpp::lib::asio::ip::tcp::endpoint(addr, 0), ec);
+        if (ec)
+        {
+            GTEST_SKIP() << "Skipping IPv6 loopback test: bind/listen failed (" << ec.message() << ")";
+        }
         auto localEndpoint = m_server.get_local_endpoint(ec);
         if (ec)
         {

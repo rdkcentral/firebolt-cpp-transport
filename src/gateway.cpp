@@ -499,6 +499,8 @@ private:
     std::map<MessageID, std::string> rpcv1_eventMap;
     std::mutex rpcv1_eventMap_mtx;
 
+    std::mutex connectionChangeListenerMtx;
+
     // Synchronization for connect() retry mode.
     std::mutex connectResultMtx;
     std::condition_variable connectResultCv;
@@ -547,8 +549,12 @@ public:
         Firebolt::Logger::setFormat(cfg.log.format.ts, cfg.log.format.location, cfg.log.format.function,
                                     cfg.log.format.thread);
 
-        ConnectionChangeCallback previousConnectionChangeListener = connectionChangeListener;
-        connectionChangeListener = onConnectionChange;
+        ConnectionChangeCallback previousConnectionChangeListener;
+        {
+            std::lock_guard<std::mutex> lock(connectionChangeListenerMtx);
+            previousConnectionChangeListener = connectionChangeListener;
+            connectionChangeListener = onConnectionChange;
+        }
 
         runtime_waitTime_ms = cfg.waitTime_ms;
         legacyRPCv1 = cfg.legacyRPCv1;
@@ -606,16 +612,19 @@ public:
         {
             // In retry mode, collapse intermediate async failures and only
             // notify callers once the overall connect attempt settles.
-            connectionChangeListener = [this](bool connected, Firebolt::Error error)
             {
+                std::lock_guard<std::mutex> lock(connectionChangeListenerMtx);
+                connectionChangeListener = [this](bool connected, Firebolt::Error error)
                 {
-                    std::lock_guard<std::mutex> lk(connectResultMtx);
-                    connectResultReady = true;
-                    connectResultOk = connected;
-                    connectResultError = error;
-                }
-                connectResultCv.notify_all();
-            };
+                    {
+                        std::lock_guard<std::mutex> lk(connectResultMtx);
+                        connectResultReady = true;
+                        connectResultOk = connected;
+                        connectResultError = error;
+                    }
+                    connectResultCv.notify_all();
+                };
+            }
 
             const unsigned maxAttempts = 1 + cfg.reconnect_max_attempts;
             status = Firebolt::Error::NotConnected;
@@ -656,6 +665,7 @@ public:
 
                 if (status == Firebolt::Error::AlreadyConnected)
                 {
+                    std::lock_guard<std::mutex> lock(connectionChangeListenerMtx);
                     connectionChangeListener = std::move(previousConnectionChangeListener);
                     return status;
                 }
@@ -709,7 +719,10 @@ public:
                 finalConnectError = status;
             }
 
-            connectionChangeListener = onConnectionChange;
+            {
+                std::lock_guard<std::mutex> lock(connectionChangeListenerMtx);
+                connectionChangeListener = onConnectionChange;
+            }
             if (status != Firebolt::Error::None)
             {
                 onConnectionChange(false, finalConnectError);
@@ -725,6 +738,7 @@ public:
             if (status == Firebolt::Error::AlreadyConnected)
             {
                 // Keep the original listener bound to the active connection.
+                std::lock_guard<std::mutex> lock(connectionChangeListenerMtx);
                 connectionChangeListener = std::move(previousConnectionChangeListener);
             }
             FIREBOLT_LOG_ERROR("Gateway", "[connect] transport connect failed status=%d", static_cast<int>(status));
@@ -1045,7 +1059,15 @@ private:
             FIREBOLT_LOG_NOTICE("Gateway", "[connection] state=%s error=%d suppressed_repeats=%zu",
                                 connected ? "connected" : "disconnected", static_cast<int>(error), suppressedCount);
         }
-        connectionChangeListener(connected, error);
+        ConnectionChangeCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(connectionChangeListenerMtx);
+            callback = connectionChangeListener;
+        }
+        if (callback)
+        {
+            callback(connected, error);
+        }
     }
 
     MessageID getNextMessageID() override { return transport.getNextMessageID(); }

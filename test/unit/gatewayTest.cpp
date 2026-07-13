@@ -18,6 +18,7 @@
 
 #include "firebolt/gateway.h"
 #include "firebolt/logger.h"
+#include "test_utils.h"
 #include "utils.h"
 #include <atomic>
 #include <gtest/gtest.h>
@@ -27,35 +28,6 @@
 #include <websocketpp/server.hpp>
 
 using namespace Firebolt::Transport;
-
-static uint16_t reserveUnusedLoopbackPort()
-{
-    websocketpp::lib::asio::io_service io;
-    websocketpp::lib::asio::ip::tcp::acceptor acceptor(io);
-    websocketpp::lib::asio::error_code ec;
-
-    acceptor.open(websocketpp::lib::asio::ip::tcp::v4(), ec);
-    if (ec)
-    {
-        return 0;
-    }
-    acceptor.bind(websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string(
-                                                                "127.0.0.1"),
-                                                            0),
-                  ec);
-    if (ec)
-    {
-        return 0;
-    }
-    acceptor.listen(websocketpp::lib::asio::socket_base::max_listen_connections, ec);
-    if (ec)
-    {
-        return 0;
-    }
-    uint16_t port = acceptor.local_endpoint(ec).port();
-    acceptor.close();
-    return ec ? 0 : port;
-}
 
 TEST(GatewayUrlUtilsUTest, VerifyUrls)
 {
@@ -1017,7 +989,8 @@ TEST_F(GatewayUTest, ConnectAlreadyConnectedPreservesOriginalListener)
     EXPECT_EQ(err, Firebolt::Error::AlreadyConnected);
 
     gateway.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ASSERT_TRUE(waitForAtomicAtLeast(firstDisconnectedEvents, 1, std::chrono::seconds(2)))
+        << "Did not observe disconnect callback on primary listener";
 
     EXPECT_GE(firstDisconnectedEvents.load(), 1);
     EXPECT_EQ(secondDisconnectedEvents.load(), 0);
@@ -1074,7 +1047,8 @@ TEST_F(GatewayUTest, ConnectAlreadyConnectedRepeatedPreservesOriginalListener)
     }
 
     gateway.disconnect();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ASSERT_TRUE(waitForAtomicAtLeast(firstDisconnectedEvents, 1, std::chrono::seconds(2)))
+        << "Did not observe disconnect callback on primary listener";
 
     EXPECT_GE(firstDisconnectedEvents.load(), 1);
     EXPECT_EQ(secondDisconnectedEvents.load(), 0);
