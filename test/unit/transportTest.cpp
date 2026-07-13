@@ -31,6 +31,35 @@
 
 using namespace Firebolt::Transport;
 
+static uint16_t reserveUnusedLoopbackPort()
+{
+    websocketpp::lib::asio::io_service io;
+    websocketpp::lib::asio::ip::tcp::acceptor acceptor(io);
+    websocketpp::lib::asio::error_code ec;
+
+    acceptor.open(websocketpp::lib::asio::ip::tcp::v4(), ec);
+    if (ec)
+    {
+        return 0;
+    }
+    acceptor.bind(websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string(
+                                                                "127.0.0.1"),
+                                                            0),
+                  ec);
+    if (ec)
+    {
+        return 0;
+    }
+    acceptor.listen(websocketpp::lib::asio::socket_base::max_listen_connections, ec);
+    if (ec)
+    {
+        return 0;
+    }
+    uint16_t port = acceptor.local_endpoint(ec).port();
+    acceptor.close();
+    return ec ? 0 : port;
+}
+
 class TransportUTest : public ::testing::Test
 {
 protected:
@@ -1123,7 +1152,7 @@ protected:
 
     server m_server;
     std::unique_ptr<std::thread> m_serverThread;
-    const std::string m_uri = "ws://127.0.0.1:9005";
+    std::string m_uri;
 
     void SetUp() override
     {
@@ -1142,8 +1171,11 @@ protected:
                 }
             });
         m_server.listen(
-            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("127.0.0.1"),
-                                                      9005));
+            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("127.0.0.1"), 0));
+        websocketpp::lib::asio::error_code ec;
+        auto localEndpoint = m_server.get_local_endpoint(ec);
+        ASSERT_FALSE(ec) << "Failed to read local endpoint: " << ec.message();
+        m_uri = "ws://127.0.0.1:" + std::to_string(localEndpoint.port());
         m_server.start_accept();
         m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
     }
@@ -1256,7 +1288,10 @@ TEST(TransportNumericIPResolverTest, ConnectFailureViaNumericIP)
     auto onMessage = [](const nlohmann::json& /*msg*/)
     { FAIL() << "Should not receive a message on a failed connection"; };
 
-    ASSERT_EQ(transport.connect("ws://127.0.0.1:49152", onMessage, onConnectionChange), Firebolt::Error::None);
+    const uint16_t unusedPort = reserveUnusedLoopbackPort();
+    ASSERT_NE(unusedPort, 0) << "Could not reserve an unused loopback port";
+    const std::string uri = "ws://127.0.0.1:" + std::to_string(unusedPort);
+    ASSERT_EQ(transport.connect(uri, onMessage, onConnectionChange), Firebolt::Error::None);
 
     ASSERT_EQ(connectedFuture.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
         << "onConnectionChange callback timed out";
@@ -1274,15 +1309,28 @@ protected:
 
     server m_server;
     std::unique_ptr<std::thread> m_serverThread;
-    const std::string m_uri = "ws://[::1]:9006";
+    std::string m_uri;
 
     void SetUp() override
     {
         m_server.init_asio();
         m_server.set_reuse_addr(true);
         m_server.clear_access_channels(websocketpp::log::alevel::all);
-        m_server.listen(
-            websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::address::from_string("::1"), 9006));
+        websocketpp::lib::asio::error_code ec;
+        auto addr = websocketpp::lib::asio::ip::address::from_string("::1", ec);
+        if (ec)
+        {
+            GTEST_SKIP() << "Skipping IPv6 loopback test: IPv6 not available (" << ec.message() << ")";
+        }
+
+        m_server.listen(websocketpp::lib::asio::ip::tcp::endpoint(addr, 0));
+        auto localEndpoint = m_server.get_local_endpoint(ec);
+        if (ec)
+        {
+            GTEST_SKIP() << "Skipping IPv6 loopback test: failed to read local endpoint (" << ec.message() << ")";
+        }
+
+        m_uri = "ws://[::1]:" + std::to_string(localEndpoint.port());
         m_server.start_accept();
         m_serverThread = std::make_unique<std::thread>([this]() { m_server.run(); });
     }

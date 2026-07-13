@@ -35,6 +35,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace Firebolt::Transport
@@ -618,6 +619,7 @@ public:
 
             const unsigned maxAttempts = 1 + cfg.reconnect_max_attempts;
             status = Firebolt::Error::NotConnected;
+            Firebolt::Error finalConnectError = Firebolt::Error::NotConnected;
             for (unsigned attempt = 1; attempt <= maxAttempts; ++attempt)
             {
                 if (disconnectRequested_.load())
@@ -654,41 +656,50 @@ public:
 
                 if (status == Firebolt::Error::AlreadyConnected)
                 {
-                    connectionChangeListener = previousConnectionChangeListener;
+                    connectionChangeListener = std::move(previousConnectionChangeListener);
                     return status;
                 }
                 if (status != Firebolt::Error::None)
                 {
+                    finalConnectError = status;
                     break;
                 }
 
+                bool attemptReady = false;
+                bool attemptOk = false;
+                Firebolt::Error attemptError = Firebolt::Error::None;
                 {
                     constexpr auto kConnectTimeout = std::chrono::seconds(10);
                     std::unique_lock<std::mutex> lk(connectResultMtx);
                     connectResultCv.wait_for(lk, kConnectTimeout,
                                              [this]() { return connectResultReady || disconnectRequested_.load(); });
+                    attemptReady = connectResultReady;
+                    attemptOk = connectResultOk;
+                    attemptError = connectResultError;
                 }
 
                 if (disconnectRequested_.load())
                 {
                     status = Firebolt::Error::NotConnected;
+                    finalConnectError = status;
                     break;
                 }
 
-                if (connectResultReady && connectResultOk)
+                if (attemptReady && attemptOk)
                 {
                     status = Firebolt::Error::None;
+                    finalConnectError = Firebolt::Error::None;
                     break;
                 }
 
-                status = (connectResultError == Firebolt::Error::None) ? Firebolt::Error::NotConnected
-                                                                       : connectResultError;
+                status = (attemptError == Firebolt::Error::None) ? Firebolt::Error::NotConnected : attemptError;
+                finalConnectError = status;
             }
 
             connectionChangeListener = onConnectionChange;
             if (status != Firebolt::Error::None)
             {
-                onConnectionChange(false, (connectResultError == Firebolt::Error::None) ? status : connectResultError);
+                onConnectionChange(false, finalConnectError);
             }
             else
             {
@@ -701,7 +712,7 @@ public:
             if (status == Firebolt::Error::AlreadyConnected)
             {
                 // Keep the original listener bound to the active connection.
-                connectionChangeListener = previousConnectionChangeListener;
+                connectionChangeListener = std::move(previousConnectionChangeListener);
             }
             FIREBOLT_LOG_ERROR("Gateway", "[connect] transport connect failed status=%d", static_cast<int>(status));
             return status;
@@ -716,7 +727,8 @@ public:
                     while (watchdogRunning)
                     {
                         std::unique_lock<std::mutex> lk(watchdogMtx);
-                        watchdogCv.wait_for(lk, std::chrono::milliseconds(watchdog_interval_ms));
+                        watchdogCv.wait_for(lk, std::chrono::milliseconds(watchdog_interval_ms),
+                                            [this]() { return !watchdogRunning.load(); });
                         if (!watchdogRunning)
                             break;
                         try
