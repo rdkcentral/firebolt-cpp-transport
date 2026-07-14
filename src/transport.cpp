@@ -160,7 +160,8 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
                                    std::optional<unsigned> transportLoggingExclude,
                                    const std::map<std::string, std::string>& headers)
 {
-    if (connectionStatus_ == TransportState::Connected || connectionStatus_ == TransportState::Connecting)
+    const auto state = connectionStatus_.load();
+    if (state == TransportState::Connected || state == TransportState::Connecting)
     {
         FIREBOLT_LOG_WARNING("Transport", "Connect called while connection is already active/in-progress. Ignoring");
         return Firebolt::Error::AlreadyConnected;
