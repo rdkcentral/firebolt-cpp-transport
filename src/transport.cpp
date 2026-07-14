@@ -408,19 +408,19 @@ void Transport::onMessage(websocketpp::connection_hdl /* hdl */,
         FIREBOLT_LOG_WARNING("Transport", "Received a message while stopping the message worker. Ignoring");
         return;
     }
+    const size_t payloadSize = msg->get_payload().size();
+    size_t queueDepth = 0;
     {
         std::lock_guard<std::mutex> lock(messageQueueMutex_);
         messageQueue_.push(msg->get_payload());
-        FIREBOLT_LOG_DEBUG("Transport", "[onMessage] enqueued payload bytes=%zu, queue_depth=%zu",
-                           msg->get_payload().size(), messageQueue_.size());
+        queueDepth = messageQueue_.size();
     }
+    FIREBOLT_LOG_DEBUG("Transport", "[onMessage] enqueued payload bytes=%zu, queue_depth=%zu", payloadSize, queueDepth);
     messageQueueCv_.notify_one();
 }
 
 void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
-    connectionStatus_ = TransportState::Connected;
-
     client::connection_ptr con = c->get_con_from_hdl(hdl);
     // Populate responseHeaders_ from the connection's response headers
     {
@@ -436,6 +436,7 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
             FIREBOLT_LOG_DEBUG("Transport", "[onOpen] stored response headers=%zu", responseHeaders_.size());
         }
     }
+    connectionStatus_ = TransportState::Connected;
     FIREBOLT_LOG_NOTICE("Transport", "Connection opened (state=%d)", static_cast<int>(connectionStatus_.load()));
     connectionReceiver_(true, Firebolt::Error::None);
 }
