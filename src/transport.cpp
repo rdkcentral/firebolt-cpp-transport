@@ -32,6 +32,7 @@ using message_ptr = websocketpp::config::asio_client::message_type::ptr;
 enum class Transport::TransportState
 {
     NotStarted,
+    Connecting,
     Connected,
     Disconnected,
 };
@@ -159,9 +160,9 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
                                    std::optional<unsigned> transportLoggingExclude,
                                    const std::map<std::string, std::string>& headers)
 {
-    if (connectionStatus_ == TransportState::Connected)
+    if (connectionStatus_ == TransportState::Connected || connectionStatus_ == TransportState::Connecting)
     {
-        FIREBOLT_LOG_WARNING("Transport", "Connect called when already connected. Ignoring");
+        FIREBOLT_LOG_WARNING("Transport", "Connect called while connection is already active/in-progress. Ignoring");
         return Firebolt::Error::AlreadyConnected;
     }
 
@@ -268,6 +269,7 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     con->set_message_handler(websocketpp::lib::bind(&Transport::onMessage, this, websocketpp::lib::placeholders::_1,
                                                     websocketpp::lib::placeholders::_2));
 
+    connectionStatus_ = TransportState::Connecting;
     client_->connect(con);
     FIREBOLT_LOG_DEBUG("Transport", "[connect] connect() dispatched to websocket client");
 
@@ -439,6 +441,10 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
 void Transport::onClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
     connectionStatus_ = TransportState::Disconnected;
+    {
+        std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+        responseHeaders_.clear();
+    }
     Firebolt::Error mappedError = Firebolt::Error::General;
     try
     {
@@ -464,6 +470,10 @@ void Transport::onClose(websocketpp::client<websocketpp::config::asio_client>* c
 void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
     connectionStatus_ = TransportState::Disconnected;
+    {
+        std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+        responseHeaders_.clear();
+    }
     Firebolt::Error mappedError = Firebolt::Error::General;
     try
     {
