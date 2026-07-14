@@ -32,12 +32,53 @@
 
 using namespace Firebolt::Transport;
 
-static uint16_t findLikelyUnusedLoopbackPort()
+struct ReservedLoopbackPort
 {
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0)
+    int fd = -1;
+    uint16_t port = 49198;
+
+    ReservedLoopbackPort() = default;
+    ReservedLoopbackPort(const ReservedLoopbackPort&) = delete;
+    ReservedLoopbackPort& operator=(const ReservedLoopbackPort&) = delete;
+
+    ReservedLoopbackPort(ReservedLoopbackPort&& other) noexcept
+        : fd(other.fd),
+          port(other.port)
     {
-        return 49198;
+        other.fd = -1;
+    }
+
+    ReservedLoopbackPort& operator=(ReservedLoopbackPort&& other) noexcept
+    {
+        if (this != &other)
+        {
+            if (fd >= 0)
+            {
+                ::close(fd);
+            }
+            fd = other.fd;
+            port = other.port;
+            other.fd = -1;
+        }
+        return *this;
+    }
+
+    ~ReservedLoopbackPort()
+    {
+        if (fd >= 0)
+        {
+            ::close(fd);
+        }
+    }
+};
+
+static ReservedLoopbackPort reserveLikelyUnusedLoopbackPort()
+{
+    ReservedLoopbackPort reserved;
+    reserved.fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (reserved.fd < 0)
+    {
+        return reserved;
     }
 
     sockaddr_in addr{};
@@ -45,22 +86,23 @@ static uint16_t findLikelyUnusedLoopbackPort()
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     addr.sin_port = 0;
 
-    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
+    if (::bind(reserved.fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
     {
-        ::close(fd);
-        return 49198;
+        ::close(reserved.fd);
+        reserved.fd = -1;
+        return reserved;
     }
 
     socklen_t addrLen = sizeof(addr);
-    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &addrLen) != 0)
+    if (::getsockname(reserved.fd, reinterpret_cast<sockaddr*>(&addr), &addrLen) != 0)
     {
-        ::close(fd);
-        return 49198;
+        ::close(reserved.fd);
+        reserved.fd = -1;
+        return reserved;
     }
 
-    const uint16_t selectedPort = ntohs(addr.sin_port);
-    ::close(fd);
-    return selectedPort;
+    reserved.port = ntohs(addr.sin_port);
+    return reserved;
 }
 
 TEST(GatewayUrlUtilsUTest, VerifyUrls)
@@ -960,7 +1002,8 @@ TEST_F(GatewayUTest, SendNotConnected)
     // Don't start the server — connect will fail
     IGateway& gateway = GetGatewayInstance();
     Firebolt::Config cfg = getTestConfig();
-    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(findLikelyUnusedLoopbackPort());
+    ReservedLoopbackPort reservedPort = reserveLikelyUnusedLoopbackPort();
+    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(reservedPort.port);
 
     std::promise<Firebolt::Error> connectFailure;
     auto connectFailureFuture = connectFailure.get_future();
@@ -1243,7 +1286,8 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
     IGateway& gateway = GetGatewayInstance();
 
     Firebolt::Config cfg = getTestConfig();
-    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(findLikelyUnusedLoopbackPort());
+    ReservedLoopbackPort reservedPort = reserveLikelyUnusedLoopbackPort();
+    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(reservedPort.port);
 
     std::promise<Firebolt::Error> connectFailure;
     auto connectFailureFuture = connectFailure.get_future();

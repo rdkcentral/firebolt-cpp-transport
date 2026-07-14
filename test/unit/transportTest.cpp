@@ -351,14 +351,13 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
             }
         });
 
-    websocketpp::lib::asio::io_context portIo;
-    websocketpp::lib::asio::ip::tcp::acceptor portProbe(portIo);
-    portProbe.open(websocketpp::lib::asio::ip::tcp::v4());
-    portProbe.bind(websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::tcp::v4(), 0));
-    const uint16_t headerServerPort = portProbe.local_endpoint().port();
-    portProbe.close();
+    websocketpp::lib::error_code listenEc;
+    headerServer.listen(0, listenEc);
+    ASSERT_FALSE(listenEc) << "Failed to bind header test server to ephemeral port: " << listenEc.message();
+    websocketpp::lib::asio::error_code endpointEc;
+    const uint16_t headerServerPort = headerServer.get_local_endpoint(endpointEc).port();
+    ASSERT_FALSE(endpointEc) << "Failed to query header test server local endpoint: " << endpointEc.message();
 
-    headerServer.listen(headerServerPort);
     headerServer.start_accept();
     std::thread headerServerThread([&headerServer]() { headerServer.run(); });
 
