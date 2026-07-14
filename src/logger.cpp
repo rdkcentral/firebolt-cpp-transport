@@ -304,7 +304,7 @@ std::map<Firebolt::LogLevel, const char*> _logLevelNames = {
 
 #ifdef ENABLE_SYSLOG
 // clang-format off
-std::map<Firebolt::LogLevel, int> _logLevel2SysLog = {
+const std::map<Firebolt::LogLevel, int> _logLevel2SysLog = {
     {LogLevel::Error, LOG_ERR},
     {LogLevel::Warning, LOG_WARNING},
     {LogLevel::Notice, LOG_NOTICE},
@@ -449,7 +449,8 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
     if (!tryWriteToConfiguredLogFile(formattedMsg))
     {
 #ifdef ENABLE_SYSLOG
-        syslog(_logLevel2SysLog[logLevel], "%s", formattedMsg);
+        const auto syslogLevel = _logLevel2SysLog.find(logLevel);
+        syslog(syslogLevel != _logLevel2SysLog.end() ? syslogLevel->second : LOG_ERR, "%s", formattedMsg);
 #else
         fprintf(stderr, "%s\n", formattedMsg);
         fflush(stderr);
