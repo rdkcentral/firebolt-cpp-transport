@@ -252,10 +252,18 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     }
 
     // Inject custom headers before connecting
-    for (const auto& header : headers)
+    try
     {
-        con->replace_header(header.first, header.second);
-        FIREBOLT_LOG_DEBUG("Transport", "[connect] injected header '%s'", header.first.c_str());
+        for (const auto& header : headers)
+        {
+            con->replace_header(header.first, header.second);
+            FIREBOLT_LOG_DEBUG("Transport", "[connect] injected header '%s'", header.first.c_str());
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        FIREBOLT_LOG_ERROR("Transport", "Failed to inject custom headers: %s", ex.what());
+        return Firebolt::Error::NotConnected;
     }
 
     connectionHandle_ = con->get_handle();
