@@ -285,7 +285,8 @@ Firebolt::Error Transport::disconnect()
     }
     client_->stop_perpetual();
 
-    if (connectionStatus_ == TransportState::Connected)
+    const bool closeHandshakeInitiated = (connectionStatus_ == TransportState::Connected);
+    if (closeHandshakeInitiated)
     {
         // Shorten the close-handshake timeout so that join() below does not block
         // for the full websocketpp default (5 s) if the gateway is unresponsive.
@@ -316,7 +317,8 @@ Firebolt::Error Transport::disconnect()
         client_->stop();
     }
 
-    FIREBOLT_LOG_DEBUG("Transport", "[disconnect] waiting for connectionThread join (close handshake in progress)...");
+    FIREBOLT_LOG_DEBUG("Transport", "[disconnect] waiting for connectionThread join (%s)...",
+                       closeHandshakeInitiated ? "close handshake path" : "force-stop path");
     auto t0_ct = std::chrono::steady_clock::now();
     if (connectionThread_ && connectionThread_->joinable())
     {

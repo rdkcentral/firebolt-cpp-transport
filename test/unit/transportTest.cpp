@@ -351,7 +351,13 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
             }
         });
 
-    const uint16_t headerServerPort = 9012;
+    websocketpp::lib::asio::io_context portIo;
+    websocketpp::lib::asio::ip::tcp::acceptor portProbe(portIo);
+    portProbe.open(websocketpp::lib::asio::ip::tcp::v4());
+    portProbe.bind(websocketpp::lib::asio::ip::tcp::endpoint(websocketpp::lib::asio::ip::tcp::v4(), 0));
+    const uint16_t headerServerPort = portProbe.local_endpoint().port();
+    portProbe.close();
+
     headerServer.listen(headerServerPort);
     headerServer.start_accept();
     std::thread headerServerThread([&headerServer]() { headerServer.run(); });
@@ -393,7 +399,7 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
     auto onMessage = [&](const nlohmann::json& /*msg*/) {};
 
     std::map<std::string, std::string> customHeaders = {{"X-Test-Header", "HeaderValue"}};
-    const std::string headerServerUri = "ws://localhost:9012";
+    const std::string headerServerUri = "ws://localhost:" + std::to_string(headerServerPort);
 
     Firebolt::Error err =
         transport.connect(headerServerUri, onMessage, onConnectionChange, std::nullopt, std::nullopt, customHeaders);
