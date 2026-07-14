@@ -1003,6 +1003,7 @@ TEST_F(GatewayUTest, SendNotConnected)
     IGateway& gateway = GetGatewayInstance();
     Firebolt::Config cfg = getTestConfig();
     ReservedLoopbackPort reservedPort = reserveLikelyUnusedLoopbackPort();
+    ASSERT_GE(reservedPort.fd, 0) << "Failed to reserve loopback port for SendNotConnected";
     cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(reservedPort.port);
 
     std::promise<Firebolt::Error> connectFailure;
@@ -1287,6 +1288,7 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
 
     Firebolt::Config cfg = getTestConfig();
     ReservedLoopbackPort reservedPort = reserveLikelyUnusedLoopbackPort();
+    ASSERT_GE(reservedPort.fd, 0) << "Failed to reserve loopback port for RequestFailsWhenSendErrors";
     cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(reservedPort.port);
 
     std::promise<Firebolt::Error> connectFailure;
