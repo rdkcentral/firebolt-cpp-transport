@@ -18,7 +18,9 @@
 
 #include "transport.h"
 #include "firebolt/logger.h"
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <future>
 #include <gtest/gtest.h>
@@ -281,6 +283,95 @@ TEST_F(TransportIntegrationUTest, ConnectWhenAlreadyConnected)
 
 TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
 {
+    using local_server = websocketpp::server<websocketpp::config::asio>;
+    using local_connection_hdl = websocketpp::connection_hdl;
+
+    local_server headerServer;
+    std::promise<std::string> injectedHeaderSeenPromise;
+    auto injectedHeaderSeenFuture = injectedHeaderSeenPromise.get_future();
+
+    headerServer.init_asio();
+    headerServer.set_reuse_addr(true);
+
+    headerServer.set_validate_handler(
+        [&headerServer, &injectedHeaderSeenPromise](local_connection_hdl hdl)
+        {
+            try
+            {
+                auto con = headerServer.get_con_from_hdl(hdl);
+                if (con)
+                {
+                    std::string headerValue;
+                    bool found = false;
+                    const auto& requestHeaders = con->get_request().get_headers();
+                    for (const auto& header : requestHeaders)
+                    {
+                        std::string keyLower = header.first;
+                        std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(),
+                                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                        if (keyLower == "x-test-header")
+                        {
+                            headerValue = header.second;
+                            found = true;
+                            break;
+                        }
+                    }
+                    injectedHeaderSeenPromise.set_value(found ? headerValue : std::string());
+                }
+                else
+                {
+                    injectedHeaderSeenPromise.set_value(std::string());
+                }
+            }
+            catch (const std::future_error&)
+            {
+            }
+            catch (...)
+            {
+                try
+                {
+                    injectedHeaderSeenPromise.set_value(std::string());
+                }
+                catch (const std::future_error&)
+                {
+                }
+            }
+            return true;
+        });
+
+    headerServer.set_message_handler(
+        [&headerServer](local_connection_hdl hdl, local_server::message_ptr msg)
+        {
+            try
+            {
+                headerServer.send(hdl, msg->get_payload(), msg->get_opcode());
+            }
+            catch (...)
+            {
+            }
+        });
+
+    const uint16_t headerServerPort = 9012;
+    headerServer.listen(headerServerPort);
+    headerServer.start_accept();
+    std::thread headerServerThread([&headerServer]() { headerServer.run(); });
+
+    bool headerServerStopped = false;
+    auto stopHeaderServer = [&headerServer, &headerServerThread, &headerServerStopped]()
+    {
+        if (headerServerStopped)
+        {
+            return;
+        }
+        headerServer.stop_listening();
+        headerServer.stop();
+        if (headerServerThread.joinable())
+        {
+            headerServerThread.join();
+        }
+        headerServerStopped = true;
+    };
+
     Transport transport;
     std::promise<bool> connectionPromise;
     auto connectionFuture = connectionPromise.get_future();
@@ -301,25 +392,38 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
 
     auto onMessage = [&](const nlohmann::json& /*msg*/) {};
 
-    // Custom header to inject
     std::map<std::string, std::string> customHeaders = {{"X-Test-Header", "HeaderValue"}};
+    const std::string headerServerUri = "ws://localhost:9012";
 
     Firebolt::Error err =
-        transport.connect(m_uri, onMessage, onConnectionChange, std::nullopt, std::nullopt, customHeaders);
-    ASSERT_EQ(err, Firebolt::Error::None);
+        transport.connect(headerServerUri, onMessage, onConnectionChange, std::nullopt, std::nullopt, customHeaders);
+    EXPECT_EQ(err, Firebolt::Error::None);
+    if (err != Firebolt::Error::None)
+    {
+        stopHeaderServer();
+        return;
+    }
 
     auto status = connectionFuture.wait_for(std::chrono::seconds(2));
-    ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
+    EXPECT_EQ(status, std::future_status::ready) << "Connection timed out";
+    if (status != std::future_status::ready)
+    {
+        stopHeaderServer();
+        return;
+    }
     EXPECT_TRUE(connectionFuture.get());
 
-    // The server will echo back headers, but since we use websocketpp, only standard headers may be available.
-    // We check that getResponseHeader returns something for a standard header (e.g., Sec-WebSocket-Accept)
-    // and for our custom header (may be empty if server does not echo).
+    auto headerStatus = injectedHeaderSeenFuture.wait_for(std::chrono::seconds(2));
+    EXPECT_EQ(headerStatus, std::future_status::ready) << "Server did not observe injected request header";
+    if (headerStatus == std::future_status::ready)
+    {
+        EXPECT_EQ(injectedHeaderSeenFuture.get(), "HeaderValue");
+    }
+
     auto stdHeader = transport.getResponseHeader("Sec-WebSocket-Accept");
     EXPECT_TRUE(stdHeader.has_value());
 
     auto customHeader = transport.getResponseHeader("X-Test-Header");
-    // Custom header may or may not be echoed by server implementation.
     (void)customHeader;
 
     auto definitelyMissingHeader = transport.getResponseHeader("X-Definitely-Missing-Header");
@@ -327,9 +431,9 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
 
     err = transport.disconnect();
     EXPECT_EQ(err, Firebolt::Error::None);
-
-    // Cached response headers must be cleared on disconnect.
     EXPECT_EQ(transport.getResponseHeader("Sec-WebSocket-Accept"), std::nullopt);
+
+    stopHeaderServer();
 }
 
 class TransportCustomServerUTest : public ::testing::Test
