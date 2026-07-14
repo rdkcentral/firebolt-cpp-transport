@@ -19,14 +19,49 @@
 #include "firebolt/gateway.h"
 #include "firebolt/logger.h"
 #include "utils.h"
+#include <arpa/inet.h>
 #include <atomic>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <nlohmann/json.hpp>
+#include <sys/socket.h>
 #include <thread>
+#include <unistd.h>
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
 
 using namespace Firebolt::Transport;
+
+static uint16_t findLikelyUnusedLoopbackPort()
+{
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+    {
+        return 49198;
+    }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
+    {
+        ::close(fd);
+        return 49198;
+    }
+
+    socklen_t addrLen = sizeof(addr);
+    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &addrLen) != 0)
+    {
+        ::close(fd);
+        return 49198;
+    }
+
+    const uint16_t selectedPort = ntohs(addr.sin_port);
+    ::close(fd);
+    return selectedPort;
+}
 
 TEST(GatewayUrlUtilsUTest, VerifyUrls)
 {
@@ -925,10 +960,25 @@ TEST_F(GatewayUTest, SendNotConnected)
     // Don't start the server — connect will fail
     IGateway& gateway = GetGatewayInstance();
     Firebolt::Config cfg = getTestConfig();
-    cfg.wsUrl = "ws://localhost:49199"; // No server here
+    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(findLikelyUnusedLoopbackPort());
 
-    Firebolt::Error err = gateway.connect(cfg, [](bool, const Firebolt::Error&) {});
-    ASSERT_EQ(err, Firebolt::Error::General);
+    std::promise<Firebolt::Error> connectFailure;
+    auto connectFailureFuture = connectFailure.get_future();
+    Firebolt::Error err = gateway.connect(cfg,
+                                          [&connectFailure](bool connected, const Firebolt::Error& cbErr)
+                                          {
+                                              if (!connected)
+                                              {
+                                                  connectFailure.set_value(cbErr);
+                                              }
+                                          });
+    ASSERT_TRUE(err == Firebolt::Error::General || err == Firebolt::Error::None);
+
+    if (err == Firebolt::Error::None)
+    {
+        ASSERT_EQ(connectFailureFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        EXPECT_EQ(connectFailureFuture.get(), Firebolt::Error::General);
+    }
 
     // Send should fail with NotConnected
     err = gateway.send("test.method", {});
@@ -1187,10 +1237,25 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
     IGateway& gateway = GetGatewayInstance();
 
     Firebolt::Config cfg = getTestConfig();
-    cfg.wsUrl = "ws://localhost:49198";
+    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(findLikelyUnusedLoopbackPort());
 
-    Firebolt::Error err = gateway.connect(cfg, [](bool, const Firebolt::Error&) {});
-    ASSERT_EQ(err, Firebolt::Error::General);
+    std::promise<Firebolt::Error> connectFailure;
+    auto connectFailureFuture = connectFailure.get_future();
+    Firebolt::Error err = gateway.connect(cfg,
+                                          [&connectFailure](bool connected, const Firebolt::Error& cbErr)
+                                          {
+                                              if (!connected)
+                                              {
+                                                  connectFailure.set_value(cbErr);
+                                              }
+                                          });
+    ASSERT_TRUE(err == Firebolt::Error::General || err == Firebolt::Error::None);
+
+    if (err == Firebolt::Error::None)
+    {
+        ASSERT_EQ(connectFailureFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        EXPECT_EQ(connectFailureFuture.get(), Firebolt::Error::General);
+    }
 
     // Now request — transport.send will fail with NotConnected,
     // which triggers the error branch in Client::request (lines 136-141)
