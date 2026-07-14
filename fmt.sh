@@ -15,9 +15,9 @@ fi
 RUN="docker run --rm --user $(id -u):$(id -g) -v $SCRIPT_DIR:/workspace $IMAGE bash -c"
 
 if [[ "${1:-}" == "--fix" ]]; then
-    $RUN "git config --global --add safe.directory /workspace && git ls-files -- '*.cpp' '*.h' | xargs clang-format -i"
+    $RUN "find /workspace/src /workspace/include /workspace/test -type f \( -name '*.cpp' -o -name '*.h' \) | xargs clang-format -i"
     echo "Done. Files reformatted."
 else
-    $RUN "git config --global --add safe.directory /workspace && git ls-files -- '*.cpp' '*.h' | xargs clang-format --dry-run --Werror"
+    $RUN "find /workspace/src /workspace/include /workspace/test -type f \( -name '*.cpp' -o -name '*.h' \) | xargs clang-format --dry-run --Werror"
     echo "Formatting OK."
 fi

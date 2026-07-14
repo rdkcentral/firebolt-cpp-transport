@@ -49,10 +49,32 @@ public:
 
     Firebolt::Error connect(std::string url, MessageCallback onMessage, ConnectionCallback onConnectionChange,
                             std::optional<unsigned> transportLoggingInclude = std::nullopt,
-                            std::optional<unsigned> transportLoggingExclude = std::nullopt);
+                            std::optional<unsigned> transportLoggingExclude = std::nullopt,
+                            const std::map<std::string, std::string>& headers = {});
     Firebolt::Error disconnect();
     unsigned getNextMessageID();
     Firebolt::Error send(const std::string& method, const nlohmann::json& params, const unsigned id);
+
+    /**
+     * @brief Retrieve a response header by name from the server after connection.
+     * @param headerName The name of the header to retrieve.
+     * @return The header value if present, otherwise std::nullopt.
+     */
+    std::optional<std::string> getResponseHeader(const std::string& headerName);
+
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    void testSetConnectionReceiver(ConnectionCallback callback) { connectionReceiver_ = callback; }
+
+    void testInvokeOnClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
+    {
+        onClose(c, hdl);
+    }
+
+    void testInvokeOnFail(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
+    {
+        onFail(c, hdl);
+    }
+#endif
 
 private:
     void start();
@@ -82,5 +104,7 @@ private:
     std::condition_variable messageQueueCv_;
     std::queue<std::string> messageQueue_;
     std::atomic<bool> stopMessageWorker_{false};
+    std::map<std::string, std::string> responseHeaders_;
+    std::mutex responseHeadersMutex_;
 };
 } // namespace Firebolt::Transport

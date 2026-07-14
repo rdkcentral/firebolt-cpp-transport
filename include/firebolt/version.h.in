@@ -23,4 +23,8 @@ namespace Firebolt::Transport::Version {
     constexpr int Minor = @PROJECT_VERSION_MINOR@;
     constexpr int Patch = @PROJECT_VERSION_PATCH@;
     constexpr const char* String = "@PROJECT_VERSION@";
+    constexpr const char* GitRef = "@GIT_DESCRIBE@";
+    constexpr const char* BuildTime = "@BUILD_TIMESTAMP@";
+    constexpr const char* Component = "FireboltTransport";
+    constexpr const char* Banner = "FireboltTransport version=@PROJECT_VERSION@ git=@GIT_DESCRIBE@ built=@BUILD_TIMESTAMP@";
 }

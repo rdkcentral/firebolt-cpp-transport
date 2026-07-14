@@ -21,29 +21,84 @@ endif ()
 if (NOT PROJECT_VERSION)
     set(VERSION_STRING "0.1.0-unknown")
 
-    if (EXISTS "${CMAKE_SOURCE_DIR}/.version")
+    find_package(Git QUIET)
+
+    if (GIT_FOUND)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 --match "v[0-9]*.[0-9]*.[0-9]*"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_VERSION
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_SHA
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} describe --tags --always --dirty
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_DESCRIBE
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif ()
+
+    if (GIT_VERSION)
+        string(REGEX REPLACE "^v" "" VERSION_STRING "${GIT_VERSION}")
+    endif ()
+
+    if(VERSION_STRING STREQUAL "0.1.0-unknown" AND EXISTS "${CMAKE_SOURCE_DIR}/.version")
         file(READ "${CMAKE_SOURCE_DIR}/.version" VERSION_STRING)
         string(STRIP "${VERSION_STRING}" VERSION_STRING)
-    else ()
-        find_package(Git QUIET)
-
-        if (GIT_FOUND)
-            execute_process(
-                COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 --match "v[0-9]*.[0-9]*.[0-9]*"
-                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                OUTPUT_VARIABLE GIT_VERSION
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                ERROR_QUIET
-            )
-        endif ()
-
-        if (GIT_VERSION)
-            string(REGEX REPLACE "^v" "" VERSION_STRING "${GIT_VERSION}")
-        endif ()
-    endif ()
+    endif()
 
     set(PROJECT_VERSION "${VERSION_STRING}" CACHE STRING "Project version string")
     set(PROJECT_VERSION "${VERSION_STRING}")
+endif ()
+
+if (NOT GIT_SHA)
+    set(GIT_SHA "unknown")
+endif ()
+if (NOT GIT_DESCRIBE)
+    set(GIT_DESCRIBE "${GIT_SHA}")
+endif ()
+
+# Allow build system (e.g. Yocto) to override the git ref label when no .git
+# directory is present (tarball builds). Pass -DFIREBOLT_GIT_REF=<value> from
+# EXTRA_OECMAKE in a dev bbappend (e.g. -DFIREBOLT_GIT_REF=${SRCREV}).
+if (FIREBOLT_GIT_REF)
+    string(LENGTH "${FIREBOLT_GIT_REF}" _ref_len)
+    if (_ref_len GREATER 8)
+        string(SUBSTRING "${FIREBOLT_GIT_REF}" 0 8 GIT_SHA)
+    else ()
+        set(GIT_SHA "${FIREBOLT_GIT_REF}")
+    endif ()
+    set(GIT_DESCRIBE "${GIT_SHA}")
+elseif (GIT_DESCRIBE STREQUAL "unknown")
+    # No git and no override: this is a release tarball build — use the version
+    # as the ref since it corresponds to the tagged release.
+    set(GIT_DESCRIBE "v${PROJECT_VERSION}")
+    set(GIT_SHA "v${PROJECT_VERSION}")
+endif ()
+
+# Honor SOURCE_DATE_EPOCH for reproducible/cached builds (common Yocto/Debian convention).
+if (DEFINED ENV{SOURCE_DATE_EPOCH})
+    execute_process(
+        COMMAND date --utc "--date=@$ENV{SOURCE_DATE_EPOCH}" "+%Y-%m-%dT%H:%M:%SZ"
+        OUTPUT_VARIABLE BUILD_TIMESTAMP
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _sde_result
+        ERROR_QUIET
+    )
+    if (NOT _sde_result EQUAL 0)
+        string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
+    endif ()
+else ()
+    string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
 endif ()
 
 set(VERSION "${PROJECT_VERSION}")

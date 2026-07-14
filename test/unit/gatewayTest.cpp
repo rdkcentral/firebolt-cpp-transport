@@ -1354,3 +1354,31 @@ TEST_F(GatewayUTest, LegacyUnsubscribeIteratesPastNonMatchingEntry)
     err = gateway.unsubscribe("test.onEventA", &cbA);
     EXPECT_EQ(err, Firebolt::Error::None);
 }
+
+// Regression test: disconnect() must cancel all pending requests so that calling
+// threads blocked on future.get() unblock immediately with NotConnected rather
+// than hanging indefinitely.
+TEST_F(GatewayUTest, DisconnectCancelsPendingRequests)
+{
+    // Set a message handler that silently swallows every message — simulating a
+    // gateway that accepts the connection but never responds to a request.
+    m_messageHandler = [](connection_hdl, server::message_ptr) {};
+
+    IGateway& gateway = connectAndWait();
+
+    // Fire a request that the server will never answer.
+    auto responseFuture = gateway.request("test.neverResponds", nlohmann::json{});
+
+    // The request is now in-flight and the future is pending. Disconnect before
+    // the watchdog timeout (waitTime_ms = 1000 ms) fires.
+    Firebolt::Error disconnectErr = gateway.disconnect();
+    EXPECT_EQ(disconnectErr, Firebolt::Error::None);
+
+    // After disconnect() returns, cancelAll() must have resolved the promise.
+    // The future must be immediately ready — no waiting required.
+    ASSERT_EQ(responseFuture.wait_for(std::chrono::milliseconds(0)), std::future_status::ready);
+
+    auto result = responseFuture.get();
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), Firebolt::Error::NotConnected);
+}
