@@ -308,6 +308,11 @@ Firebolt::Error Transport::disconnect()
             FIREBOLT_LOG_ERROR("Transport", "Error closing connection: %s", ec.message().c_str());
         }
     }
+    else
+    {
+        // Force-stop pending async ops (DNS/connect/handshake) so run() can exit promptly.
+        client_->stop();
+    }
 
     FIREBOLT_LOG_DEBUG("Transport", "[disconnect] waiting for connectionThread join (close handshake in progress)...");
     auto t0_ct = std::chrono::steady_clock::now();
@@ -329,6 +334,10 @@ Firebolt::Error Transport::disconnect()
                                              .count()));
 
     client_ = std::make_unique<client>();
+    {
+        std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+        responseHeaders_.clear();
+    }
     connectionStatus_ = TransportState::NotStarted;
     FIREBOLT_LOG_DEBUG("Transport", "[disconnect] transport reset complete, state=%d",
                        static_cast<int>(connectionStatus_.load()));

@@ -486,6 +486,7 @@ class GatewayImpl : public IGateway, private IClientTransport
 {
 private:
     ConnectionChangeCallback connectionChangeListener;
+    std::mutex connectionChangeListener_mtx;
     Transport transport;
     Client client;
     Server server;
@@ -534,7 +535,12 @@ public:
         Firebolt::Logger::setFormat(cfg.log.format.ts, cfg.log.format.location, cfg.log.format.function,
                                     cfg.log.format.thread);
 
-        connectionChangeListener = onConnectionChange;
+        ConnectionChangeCallback previousConnectionChangeListener;
+        {
+            std::lock_guard<std::mutex> lock(connectionChangeListener_mtx);
+            previousConnectionChangeListener = connectionChangeListener;
+            connectionChangeListener = onConnectionChange;
+        }
 
         runtime_waitTime_ms = cfg.waitTime_ms;
         legacyRPCv1 = cfg.legacyRPCv1;
@@ -585,6 +591,8 @@ public:
 
         if (status != Firebolt::Error::None)
         {
+            std::lock_guard<std::mutex> lock(connectionChangeListener_mtx);
+            connectionChangeListener = std::move(previousConnectionChangeListener);
             FIREBOLT_LOG_ERROR("Gateway", "[connect] transport connect failed status=%d", static_cast<int>(status));
             return status;
         }
@@ -896,7 +904,20 @@ private:
             FIREBOLT_LOG_NOTICE("Gateway", "[connection] state=%s error=%d suppressed_repeats=%zu",
                                 connected ? "connected" : "disconnected", static_cast<int>(error), suppressedCount);
         }
-        connectionChangeListener(connected, error);
+        ConnectionChangeCallback listener;
+        {
+            std::lock_guard<std::mutex> lock(connectionChangeListener_mtx);
+            listener = connectionChangeListener;
+        }
+
+        if (listener)
+        {
+            listener(connected, error);
+        }
+        else
+        {
+            FIREBOLT_LOG_WARNING("Gateway", "[connection] no connectionChangeListener installed");
+        }
     }
 
     MessageID getNextMessageID() override { return transport.getNextMessageID(); }

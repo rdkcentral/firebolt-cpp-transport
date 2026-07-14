@@ -969,7 +969,13 @@ TEST_F(GatewayUTest, SendNotConnected)
                                           {
                                               if (!connected)
                                               {
-                                                  connectFailure.set_value(cbErr);
+                                                  try
+                                                  {
+                                                      connectFailure.set_value(cbErr);
+                                                  }
+                                                  catch (const std::future_error&)
+                                                  {
+                                                  }
                                               }
                                           });
     ASSERT_TRUE(err == Firebolt::Error::General || err == Firebolt::Error::None);
@@ -1246,7 +1252,13 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
                                           {
                                               if (!connected)
                                               {
-                                                  connectFailure.set_value(cbErr);
+                                                  try
+                                                  {
+                                                      connectFailure.set_value(cbErr);
+                                                  }
+                                                  catch (const std::future_error&)
+                                                  {
+                                                  }
                                               }
                                           });
     ASSERT_TRUE(err == Firebolt::Error::General || err == Firebolt::Error::None);

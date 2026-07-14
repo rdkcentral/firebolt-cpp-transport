@@ -130,7 +130,13 @@ TEST_F(TransportIntegrationUTest, ConnectAndDisconnect)
     {
         if (connected)
         {
-            connectionPromise.set_value(true);
+            try
+            {
+                connectionPromise.set_value(true);
+            }
+            catch (const std::future_error&)
+            {
+            }
         }
     };
 
@@ -301,11 +307,17 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
     EXPECT_TRUE(stdHeader.has_value());
 
     auto customHeader = transport.getResponseHeader("X-Test-Header");
-    // Custom header may not be echoed by server, but should not crash
-    EXPECT_TRUE(customHeader == std::nullopt || customHeader.has_value());
+    // Custom header may or may not be echoed by server implementation.
+    (void)customHeader;
+
+    auto definitelyMissingHeader = transport.getResponseHeader("X-Definitely-Missing-Header");
+    EXPECT_EQ(definitelyMissingHeader, std::nullopt);
 
     err = transport.disconnect();
     EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Cached response headers must be cleared on disconnect.
+    EXPECT_EQ(transport.getResponseHeader("Sec-WebSocket-Accept"), std::nullopt);
 }
 
 class TransportCustomServerUTest : public ::testing::Test
