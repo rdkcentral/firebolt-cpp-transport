@@ -293,7 +293,7 @@ bool tryWriteToConfiguredLogFile(const char* message)
 /* static */ bool Logger::formatter_addFunction = true;
 
 // clang-format off
-std::map<Firebolt::LogLevel, const char*> _logLevelNames = {
+const std::map<Firebolt::LogLevel, const char*> _logLevelNames = {
     {LogLevel::Error, "Error"},
     {LogLevel::Warning, "Warning"},
     {LogLevel::Notice, "Notice"},
@@ -392,7 +392,8 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
         time = timeBuf;
     }
 
-    const std::string levelName = _logLevelNames[logLevel];
+    const auto levelNameIt = _logLevelNames.find(logLevel);
+    const std::string levelName = (levelNameIt != _logLevelNames.end()) ? levelNameIt->second : "Unknown";
 
     std::string fileName;
     if (formatter_addLocation)
