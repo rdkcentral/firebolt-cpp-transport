@@ -165,7 +165,13 @@ TEST_F(TransportIntegrationUTest, SendAndReceiveMessage)
     {
         if (connected)
         {
-            connectionPromise.set_value(true);
+            try
+            {
+                connectionPromise.set_value(true);
+            }
+            catch (const std::future_error&)
+            {
+            }
         }
     };
 
