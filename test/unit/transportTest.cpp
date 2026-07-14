@@ -26,6 +26,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <utility>
 #include <websocketpp/base64/base64.hpp>
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
@@ -316,7 +317,7 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
                             break;
                         }
                     }
-                    injectedHeaderSeenPromise.set_value(found ? headerValue : std::string());
+                    injectedHeaderSeenPromise.set_value(found ? std::move(headerValue) : std::string());
                 }
                 else
                 {
@@ -400,8 +401,8 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
     std::map<std::string, std::string> customHeaders = {{"X-Test-Header", "HeaderValue"}};
     const std::string headerServerUri = "ws://localhost:" + std::to_string(headerServerPort);
 
-    Firebolt::Error err =
-        transport.connect(headerServerUri, onMessage, onConnectionChange, std::nullopt, std::nullopt, customHeaders);
+    Firebolt::Error err = transport.connect(std::move(headerServerUri), onMessage, onConnectionChange, std::nullopt,
+                                            std::nullopt, customHeaders);
     EXPECT_EQ(err, Firebolt::Error::None);
     if (err != Firebolt::Error::None)
     {

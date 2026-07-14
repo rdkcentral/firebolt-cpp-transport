@@ -24,6 +24,7 @@
 #include <functional>
 #include <future>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 
 namespace Firebolt::Transport
