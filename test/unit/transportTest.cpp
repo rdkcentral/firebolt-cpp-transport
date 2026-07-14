@@ -430,7 +430,7 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
     EXPECT_TRUE(stdHeader.has_value());
 
     auto customHeader = transport.getResponseHeader("X-Test-Header");
-    (void)customHeader;
+    EXPECT_EQ(customHeader, std::nullopt);
 
     auto definitelyMissingHeader = transport.getResponseHeader("X-Definitely-Missing-Header");
     EXPECT_EQ(definitelyMissingHeader, std::nullopt);

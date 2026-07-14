@@ -421,19 +421,30 @@ void Transport::onMessage(websocketpp::connection_hdl /* hdl */,
 
 void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
-    client::connection_ptr con = c->get_con_from_hdl(hdl);
     // Populate responseHeaders_ from the connection's response headers
     {
         std::lock_guard<std::mutex> lock(responseHeadersMutex_);
         responseHeaders_.clear();
-        if (con)
+        try
         {
-            const auto& headers = con->get_response().get_headers();
-            for (const auto& header : headers)
+            client::connection_ptr con = c->get_con_from_hdl(hdl);
+            if (con)
             {
-                responseHeaders_[header.first] = header.second;
+                const auto& headers = con->get_response().get_headers();
+                for (const auto& header : headers)
+                {
+                    responseHeaders_[header.first] = header.second;
+                }
+                FIREBOLT_LOG_DEBUG("Transport", "[onOpen] stored response headers=%zu", responseHeaders_.size());
             }
-            FIREBOLT_LOG_DEBUG("Transport", "[onOpen] stored response headers=%zu", responseHeaders_.size());
+            else
+            {
+                FIREBOLT_LOG_WARNING("Transport", "[onOpen] connection handle resolved to null");
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            FIREBOLT_LOG_WARNING("Transport", "[onOpen] failed to resolve connection handle (%s)", ex.what());
         }
     }
     connectionStatus_ = TransportState::Connected;
