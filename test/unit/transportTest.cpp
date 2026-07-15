@@ -18,12 +18,15 @@
 
 #include "transport.h"
 #include "firebolt/logger.h"
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <future>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <utility>
 #include <websocketpp/base64/base64.hpp>
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
@@ -130,7 +133,13 @@ TEST_F(TransportIntegrationUTest, ConnectAndDisconnect)
     {
         if (connected)
         {
-            connectionPromise.set_value(true);
+            try
+            {
+                connectionPromise.set_value(true);
+            }
+            catch (const std::future_error&)
+            {
+            }
         }
     };
 
@@ -159,7 +168,13 @@ TEST_F(TransportIntegrationUTest, SendAndReceiveMessage)
     {
         if (connected)
         {
-            connectionPromise.set_value(true);
+            try
+            {
+                connectionPromise.set_value(true);
+            }
+            catch (const std::future_error&)
+            {
+            }
         }
     };
 
@@ -265,6 +280,166 @@ TEST_F(TransportIntegrationUTest, ConnectWhenAlreadyConnected)
 
     err = transport.disconnect();
     EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
+{
+    using local_server = websocketpp::server<websocketpp::config::asio>;
+    using local_connection_hdl = websocketpp::connection_hdl;
+
+    local_server headerServer;
+    std::promise<std::string> injectedHeaderSeenPromise;
+    auto injectedHeaderSeenFuture = injectedHeaderSeenPromise.get_future();
+
+    headerServer.init_asio();
+    headerServer.set_reuse_addr(true);
+
+    headerServer.set_validate_handler(
+        [&headerServer, &injectedHeaderSeenPromise](local_connection_hdl hdl)
+        {
+            try
+            {
+                auto con = headerServer.get_con_from_hdl(hdl);
+                if (con)
+                {
+                    std::string headerValue;
+                    bool found = false;
+                    const auto& requestHeaders = con->get_request().get_headers();
+                    for (const auto& header : requestHeaders)
+                    {
+                        std::string keyLower = header.first;
+                        std::transform(keyLower.begin(), keyLower.end(), keyLower.begin(),
+                                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                        if (keyLower == "x-test-header")
+                        {
+                            headerValue = header.second;
+                            found = true;
+                            break;
+                        }
+                    }
+                    injectedHeaderSeenPromise.set_value(found ? std::move(headerValue) : std::string());
+                }
+                else
+                {
+                    injectedHeaderSeenPromise.set_value(std::string());
+                }
+            }
+            catch (const std::future_error&)
+            {
+            }
+            catch (...)
+            {
+                try
+                {
+                    injectedHeaderSeenPromise.set_value(std::string());
+                }
+                catch (const std::future_error&)
+                {
+                }
+            }
+            return true;
+        });
+
+    headerServer.set_message_handler(
+        [&headerServer](local_connection_hdl hdl, local_server::message_ptr msg)
+        {
+            try
+            {
+                headerServer.send(hdl, msg->get_payload(), msg->get_opcode());
+            }
+            catch (...)
+            {
+            }
+        });
+
+    websocketpp::lib::error_code listenEc;
+    headerServer.listen(0, listenEc);
+    ASSERT_FALSE(listenEc) << "Failed to bind header test server to ephemeral port: " << listenEc.message();
+    websocketpp::lib::asio::error_code endpointEc;
+    const uint16_t headerServerPort = headerServer.get_local_endpoint(endpointEc).port();
+    ASSERT_FALSE(endpointEc) << "Failed to query header test server local endpoint: " << endpointEc.message();
+
+    headerServer.start_accept();
+    std::thread headerServerThread([&headerServer]() { headerServer.run(); });
+
+    bool headerServerStopped = false;
+    auto stopHeaderServer = [&headerServer, &headerServerThread, &headerServerStopped]()
+    {
+        if (headerServerStopped)
+        {
+            return;
+        }
+        headerServer.stop_listening();
+        headerServer.stop();
+        if (headerServerThread.joinable())
+        {
+            headerServerThread.join();
+        }
+        headerServerStopped = true;
+    };
+
+    Transport transport;
+    std::promise<bool> connectionPromise;
+    auto connectionFuture = connectionPromise.get_future();
+
+    auto onConnectionChange = [&](bool connected, const Firebolt::Error& /*err*/)
+    {
+        if (connected)
+        {
+            try
+            {
+                connectionPromise.set_value(true);
+            }
+            catch (const std::future_error&)
+            {
+            }
+        }
+    };
+
+    auto onMessage = [&](const nlohmann::json& /*msg*/) {};
+
+    std::map<std::string, std::string> customHeaders = {{"X-Test-Header", "HeaderValue"}};
+    const std::string headerServerUri = "ws://localhost:" + std::to_string(headerServerPort);
+
+    Firebolt::Error err = transport.connect(std::move(headerServerUri), onMessage, onConnectionChange, std::nullopt,
+                                            std::nullopt, customHeaders);
+    EXPECT_EQ(err, Firebolt::Error::None);
+    if (err != Firebolt::Error::None)
+    {
+        stopHeaderServer();
+        return;
+    }
+
+    auto status = connectionFuture.wait_for(std::chrono::seconds(2));
+    EXPECT_EQ(status, std::future_status::ready) << "Connection timed out";
+    if (status != std::future_status::ready)
+    {
+        stopHeaderServer();
+        return;
+    }
+    EXPECT_TRUE(connectionFuture.get());
+
+    auto headerStatus = injectedHeaderSeenFuture.wait_for(std::chrono::seconds(2));
+    EXPECT_EQ(headerStatus, std::future_status::ready) << "Server did not observe injected request header";
+    if (headerStatus == std::future_status::ready)
+    {
+        EXPECT_EQ(injectedHeaderSeenFuture.get(), "HeaderValue");
+    }
+
+    auto stdHeader = transport.getResponseHeader("Sec-WebSocket-Accept");
+    EXPECT_TRUE(stdHeader.has_value());
+
+    auto customHeader = transport.getResponseHeader("X-Test-Header");
+    EXPECT_EQ(customHeader, std::nullopt);
+
+    auto definitelyMissingHeader = transport.getResponseHeader("X-Definitely-Missing-Header");
+    EXPECT_EQ(definitelyMissingHeader, std::nullopt);
+
+    err = transport.disconnect();
+    EXPECT_EQ(err, Firebolt::Error::None);
+    EXPECT_EQ(transport.getResponseHeader("Sec-WebSocket-Accept"), std::nullopt);
+
+    stopHeaderServer();
 }
 
 class TransportCustomServerUTest : public ::testing::Test

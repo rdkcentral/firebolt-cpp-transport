@@ -1,0 +1,15 @@
+{
+  "name": "transport-slides",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Slidev deck for Firebolt C++ Transport",
+  "scripts": {
+    "dev": "slidev --remote",
+    "build": "slidev build",
+    "export": "slidev export"
+  },
+  "dependencies": {
+    "@slidev/cli": "^0.48.0",
+    "@slidev/theme-default": "^0.25.0"
+  }
+}
