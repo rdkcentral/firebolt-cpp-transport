@@ -2,7 +2,6 @@
 
 > **Target audience**: AI agents (Copilot, openspec), contributors, and reviewers.
 > **Status**: Each rule is labeled *(enforce)*, *(adopt going forward)*, or *(anti-pattern)*.
-> **Language standard**: C++17 (`CXX_STANDARD 17`, `CXX_STANDARD_REQUIRED YES` in `src/CMakeLists.txt` and `test/CMakeLists.txt`). Do not use features from C++20 or later.
 > **Format enforcement**: clang-format (`.clang-format`) and the CI format-check job handle all whitespace and layout rules — those are not restated here.
 > **How to verify locally**: `./fmt.sh --fix` (reformat), `./test.sh` (build + test).
 
@@ -35,15 +34,15 @@ The repo is a pure outbound WebSocket + JSON-RPC transport library. The public s
 
 Every header placed in `include/firebolt/` is part of the public ABI consumed by downstream Firebolt C++ SDKs. Currently: `gateway.h`, `helpers.h`, `json_types.h`, `types.h`, `logger.h`, plus generated `config.h` and `transport_export.h`.
 
-**Rule**: Do not add websocketpp, boost, or any third-party type to any header under `include/firebolt/`. All third-party includes stay inside `src/`.
+**Rule**: Do not add `<websocketpp/...>` or `<boost/...>` includes, or any type from those libraries, to any header under `include/firebolt/`. The sole approved third-party type in public headers is `nlohmann::json`, which is already part of the established public ABI: `EventCallback`, `IGateway::request()`, `IGateway::send()`, and all JSON type adapters in `json_types.h` depend on `nlohmann::json` as the wire-format representation. Do not add any further third-party includes to `include/firebolt/` beyond `nlohmann/json.hpp`.
 
-Evidence: `transport.h` (which includes `<websocketpp/...>`) lives in `src/`, not `include/`.
+Evidence: `transport.h` (which includes `<websocketpp/...>`) lives in `src/`, not `include/`. `include/firebolt/gateway.h` and `include/firebolt/helpers.h` include `<nlohmann/json.hpp>` — this is intentional and must remain.
 
 ---
 
 ### 1.2 `IGateway` is the sole public interface for transport *(enforce)*
 
-`IGateway` (`include/firebolt/gateway.h`) is what consumers call. The concrete `GatewayImpl` class is defined entirely inside `src/gateway.cpp` and is never named outside that file. Access is only through the factory:
+`IGateway` (`include/firebolt/gateway.h`) is what consumers call. The concrete `GatewayImpl` class is defined entirely inside `src/gateway.cpp` and is not declared in any header — it is unreachable by name through any `#include` path. Access is only through the factory:
 
 ```cpp
 // include/firebolt/gateway.h
@@ -157,11 +156,13 @@ Every abstract class with pure virtual methods uses an `I` prefix: `IGateway`, `
 
 | Example | File |
 |---------|------|
-| `getNextMessageID()`, `fromJson()`, `has_value()` | `src/transport.h`, `include/firebolt/json_types.h`, `include/firebolt/types.h` |
+| `getNextMessageID()`, `fromJson()`, `errorInfo()` | `src/transport.h`, `include/firebolt/json_types.h`, `include/firebolt/types.h` |
 | `stopNotificationWorker()`, `ensureNotificationWorkerStarted()` | `src/gateway.cpp` |
 | `checkRequiredFields()`, `isAnySubscriber()` | `include/firebolt/json_types.h`, `src/gateway.cpp` |
 
-**Rule**: All method names (public and private) use camelCase, including getters/setters (`value()`, `error()`, `errorInfo()`). No `get_value()` or `GetValue()` style.
+**Rule**: All new method names (public and private) use camelCase, including getters/setters (`value()`, `error()`, `errorInfo()`). No `get_value()` or `GetValue()` style.
+
+**Exception**: `Result<T>::has_value()` uses underscores deliberately — it mirrors the `std::optional<T>` interface. It is not a camelCase method and must not be cited as one. Do not introduce new underscore-separated method names modeled on this exception.
 
 ---
 
@@ -798,7 +799,7 @@ using EventCallback = std::function<void(void* usercb, const nlohmann::json& par
 template <typename T> class NL_Json_Basic {
 public:
     virtual void fromJson(const nlohmann::json& json) = 0;
-    T virtual value() const = 0;
+    virtual T value() const = 0;
 };
 
 using String = BasicType<std::string>;
@@ -809,6 +810,8 @@ using Integer = BasicType<int32_t>;
 ```
 
 **Rule**: New JSON-mapped types in `Firebolt::JSON` must inherit from `NL_Json_Basic<T>` and implement `fromJson()` and `value()`. Do not create ad-hoc structs that manually parse `nlohmann::json` without going through this interface — consistency here is required for the `IHelper::get<JsonType, PropertyType>()` template to work correctly.
+
+**Cleanup**: `include/firebolt/json_types.h` line 61 declares `T virtual value() const = 0;` — placing `virtual` after the return type is a non-standard compiler extension accepted by GCC/Clang but not required by the C++17 standard. The conformant form is `virtual T value() const = 0;`. Correct this in a follow-on PR.
 
 ---
 
@@ -927,7 +930,7 @@ These conventions are observed consistently but are not documented in any existi
 
 ## 11. Relationship to Other Policy Files
 
-This document is the **single authoritative source** for all coding conventions, architecture rules, testing patterns, and build tooling guidance in `firebolt-cpp-transport`. CI branch targets and release tag format are intentionally absent — they are not coding conventions.
+This document is the **single authoritative source** for all coding conventions, architecture rules, testing patterns, and build tooling guidance in `firebolt-cpp-transport`. All rules previously in `.github/copilot-instructions.md` are either covered here or are intentionally absent because they are not coding conventions (CI branch targets, release tag format).
 
 | File | Scope |
 |------|-------|
