@@ -19,14 +19,91 @@
 #include "firebolt/gateway.h"
 #include "firebolt/logger.h"
 #include "utils.h"
+#include <arpa/inet.h>
 #include <atomic>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <nlohmann/json.hpp>
+#include <sys/socket.h>
 #include <thread>
+#include <unistd.h>
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
 
 using namespace Firebolt::Transport;
+
+struct ReservedLoopbackPort
+{
+    int fd = -1;
+    uint16_t port = 49198;
+
+    ReservedLoopbackPort() = default;
+    ReservedLoopbackPort(const ReservedLoopbackPort&) = delete;
+    ReservedLoopbackPort& operator=(const ReservedLoopbackPort&) = delete;
+
+    ReservedLoopbackPort(ReservedLoopbackPort&& other) noexcept
+        : fd(other.fd),
+          port(other.port)
+    {
+        other.fd = -1;
+    }
+
+    ReservedLoopbackPort& operator=(ReservedLoopbackPort&& other) noexcept
+    {
+        if (this != &other)
+        {
+            if (fd >= 0)
+            {
+                ::close(fd);
+            }
+            fd = other.fd;
+            port = other.port;
+            other.fd = -1;
+        }
+        return *this;
+    }
+
+    ~ReservedLoopbackPort()
+    {
+        if (fd >= 0)
+        {
+            ::close(fd);
+        }
+    }
+};
+
+static ReservedLoopbackPort reserveLikelyUnusedLoopbackPort()
+{
+    ReservedLoopbackPort reserved;
+    reserved.fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (reserved.fd < 0)
+    {
+        return reserved;
+    }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+
+    if (::bind(reserved.fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
+    {
+        ::close(reserved.fd);
+        reserved.fd = -1;
+        return reserved;
+    }
+
+    socklen_t addrLen = sizeof(addr);
+    if (::getsockname(reserved.fd, reinterpret_cast<sockaddr*>(&addr), &addrLen) != 0)
+    {
+        ::close(reserved.fd);
+        reserved.fd = -1;
+        return reserved;
+    }
+
+    reserved.port = ntohs(addr.sin_port);
+    return reserved;
+}
 
 TEST(GatewayUrlUtilsUTest, VerifyUrls)
 {
@@ -924,32 +1001,34 @@ TEST_F(GatewayUTest, SendNotConnected)
 {
     // Don't start the server — connect will fail
     IGateway& gateway = GetGatewayInstance();
-    // Don't connect, just try to send on a fresh instance (already disconnected from TearDown)
-    // The gateway instance is a singleton, so we need to rely on the state being disconnected
-    // after TearDown was called in a previous test
-    // Instead, let's connect to a non-existent server and verify send after connection failure
-    std::promise<bool> connPromise;
-    auto connFuture = connPromise.get_future();
-    std::atomic<bool> promiseSet{false};
-
     Firebolt::Config cfg = getTestConfig();
-    cfg.wsUrl = "ws://localhost:49199"; // No server here
+    ReservedLoopbackPort reservedPort = reserveLikelyUnusedLoopbackPort();
+    ASSERT_GE(reservedPort.fd, 0) << "Failed to reserve loopback port for SendNotConnected";
+    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(reservedPort.port);
 
+    std::promise<Firebolt::Error> connectFailure;
+    auto connectFailureFuture = connectFailure.get_future();
     Firebolt::Error err = gateway.connect(cfg,
-                                          [&](bool connected, const Firebolt::Error&)
+                                          [&connectFailure](bool connected, const Firebolt::Error& cbErr)
                                           {
-                                              bool expected = false;
-                                              if (promiseSet.compare_exchange_strong(expected, true))
+                                              if (!connected)
                                               {
-                                                  connPromise.set_value(connected);
+                                                  try
+                                                  {
+                                                      connectFailure.set_value(cbErr);
+                                                  }
+                                                  catch (const std::future_error&)
+                                                  {
+                                                  }
                                               }
                                           });
-    ASSERT_EQ(err, Firebolt::Error::None);
+    ASSERT_TRUE(err == Firebolt::Error::General || err == Firebolt::Error::None);
 
-    // Wait for connection failure — assert so we don't proceed with dangling callback refs
-    auto status = connFuture.wait_for(std::chrono::milliseconds(2000));
-    ASSERT_EQ(status, std::future_status::ready) << "Connection failure callback not received";
-    EXPECT_FALSE(connFuture.get());
+    if (err == Firebolt::Error::None)
+    {
+        ASSERT_EQ(connectFailureFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        EXPECT_EQ(connectFailureFuture.get(), Firebolt::Error::General);
+    }
 
     // Send should fail with NotConnected
     err = gateway.send("test.method", {});
@@ -1206,25 +1285,35 @@ TEST_F(GatewayUTest, RequestFailsWhenSendErrors)
     // Don't start server — connect to a port nobody listens on
     // so transport is in Disconnected state after connection failure
     IGateway& gateway = GetGatewayInstance();
-    std::promise<bool> connPromise;
-    auto connFuture = connPromise.get_future();
-    std::atomic<bool> pset{false};
 
     Firebolt::Config cfg = getTestConfig();
-    cfg.wsUrl = "ws://localhost:49198";
+    ReservedLoopbackPort reservedPort = reserveLikelyUnusedLoopbackPort();
+    ASSERT_GE(reservedPort.fd, 0) << "Failed to reserve loopback port for RequestFailsWhenSendErrors";
+    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(reservedPort.port);
 
+    std::promise<Firebolt::Error> connectFailure;
+    auto connectFailureFuture = connectFailure.get_future();
     Firebolt::Error err = gateway.connect(cfg,
-                                          [&](bool connected, const Firebolt::Error&)
+                                          [&connectFailure](bool connected, const Firebolt::Error& cbErr)
                                           {
-                                              bool exp = false;
-                                              if (pset.compare_exchange_strong(exp, true))
-                                                  connPromise.set_value(connected);
+                                              if (!connected)
+                                              {
+                                                  try
+                                                  {
+                                                      connectFailure.set_value(cbErr);
+                                                  }
+                                                  catch (const std::future_error&)
+                                                  {
+                                                  }
+                                              }
                                           });
-    ASSERT_EQ(err, Firebolt::Error::None);
+    ASSERT_TRUE(err == Firebolt::Error::General || err == Firebolt::Error::None);
 
-    // Assert callback arrives — prevents proceeding with dangling refs
-    auto connStatus = connFuture.wait_for(std::chrono::milliseconds(2000));
-    ASSERT_EQ(connStatus, std::future_status::ready) << "Connection failure callback not received";
+    if (err == Firebolt::Error::None)
+    {
+        ASSERT_EQ(connectFailureFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        EXPECT_EQ(connectFailureFuture.get(), Firebolt::Error::General);
+    }
 
     // Now request — transport.send will fail with NotConnected,
     // which triggers the error branch in Client::request (lines 136-141)

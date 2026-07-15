@@ -32,6 +32,7 @@ using message_ptr = websocketpp::config::asio_client::message_type::ptr;
 enum class Transport::TransportState
 {
     NotStarted,
+    Connecting,
     Connected,
     Disconnected,
 };
@@ -159,9 +160,10 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
                                    std::optional<unsigned> transportLoggingExclude,
                                    const std::map<std::string, std::string>& headers)
 {
-    if (connectionStatus_ == TransportState::Connected)
+    const auto state = connectionStatus_.load();
+    if (state == TransportState::Connected || state == TransportState::Connecting)
     {
-        FIREBOLT_LOG_WARNING("Transport", "Connect called when already connected. Ignoring");
+        FIREBOLT_LOG_WARNING("Transport", "Connect called while connection is already active/in-progress. Ignoring");
         return Firebolt::Error::AlreadyConnected;
     }
 
@@ -250,10 +252,18 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     }
 
     // Inject custom headers before connecting
-    for (const auto& header : headers)
+    try
     {
-        con->replace_header(header.first, header.second);
-        FIREBOLT_LOG_DEBUG("Transport", "[connect] injected header '%s'", header.first.c_str());
+        for (const auto& header : headers)
+        {
+            con->replace_header(header.first, header.second);
+            FIREBOLT_LOG_DEBUG("Transport", "[connect] injected header '%s'", header.first.c_str());
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        FIREBOLT_LOG_ERROR("Transport", "Failed to inject custom headers: %s", ex.what());
+        return Firebolt::Error::NotConnected;
     }
 
     connectionHandle_ = con->get_handle();
@@ -268,6 +278,7 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     con->set_message_handler(websocketpp::lib::bind(&Transport::onMessage, this, websocketpp::lib::placeholders::_1,
                                                     websocketpp::lib::placeholders::_2));
 
+    connectionStatus_ = TransportState::Connecting;
     client_->connect(con);
     FIREBOLT_LOG_DEBUG("Transport", "[connect] connect() dispatched to websocket client");
 
@@ -283,7 +294,8 @@ Firebolt::Error Transport::disconnect()
     }
     client_->stop_perpetual();
 
-    if (connectionStatus_ == TransportState::Connected)
+    const bool closeHandshakeInitiated = (connectionStatus_ == TransportState::Connected);
+    if (closeHandshakeInitiated)
     {
         // Shorten the close-handshake timeout so that join() below does not block
         // for the full websocketpp default (5 s) if the gateway is unresponsive.
@@ -308,8 +320,14 @@ Firebolt::Error Transport::disconnect()
             FIREBOLT_LOG_ERROR("Transport", "Error closing connection: %s", ec.message().c_str());
         }
     }
+    else
+    {
+        // Force-stop pending async ops (DNS/connect/handshake) so run() can exit promptly.
+        client_->stop();
+    }
 
-    FIREBOLT_LOG_DEBUG("Transport", "[disconnect] waiting for connectionThread join (close handshake in progress)...");
+    FIREBOLT_LOG_DEBUG("Transport", "[disconnect] waiting for connectionThread join (%s)...",
+                       closeHandshakeInitiated ? "close handshake path" : "force-stop path");
     auto t0_ct = std::chrono::steady_clock::now();
     if (connectionThread_ && connectionThread_->joinable())
     {
@@ -329,6 +347,10 @@ Firebolt::Error Transport::disconnect()
                                              .count()));
 
     client_ = std::make_unique<client>();
+    {
+        std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+        responseHeaders_.clear();
+    }
     connectionStatus_ = TransportState::NotStarted;
     FIREBOLT_LOG_DEBUG("Transport", "[disconnect] transport reset complete, state=%d",
                        static_cast<int>(connectionStatus_.load()));
@@ -395,34 +417,46 @@ void Transport::onMessage(websocketpp::connection_hdl /* hdl */,
         FIREBOLT_LOG_WARNING("Transport", "Received a message while stopping the message worker. Ignoring");
         return;
     }
+    const size_t payloadSize = msg->get_payload().size();
+    size_t queueDepth = 0;
     {
         std::lock_guard<std::mutex> lock(messageQueueMutex_);
         messageQueue_.push(msg->get_payload());
-        FIREBOLT_LOG_DEBUG("Transport", "[onMessage] enqueued payload bytes=%zu, queue_depth=%zu",
-                           msg->get_payload().size(), messageQueue_.size());
+        queueDepth = messageQueue_.size();
     }
+    FIREBOLT_LOG_DEBUG("Transport", "[onMessage] enqueued payload bytes=%zu, queue_depth=%zu", payloadSize, queueDepth);
     messageQueueCv_.notify_one();
 }
 
 void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
-    connectionStatus_ = TransportState::Connected;
-
-    client::connection_ptr con = c->get_con_from_hdl(hdl);
     // Populate responseHeaders_ from the connection's response headers
     {
         std::lock_guard<std::mutex> lock(responseHeadersMutex_);
         responseHeaders_.clear();
-        if (con)
+        try
         {
-            const auto& headers = con->get_response().get_headers();
-            for (const auto& header : headers)
+            client::connection_ptr con = c->get_con_from_hdl(hdl);
+            if (con)
             {
-                responseHeaders_[header.first] = header.second;
+                const auto& headers = con->get_response().get_headers();
+                for (const auto& header : headers)
+                {
+                    responseHeaders_[header.first] = header.second;
+                }
+                FIREBOLT_LOG_DEBUG("Transport", "[onOpen] stored response headers=%zu", responseHeaders_.size());
             }
-            FIREBOLT_LOG_DEBUG("Transport", "[onOpen] stored response headers=%zu", responseHeaders_.size());
+            else
+            {
+                FIREBOLT_LOG_WARNING("Transport", "[onOpen] connection handle resolved to null");
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            FIREBOLT_LOG_WARNING("Transport", "[onOpen] failed to resolve connection handle (%s)", ex.what());
         }
     }
+    connectionStatus_ = TransportState::Connected;
     FIREBOLT_LOG_NOTICE("Transport", "Connection opened (state=%d)", static_cast<int>(connectionStatus_.load()));
     connectionReceiver_(true, Firebolt::Error::None);
 }
@@ -430,6 +464,10 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
 void Transport::onClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
     connectionStatus_ = TransportState::Disconnected;
+    {
+        std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+        responseHeaders_.clear();
+    }
     Firebolt::Error mappedError = Firebolt::Error::General;
     try
     {
@@ -455,6 +493,10 @@ void Transport::onClose(websocketpp::client<websocketpp::config::asio_client>* c
 void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
 {
     connectionStatus_ = TransportState::Disconnected;
+    {
+        std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+        responseHeaders_.clear();
+    }
     Firebolt::Error mappedError = Firebolt::Error::General;
     try
     {

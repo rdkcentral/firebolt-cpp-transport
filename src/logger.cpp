@@ -45,7 +45,8 @@ namespace
 {
 std::string toLowerCopy(std::string value)
 {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return std::tolower(c); });
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
 }
 
@@ -293,7 +294,7 @@ bool tryWriteToConfiguredLogFile(const char* message)
 /* static */ bool Logger::formatter_addFunction = true;
 
 // clang-format off
-std::map<Firebolt::LogLevel, const char*> _logLevelNames = {
+const std::map<Firebolt::LogLevel, const char*> _logLevelNames = {
     {LogLevel::Error, "Error"},
     {LogLevel::Warning, "Warning"},
     {LogLevel::Notice, "Notice"},
@@ -304,7 +305,7 @@ std::map<Firebolt::LogLevel, const char*> _logLevelNames = {
 
 #ifdef ENABLE_SYSLOG
 // clang-format off
-std::map<Firebolt::LogLevel, int> _logLevel2SysLog = {
+const std::map<Firebolt::LogLevel, int> _logLevel2SysLog = {
     {LogLevel::Error, LOG_ERR},
     {LogLevel::Warning, LOG_WARNING},
     {LogLevel::Notice, LOG_NOTICE},
@@ -392,7 +393,8 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
         time = timeBuf;
     }
 
-    const std::string levelName = _logLevelNames[logLevel];
+    const auto levelNameIt = _logLevelNames.find(logLevel);
+    const std::string levelName = (levelNameIt != _logLevelNames.end()) ? levelNameIt->second : "Unknown";
 
     std::string fileName;
     if (formatter_addLocation)
@@ -449,7 +451,8 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
     if (!tryWriteToConfiguredLogFile(formattedMsg))
     {
 #ifdef ENABLE_SYSLOG
-        syslog(_logLevel2SysLog[logLevel], "%s", formattedMsg);
+        const auto syslogLevel = _logLevel2SysLog.find(logLevel);
+        syslog(syslogLevel != _logLevel2SysLog.end() ? syslogLevel->second : LOG_ERR, "%s", formattedMsg);
 #else
         fprintf(stderr, "%s\n", formattedMsg);
         fflush(stderr);

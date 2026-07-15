@@ -231,10 +231,15 @@ def extract_methods_from_code(file_path):
     method_pattern = re.compile(
         r"^\s*(?:[\w:<>,~]+\s+)+([\w:~]+)\s*\([^)]*\)\s*(const)?\s*[{;]"
     )
+    conversion_operator_pattern = re.compile(r"\boperator\s+[^\s(]+\s*\(")
     methods = set()
     try:
         with open(file_path, encoding="utf-8", errors="ignore") as f:
             for line in f:
+                # Skip conversion operators (e.g., 'explicit operator bool() const'),
+                # which do not have a standalone method identifier to report.
+                if conversion_operator_pattern.search(line):
+                    continue
                 m = method_pattern.match(line)
                 if m:
                     methods.add(m.group(1))

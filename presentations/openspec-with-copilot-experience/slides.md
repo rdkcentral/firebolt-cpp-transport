@@ -278,10 +278,10 @@ https://github.com/rdkcentral/firebolt-cpp-transport/tree/feature/openspec
   - Current slides are Auto Generated from OpenSpec and Copilot chat conversations.
   - Multiple Reusable Skills generated for creating slides based on the effort
    ```sh
-    $ /init-slidev-presentation "openspec-with-copliot-experience" --content "slides.md"
-    $ /add-slide "openspec-with-copliot-experience" --content "slides.md" --slideTitle "Slide Title"
-    $ /add-diagram "openspec-with-copliot-experience" --content "slides.md" --diagramCode "mermaid code here"
-    $ /export-slidev-presentation "openspec-with-copliot-experience" --format pdf
+    $ /init-slidev-presentation "openspec-with-copilot-experience" --content "slides.md"
+    $ /add-slide "openspec-with-copilot-experience" --content "slides.md" --slideTitle "Slide Title"
+    $ /add-diagram "openspec-with-copilot-experience" --content "slides.md" --diagramCode "mermaid code here"
+    $ /export-slidev-presentation "openspec-with-copilot-experience" --format pdf
   ```
 
 ---

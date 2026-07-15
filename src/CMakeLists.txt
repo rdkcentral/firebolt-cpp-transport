@@ -82,6 +82,9 @@ target_link_libraries(${TARGET}
 
 target_include_directories(${TARGET}
     PRIVATE
+        # vendor/ must come before the system websocketpp headers so that
+        # our patched endpoint.hpp (numeric-IP resolver fix) takes priority.
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
     PUBLIC

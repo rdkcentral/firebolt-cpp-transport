@@ -486,6 +486,7 @@ class GatewayImpl : public IGateway, private IClientTransport
 {
 private:
     ConnectionChangeCallback connectionChangeListener;
+    std::mutex connectionChangeListener_mtx;
     Transport transport;
     Client client;
     Server server;
@@ -534,10 +535,16 @@ public:
         Firebolt::Logger::setFormat(cfg.log.format.ts, cfg.log.format.location, cfg.log.format.function,
                                     cfg.log.format.thread);
 
-        connectionChangeListener = onConnectionChange;
+        ConnectionChangeCallback previousConnectionChangeListener;
+        {
+            std::lock_guard<std::mutex> lock(connectionChangeListener_mtx);
+            previousConnectionChangeListener = connectionChangeListener;
+            connectionChangeListener = std::move(onConnectionChange);
+        }
 
         runtime_waitTime_ms = cfg.waitTime_ms;
         legacyRPCv1 = cfg.legacyRPCv1;
+        watchdog_interval_ms = cfg.watchdogCycle_ms;
 
         FIREBOLT_LOG_NOTICE("Gateway", "[connect] config waitTime_ms=%u watchdog_interval_ms=%u headers=%zu",
                             runtime_waitTime_ms, watchdog_interval_ms, cfg.headers.size());
@@ -579,12 +586,14 @@ public:
         }
         FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s", safeConnectUrl.c_str());
         Firebolt::Error status = transport.connect(
-            url, [this](const nlohmann::json& message) { this->onMessage(message); },
+            std::move(url), [this](const nlohmann::json& message) { this->onMessage(message); },
             [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
             transportLoggingInclude, transportLoggingExclude, cfg.headers);
 
         if (status != Firebolt::Error::None)
         {
+            std::lock_guard<std::mutex> lock(connectionChangeListener_mtx);
+            connectionChangeListener = std::move(previousConnectionChangeListener);
             FIREBOLT_LOG_ERROR("Gateway", "[connect] transport connect failed status=%d", static_cast<int>(status));
             return status;
         }
@@ -810,17 +819,41 @@ private:
     {
         if (message.contains("id") && (message.contains("result") || message.contains("error")))
         {
-            FIREBOLT_LOG_DEBUG("Gateway", "[onMessage] classified as response id=%u", message["id"].get<MessageID>());
+            std::string responseIdLog;
+            if (message["id"].is_number_unsigned())
+            {
+                responseIdLog = std::to_string(message["id"].get<MessageID>());
+            }
+            else if (message["id"].is_number_integer())
+            {
+                responseIdLog = std::to_string(message["id"].get<long long>());
+            }
+            else
+            {
+                responseIdLog = message["id"].dump();
+            }
+            FIREBOLT_LOG_DEBUG("Gateway", "[onMessage] classified as response id=%s", responseIdLog.c_str());
+
             if (legacyRPCv1)
             {
                 if (message.contains("result") && !message["result"].empty() &&
                     (!message["result"].is_object() || !message["result"].contains("listening")))
                 {
-                    MessageID id = message["id"];
+                    std::optional<MessageID> id;
+                    if (message["id"].is_number_unsigned())
+                    {
+                        id = message["id"].get<MessageID>();
+                    }
+                    else if (message["id"].is_number_integer() && (message["id"].get<long long>() >= 0))
+                    {
+                        id = static_cast<MessageID>(message["id"].get<long long>());
+                    }
+
                     std::string eventName;
+                    if (id.has_value())
                     {
                         std::lock_guard<std::mutex> lock(rpcv1_eventMap_mtx);
-                        auto it = rpcv1_eventMap.find(id);
+                        auto it = rpcv1_eventMap.find(id.value());
                         if (it != rpcv1_eventMap.end())
                         {
                             eventName = it->second;
@@ -896,7 +929,20 @@ private:
             FIREBOLT_LOG_NOTICE("Gateway", "[connection] state=%s error=%d suppressed_repeats=%zu",
                                 connected ? "connected" : "disconnected", static_cast<int>(error), suppressedCount);
         }
-        connectionChangeListener(connected, error);
+        ConnectionChangeCallback listener;
+        {
+            std::lock_guard<std::mutex> lock(connectionChangeListener_mtx);
+            listener = connectionChangeListener;
+        }
+
+        if (listener)
+        {
+            listener(connected, error);
+        }
+        else
+        {
+            FIREBOLT_LOG_WARNING("Gateway", "[connection] no connectionChangeListener installed");
+        }
     }
 
     MessageID getNextMessageID() override { return transport.getNextMessageID(); }

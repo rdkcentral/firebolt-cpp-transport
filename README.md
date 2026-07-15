@@ -127,6 +127,7 @@ if (value) {
 
 - If the header is present, its value is returned.
 - If the header is not present, `std::nullopt` is returned.
+- Header-name lookup is case-sensitive; use the same capitalization as received from the server.
 
 #### Thread Safety
 Header operations are thread-safe. Access to response headers is protected by a mutex internally.
