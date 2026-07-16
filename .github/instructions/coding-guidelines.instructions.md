@@ -488,9 +488,9 @@ void* owner_;
 
 ### 5.5 No raw `new`/`delete` in new code *(enforce)*
 
-Production code contains no direct `new`/`delete` calls. All heap allocation uses smart pointers or STL containers.
+Production code avoids direct `new`/`delete`; the only current exception is `src/transport.cpp` (`connectionThread_.reset(new websocketpp::lib::thread(...))`) due to websocketpp's non-movable thread type requiring `shared_ptr` ownership. All other heap allocation uses smart pointers or STL containers.
 
-**Rule**: Never introduce raw `new`/`delete` in `src/` or `include/`. In tests, use `std::make_unique` even for short-lived objects.
+**Rule**: Never introduce *additional* raw `new`/`delete` in `src/` or `include/`. In tests, use `std::make_unique` even for short-lived objects.
 
 ---
 
@@ -658,7 +658,7 @@ catch (const std::exception&)
 }
 ```
 
-**Rule**: Always catch JSON parse exceptions at the earliest boundary where the error can be mapped to a `Firebolt::Error`. Use `catch (const std::exception& e)`. In the transport layer (where there is no `Result<>` return), log and discard. In the helper/gateway layer, map to `Error::InvalidParams`.
+**Rule**: Always catch JSON parse exceptions at the earliest boundary where the error can be mapped to a `Firebolt::Error`. Use `catch (const std::exception& e)` when logging `e.what()`; otherwise `catch (const std::exception&)` (unnamed form) is acceptable. In the transport layer (where there is no `Result<>` return), log and discard. In the helper/gateway layer, map to `Error::InvalidParams`.
 
 ---
 
@@ -759,7 +759,7 @@ for (const auto& header : headers)
 
 Response headers are stored silently. They are only readable by callers via `getResponseHeader()`.
 
-**Rule**: If response headers ever need to be logged for debugging, log only the header name, not the value, at Info level. Never log header values at Notice or above — headers may contain authentication tokens. (Currently no header logging exists in production code — this rule prevents a future AI-introduced regression.)
+**Rule**: If response headers ever need to be logged for debugging, log only the header name, not the value, at Info level. Never log header values at non-Debug levels — headers may contain authentication tokens. (Currently no header logging exists in production code — this rule prevents a future AI-introduced regression.)
 
 ---
 
@@ -839,7 +839,7 @@ Ports for the main test fixture classes: `9002` (`TransportIntegrationUTest` and
 
 ---
 
-### 9.5 Async synchronization uses `std::promise` with a timeout, never bare sleep *(enforce)*
+### 9.5 Async synchronization uses `std::promise` with a timeout, never bare sleep *(adopt going forward)*
 
 ```cpp
 // test/unit/gatewayTest.cpp
@@ -847,7 +847,7 @@ auto status = connectionFuture.wait_for(std::chrono::seconds(2));
 ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
 ```
 
-**Rule**: Never use `std::this_thread::sleep_for` in tests to wait for asynchronous events. Always use a `std::promise`/`std::future` pair with `wait_for()` and an `ASSERT_EQ(status, std::future_status::ready)` guard. If the timeout fires, the test must fail with a clear message.
+**Rule**: Avoid `std::this_thread::sleep_for` in tests to wait for asynchronous events — several existing tests use it as a timing hedge and are tracked as cleanup. New tests must use a `std::promise`/`std::future` pair with `wait_for()` and an `ASSERT_EQ(status, std::future_status::ready)` guard; if the timeout fires, the test must fail with a clear message.
 
 ---
 
@@ -922,7 +922,7 @@ using Integer = BasicType<int32_t>;
 
 **Rule**: New JSON-mapped types in `Firebolt::JSON` must inherit from `NL_Json_Basic<T>` and implement `fromJson()` and `value()`. Do not create ad-hoc structs that manually parse `nlohmann::json` without going through this interface — consistency here is required for the `IHelper::get<JsonType, PropertyType>()` template to work correctly.
 
-**Cleanup**: `include/firebolt/json_types.h` line 61 declares `T virtual value() const = 0;` — placing `virtual` after the return type is a non-standard compiler extension accepted by GCC/Clang but not required by the C++17 standard. The conformant form is `virtual T value() const = 0;`. Correct this in a follow-on PR.
+**Cleanup**: `include/firebolt/json_types.h` declares `T virtual value() const = 0;` in the `NL_Json_Basic` base class — placing `virtual` after the return type is a non-standard compiler extension accepted by GCC/Clang but not required by the C++17 standard. The conformant form is `virtual T value() const = 0;`. Correct this in a follow-on PR.
 
 ---
 
@@ -1057,7 +1057,7 @@ These conventions are observed consistently but are not documented in any existi
 | **[C]** | §2.5 | Should `runtime_waitTime_ms` and `watchdog_interval_ms` be converted to `constexpr` constants (or at least renamed to `k*`)? Currently they are written during `connect()` from `Config`, so they are not compile-time constants. Clarify intended mutability. |
 | **[D]** | §5.3 | **Partially answered**: The synchronous unsubscribe paths (`HelperImpl::unsubscribe()`, `unsubscribeAll()`, `~HelperImpl()`) are safe — `gateway_.unsubscribe()` is always called before the map entry is erased, and `Server::unsubscribe()` only compares the `void*` for equality and never dereferences it. The open question is the **notification-queue race**: if `Server::notify()` already enqueued a `QueuedNotification` (copying callbacks to a local vector) before `unsubscribeAll()` ran, the notification worker thread may call `lambda(usercb, params)` after the map entry has been erased, dereferencing a freed `void*`. Confirm whether the expected lifecycle guarantees that all in-flight event delivery completes before any subscription teardown (e.g., is `unsubscribeAll()` always called from a path that is serialized with respect to notification delivery?). |
 | **[E]** | §4.1 | Should `HelperImpl` and `GatewayImpl` explicitly delete copy and move operations? Both are implicitly non-copyable (reference members, non-copyable sub-objects), but explicit `= delete` would document intent and prevent future maintenance mistakes. |
-| **[F]** | §4.3 | Should `SubscriptionManager` delete move operations? It is an RAII resource manager; a moved-from instance would call `unsubscribeAll()` on destruction, which is idempotent but potentially surprising. Deleting move prevents ambiguous ownership patterns. |
+| **[F]** | §4.2 | Should `SubscriptionManager` delete move operations? It is an RAII resource manager; a moved-from instance would call `unsubscribeAll()` on destruction, which is idempotent but potentially surprising. Deleting move prevents ambiguous ownership patterns. |
 
 ---
 
