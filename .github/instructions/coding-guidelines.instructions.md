@@ -1,3 +1,7 @@
+---
+applyTo: "**/*.h,**/*.cpp,**/CMakeLists.txt"
+---
+
 # Coding Guidelines — firebolt-cpp-transport
 
 > **Target audience**: AI agents (Copilot, openspec), contributors, and reviewers.
@@ -11,15 +15,18 @@
 
 1. [Architecture and Module Boundaries](#1-architecture-and-module-boundaries)
 2. [Naming Conventions](#2-naming-conventions)
-3. [Memory Ownership and Smart Pointer Usage](#3-memory-ownership-and-smart-pointer-usage)
-4. [Threading and Async Patterns](#4-threading-and-async-patterns)
-5. [Error Handling](#5-error-handling)
-6. [Logging](#6-logging)
-7. [Testing Patterns](#7-testing-patterns)
-8. [JSON Types and Serialization](#8-json-types-and-serialization)
-9. [Build System and Tooling](#9-build-system-and-tooling)
-10. [Assumptions and Open Questions](#10-assumptions-and-open-questions)
-11. [Relationship to Other Policy Files](#11-relationship-to-other-policy-files)
+3. [Header Guards and Include Style](#3-header-guards-and-include-style)
+4. [Class Structure and Copy/Move Semantics](#4-class-structure-and-copymove-semantics)
+5. [Memory Ownership and Smart Pointer Usage](#5-memory-ownership-and-smart-pointer-usage)
+6. [Threading and Async Patterns](#6-threading-and-async-patterns)
+7. [Error Handling](#7-error-handling)
+8. [Logging](#8-logging)
+9. [Testing Patterns](#9-testing-patterns)
+10. [JSON Types and Serialization](#10-json-types-and-serialization)
+11. [Build System and Tooling](#11-build-system-and-tooling)
+12. [Anti-Patterns Catalogue](#12-anti-patterns-catalogue)
+13. [Assumptions and Open Questions](#13-assumptions-and-open-questions)
+14. [Relationship to Other Policy Files](#14-relationship-to-other-policy-files)
 
 ---
 
@@ -186,7 +193,12 @@ std::map<uint64_t, SubscriptionData> subscriptions_;
 uint64_t currentId_{0};
 ```
 
-**Inconsistency**: `GatewayImpl` and the inner `Client`/`Server` classes in `src/gateway.cpp` do NOT use trailing underscores (`connectionChangeListener`, `transport`, `client`, `server`, `queue`, `invokes`).
+**Inconsistency**: Trailing-underscore usage in `src/gateway.cpp` is mixed across the three internal classes:
+- `GatewayImpl` data members have no trailing underscores: `connectionChangeListener`, `transport`, `client`, `server`, `watchdogThread`, `watchdogRunning`, `legacyRPCv1`.
+- `Client` has `transport_` (with underscore) but `queue`, `queue_mtx`, `invokes`, `invokes_mtx` (without).
+- `Server` has `notificationQueue_`, `notificationQueueMutex_`, `notificationQueueCv_`, `notificationWorkerThread_`, `stopNotificationWorker_` (with underscores) but `eventList`, `eventMap_mtx` (without).
+
+These classes were developed incrementally; the newer notification-related members in `Client` and `Server` adopted the trailing-underscore style while older event-tracking members did not.
 
 **Rule going forward**: New classes must use trailing underscores for all private/protected data members. When editing `GatewayImpl`/`Client`/`Server`, new members added to those classes should also use trailing underscores to converge on the consistent style.
 
@@ -306,14 +318,111 @@ auto connect(const Config& cfg, ...) -> Firebolt::Error; // WRONG: use Firebolt:
 
 ---
 
-## 3. Memory Ownership and Smart Pointer Usage
+## 3. Header Guards and Include Style
+
+### 3.1 Header guards: `#pragma once` *(enforce)*
+
+**Current practice (confirmed in every header):**
+- All public headers under `include/firebolt/` use `#pragma once`: `gateway.h`, `helpers.h`, `json_types.h`, `types.h`, `logger.h`, `config.h.in` — confirmed.
+- All private `src/` headers that are true multi-include guards use `#pragma once`: `src/transport.h`, `src/utils.h` — confirmed.
+
+**Exception**: `src/helpers_impl.h` has no header guard and no `#pragma once`. This is intentional — it is an implementation file in `.h` form, containing the full `HelperImpl` class definition inline. It is included in exactly two translation units: `src/helpers_impl.cpp` (production singleton) and `test/unit/helperTest.cpp` (test-only direct instantiation). All methods are implicitly `inline`, making multiple-TU inclusion ODR-safe. Do not add `#pragma once` to it without also extracting the implementation into a `.cpp` file.
+
+**Rule**: All new `.h` files under `include/firebolt/` and `src/` must begin with `#pragma once`. Do not use `#ifndef`/`#define`/`#endif` guards — those are reserved for CMake-generated output (`transport_export.h`, `config.h`). If a new implementation header follows the `helpers_impl.h` single-include pattern, document the intent with a comment at the top of the file.
+
+---
+
+### 3.2 Include style *(enforce)*
+
+**Current practice (confirmed across all files):**
+
+| Context | Style | Example |
+|---------|-------|----------|
+| Public Firebolt header, from any file | Double-quoted with `firebolt/` prefix | `"firebolt/types.h"`, `"firebolt/gateway.h"` |
+| Local `src/` header, from within `src/` | Double-quoted, no path prefix | `"transport.h"`, `"utils.h"` |
+| Local `src/` header, from within `test/` | Double-quoted, no path prefix | `"helpers_impl.h"` |
+| Third-party library | Angle brackets | `<nlohmann/json.hpp>`, `<websocketpp/client.hpp>` |
+| Standard library | Angle brackets | `<string>`, `<mutex>`, `<future>` |
+
+**Rule**: Never use angle brackets for Firebolt-internal headers. Never use double-quotes for third-party or standard-library headers. This distinction makes the dependency boundary visually clear at every `#include` line.
+
+Evidence: `src/gateway.cpp` includes `"firebolt/gateway.h"`, `"transport.h"`, `"utils.h"` with double quotes, and `<chrono>`, `<mutex>`, `<nlohmann/json.hpp>` with angle brackets.
+
+---
+
+### 3.3 Include order *(adopt going forward)*
+
+For `.cpp` files, include in this order with a blank line between each group:
+1. The file's own companion header (e.g., `"firebolt/gateway.h"` in `gateway.cpp`)
+2. Other Firebolt public headers (`"firebolt/logger.h"`, etc.)
+3. Local `src/` headers (`"transport.h"`, `"utils.h"`)
+4. System and third-party headers (`<nlohmann/json.hpp>`, `<thread>`, `<map>`, etc.)
+
+Evidence: `src/gateway.cpp` follows this ordering. This matches the Google C++ style include order and prevents transitive-include masking.
+
+---
+
+## 4. Class Structure and Copy/Move Semantics
+
+### 4.1 Explicitly delete copy AND move for resource-owning classes *(adopt going forward)*
+
+`Transport` is the reference implementation for correct deletion:
+
+```cpp
+// src/transport.h
+Transport(const Transport&) = delete;
+Transport(Transport&&) = delete;
+Transport& operator=(const Transport&) = delete;
+Transport& operator=(Transport&&) = delete;
+```
+
+**Rule**: Any class that owns a `std::thread`, `std::mutex`, `std::condition_variable`, `std::atomic`, a non-owning reference member (`T&`), or any non-copyable sub-object MUST explicitly delete copy AND move constructor AND assignment operator. Implicit suppression by the compiler is not sufficient — explicit deletion documents intent and prevents accidental use at call sites.
+
+**Current inconsistency**: `HelperImpl` (in `src/helpers_impl.h`) holds `Firebolt::Transport::IGateway& gateway_` and a `std::mutex` but does not explicitly delete copy or move. `GatewayImpl` (in `src/gateway.cpp`) contains `Transport`, `std::thread`, and `std::mutex` members but also lacks explicit deletion. Both are implicitly non-copyable due to their members, but the intent is not documented.
+
+> **[MAINTAINER CONFIRMATION NEEDED — item E]** Should `HelperImpl` and `GatewayImpl` explicitly delete copy and move? This would document intent without changing observable behaviour.
+
+---
+
+### 4.2 RAII helper classes must delete copy and move *(enforce)*
+
+`SubscriptionManager` is an RAII resource manager: its destructor calls `unsubscribeAll()`. It correctly deletes copy:
+
+```cpp
+// include/firebolt/helpers.h
+SubscriptionManager(const SubscriptionManager&) = delete;
+SubscriptionManager& operator=(const SubscriptionManager&) = delete;
+```
+
+Move is not yet deleted. A moved-from `SubscriptionManager` would call `unsubscribeAll()` on destruction (idempotent but surprising). `Logger` also deletes copy but not move.
+
+**Rule**: Any RAII class that calls cleanup in its destructor (e.g., `unsubscribeAll()`, `disconnect()`) must delete both copy AND move. Copying produces two objects that both attempt to clean up the same resource. Moving without proper transfer semantics leaves the moved-from destructor running cleanup on a resource the moved-to object now "owns."
+
+> **[MAINTAINER CONFIRMATION NEEDED — item F]** Should `SubscriptionManager` explicitly delete move operations? The current state (copy deleted, move not) is safe in practice but inconsistent with the rule above.
+
+---
+
+### 4.3 Destructor declaration *(enforce)*
+
+**Current practice (confirmed across all classes):**
+- Use `= default` unless the destructor does real cleanup work. Do not write `{ }` — an empty body and `= default` are not semantically identical in all contexts.
+- Interface destructors (`~IGateway()`, `~IHelper()`) are declared in the header and defined as `= default` in the corresponding `.cpp` (confirmed: `IGateway::~IGateway() = default;` in `src/gateway.cpp`).
+- `HelperImpl::~HelperImpl()` has a real body: it acquires the mutex and unsubscribes all active subscriptions. This is correct.
+- `Server::~Server()` has a real body: calls `stopNotificationWorker()` then clears the event list. This is correct.
+- `Transport::~Transport()` is declared `virtual` in the header and defined in `transport.cpp`.
+
+**Rule**: Define a destructor with a body only when it does real cleanup work. Mark derived-class destructors `override`. Do not add `virtual` to a destructor in a final class.
+
+---
+
+## 5. Memory Ownership and Smart Pointer Usage
 
 ### Rationale
 The codebase mixes smart pointers and raw pointers deliberately. The raw pointer usage for subscription callbacks is load-bearing and cannot be naively replaced.
 
 ---
 
-### 3.1 `std::unique_ptr` for single-owner heap objects *(enforce)*
+### 5.1 `std::unique_ptr` for single-owner heap objects *(enforce)*
 
 ```cpp
 // src/transport.h
@@ -327,7 +436,7 @@ std::unique_ptr<std::thread> m_serverThread;
 
 ---
 
-### 3.2 `std::shared_ptr` for multi-owner objects *(enforce)*
+### 5.2 `std::shared_ptr` for multi-owner objects *(enforce)*
 
 ```cpp
 // src/gateway.cpp (Client class)
@@ -340,7 +449,7 @@ std::map<MessageID, std::shared_ptr<Caller>> queue;
 
 ---
 
-### 3.3 `void*` for subscription callback user-data *(enforce — do not replace)*
+### 5.3 `void*` for subscription callback user-data *(enforce — do not replace)*
 
 ```cpp
 // include/firebolt/gateway.h
@@ -359,7 +468,7 @@ void* notificationPtr = reinterpret_cast<void*>(&subscriptions_[newId]);
 
 ---
 
-### 3.4 References for constructor-injected dependencies *(enforce)*
+### 5.4 References for constructor-injected dependencies *(enforce)*
 
 ```cpp
 // src/gateway.cpp (Client)
@@ -377,7 +486,7 @@ void* owner_;
 
 ---
 
-### 3.5 No raw `new`/`delete` in new code *(enforce)*
+### 5.5 No raw `new`/`delete` in new code *(enforce)*
 
 Production code contains no direct `new`/`delete` calls. All heap allocation uses smart pointers or STL containers.
 
@@ -385,14 +494,14 @@ Production code contains no direct `new`/`delete` calls. All heap allocation use
 
 ---
 
-## 4. Threading and Async Patterns
+## 6. Threading and Async Patterns
 
 ### Rationale
 The transport has three concurrent threads in steady state: the websocketpp I/O thread, a message-dispatch worker thread, and a notification worker thread. A watchdog thread also runs. All inter-thread communication uses queues with condition variables — never direct cross-thread calls.
 
 ---
 
-### 4.1 Worker threads use atomic stop-flag + condition variable *(enforce)*
+### 6.1 Worker threads use atomic stop-flag + condition variable *(enforce)*
 
 Both `Transport::stopMessageWorker()` and `Server::stopNotificationWorker()` follow the same idiom:
 
@@ -419,7 +528,7 @@ messageQueueCv_.wait(lock, [this] { return stopMessageWorker_ || !messageQueue_.
 
 ---
 
-### 4.2 Websocketpp callbacks dispatch to a queue; never execute directly *(enforce)*
+### 6.2 Websocketpp callbacks dispatch to a queue; never execute directly *(enforce)*
 
 ```cpp
 // src/transport.cpp — Transport::onMessage()
@@ -436,7 +545,7 @@ Callbacks from websocketpp run on the websocketpp I/O thread. They are never pro
 
 ---
 
-### 4.3 `std::lock_guard` for simple mutex sections, `std::unique_lock` for condition variable wait *(enforce)*
+### 6.3 `std::lock_guard` for simple mutex sections, `std::unique_lock` for condition variable wait *(enforce)*
 
 ```cpp
 // src/gateway.cpp
@@ -451,7 +560,7 @@ Both CTAD (`lock_guard lck(mtx)`) and explicit (`lock_guard<std::mutex> lock(mtx
 
 ---
 
-### 4.4 `std::future` / `std::promise` for request/response correlation *(enforce)*
+### 6.4 `std::future` / `std::promise` for request/response correlation *(enforce)*
 
 ```cpp
 // src/gateway.cpp (Client::request)
@@ -468,7 +577,7 @@ c->promise.set_value(Result<nlohmann::json>{message["result"]});
 
 ---
 
-### 4.5 Watchdog is a polling thread; keep its interval configurable *(enforce)*
+### 6.5 Watchdog is a polling thread; keep its interval configurable *(enforce)*
 
 ```cpp
 // src/gateway.cpp
@@ -489,14 +598,14 @@ The watchdog uses `sleep_for` (acceptable here — it is polling by design, not 
 
 ---
 
-## 5. Error Handling
+## 7. Error Handling
 
 ### Rationale
 This library is a transport layer used by production embedded SDKs. Exceptions cannot propagate across the public ABI. All error paths must be observable by the caller without crashing or throwing.
 
 ---
 
-### 5.1 Public APIs return `Firebolt::Error` or `Result<T>` — never throw *(enforce)*
+### 7.1 Public APIs return `Firebolt::Error` or `Result<T>` — never throw *(enforce)*
 
 ```cpp
 // include/firebolt/gateway.h
@@ -513,7 +622,7 @@ Result<PropertyType> get(const std::string& methodName, ...);
 
 ---
 
-### 5.2 `Result<T>` usage contract *(enforce)*
+### 7.2 `Result<T>` usage contract *(enforce)*
 
 ```cpp
 // Check: if (result)
@@ -528,7 +637,7 @@ Result<PropertyType> get(const std::string& methodName, ...);
 
 ---
 
-### 5.3 JSON parse errors: catch, log, return `Error::InvalidParams` *(enforce)*
+### 7.3 JSON parse errors: catch, log, return `Error::InvalidParams` *(enforce)*
 
 ```cpp
 // include/firebolt/helpers.h — IHelper::get<>()
@@ -553,7 +662,7 @@ catch (const std::exception&)
 
 ---
 
-### 5.4 `assert()` for debug-only precondition checks *(enforce)*
+### 7.4 `assert()` for debug-only precondition checks *(enforce)*
 
 ```cpp
 // src/gateway.cpp
@@ -565,7 +674,7 @@ assert(onMessage != nullptr);
 
 ---
 
-### 5.5 Error propagation from websocketpp: use `mapError()` *(enforce)*
+### 7.5 Error propagation from websocketpp: use `mapError()` *(enforce)*
 
 ```cpp
 // src/transport.cpp
@@ -588,14 +697,14 @@ static Firebolt::Error mapError(websocketpp::lib::error_code error)
 
 ---
 
-## 6. Logging
+## 8. Logging
 
 ### Rationale
 The logger writes to stderr (or syslog if `ENABLE_SYSLOG` is set). Log format is configurable at runtime via `Logger::setFormat()`. Log level is set at connect time via `Config::log.level`. All log calls in production code use the macros — this is consistent across the entire codebase.
 
 ---
 
-### 6.1 Always use `FIREBOLT_LOG_*` macros *(enforce)*
+### 8.1 Always use `FIREBOLT_LOG_*` macros *(enforce)*
 
 ```cpp
 FIREBOLT_LOG_ERROR("Gateway", "Invalid payload received: %s", message.dump().c_str());
@@ -609,7 +718,7 @@ FIREBOLT_LOG_DEBUG("Transport", "Received: %s", jsonMsg.dump().c_str());
 
 ---
 
-### 6.2 Log level semantics *(enforce)*
+### 8.2 Log level semantics *(enforce)*
 
 | Level | When to use | Examples from codebase |
 |-------|-------------|------------------------|
@@ -623,7 +732,7 @@ FIREBOLT_LOG_DEBUG("Transport", "Received: %s", jsonMsg.dump().c_str());
 
 ---
 
-### 6.3 Printf-style format strings; never concatenate strings in log calls *(enforce)*
+### 8.3 Printf-style format strings; never concatenate strings in log calls *(enforce)*
 
 ```cpp
 // Correct
@@ -637,7 +746,7 @@ FIREBOLT_LOG_DEBUG("Gateway", std::string("[subscribe] ACK for '") + event + "' 
 
 ---
 
-### 6.4 Never log header values at non-Debug levels *(enforce)*
+### 8.4 Never log header values at non-Debug levels *(enforce)*
 
 ```cpp
 // src/transport.cpp — onOpen
@@ -654,14 +763,14 @@ Response headers are stored silently. They are only readable by callers via `get
 
 ---
 
-## 7. Testing Patterns
+## 9. Testing Patterns
 
 ### Rationale
 The test suite mixes pure unit tests (mocked interfaces) and integration tests (live local websocketpp server). The integration tests are the primary coverage path for `Transport` and `GatewayImpl`. Coverage is measured with gcovr and uploaded as CI artifacts.
 
 ---
 
-### 7.1 New test files: `test/unit/*Test.cpp` *(enforce)*
+### 9.1 New test files: `test/unit/*Test.cpp` *(enforce)*
 
 All unit test files follow the `*Test.cpp` naming pattern:
 `gatewayTest.cpp`, `helperTest.cpp`, `transportTest.cpp`, `loggerTest.cpp`, `json_typesTest.cpp`.
@@ -672,7 +781,7 @@ The CMakeLists.txt glob is `file(GLOB UNIT_TESTS CONFIGURE_DEPENDS unit/*Test.cp
 
 ---
 
-### 7.2 Test fixture names: `<Component>UTest` *(enforce)*
+### 9.2 Test fixture names: `<Component>UTest` *(enforce)*
 
 ```cpp
 class GatewayUTest : public ::testing::Test { ... };
@@ -685,7 +794,7 @@ class LoggerFormatUTest : public ::testing::Test { ... };
 
 ---
 
-### 7.3 Unit tests mock interfaces with GMock *(enforce)*
+### 9.3 Unit tests mock interfaces with GMock *(enforce)*
 
 ```cpp
 // test/unit/helperTest.cpp
@@ -702,7 +811,7 @@ public:
 
 ---
 
-### 7.4 Integration tests spin up a local websocketpp server *(enforce)*
+### 9.4 Integration tests spin up a local websocketpp server *(enforce)*
 
 ```cpp
 // test/unit/gatewayTest.cpp
@@ -722,13 +831,15 @@ protected:
 };
 ```
 
-Ports currently in use: `9002` (TransportIntegrationUTest), `9003` (GatewayUTest).
+Ports for the main test fixture classes: `9002` (`TransportIntegrationUTest` and `TransportTlsIntegrationUTest` in `transportTest.cpp`), `9003` (`GatewayUTest` in `gatewayTest.cpp`).
 
-**Rule**: Each integration test fixture must use a distinct port to avoid `EADDRINUSE` failures. Call `GetGatewayInstance().disconnect()` in `TearDown()` before stopping the server. Always check `m_serverThread->joinable()` before calling `join()`.
+**Dynamic port allocation** (preferred for new test fixtures): Some tests in `gatewayTest.cpp` use `ReservedLoopbackPort reservedPort = reserveLikelyUnusedLoopbackPort()`, which binds port `0`, lets the OS assign a port, then holds the socket open until the test server starts on that port. This eliminates flaky failures from port collisions on busy CI machines. New integration test fixtures should follow this pattern instead of hardcoding ports.
+
+**Rule**: Each integration test fixture must use a distinct hardcoded port OR the `reserveLikelyUnusedLoopbackPort()` dynamic-allocation pattern. Never share a port between two concurrently-running test fixtures. Call `GetGatewayInstance().disconnect()` in `TearDown()` before stopping the server. Always check `m_serverThread->joinable()` before calling `join()`.
 
 ---
 
-### 7.5 Async synchronization uses `std::promise` with a timeout, never bare sleep *(enforce)*
+### 9.5 Async synchronization uses `std::promise` with a timeout, never bare sleep *(enforce)*
 
 ```cpp
 // test/unit/gatewayTest.cpp
@@ -740,7 +851,7 @@ ASSERT_EQ(status, std::future_status::ready) << "Connection timed out";
 
 ---
 
-### 7.6 Logger tests capture stderr with `pipe()`/`dup2()` *(enforce)*
+### 9.6 Logger tests capture stderr with `pipe()`/`dup2()` *(enforce)*
 
 ```cpp
 // test/unit/loggerTest.cpp
@@ -757,7 +868,7 @@ dup2(savedStderr, STDERR_FILENO);
 
 ---
 
-### 7.7 Comment header block above each test *(adopt going forward)*
+### 9.7 Comment header block above each test *(adopt going forward)*
 
 The more recent logger tests include a structured comment block:
 
@@ -773,14 +884,14 @@ The more recent logger tests include a structured comment block:
 
 ---
 
-## 8. JSON Types and Serialization
+## 10. JSON Types and Serialization
 
 ### Rationale
 `nlohmann::json` is the only JSON library used and is non-negotiable (it is a fixed dependency in `.github/Dockerfile`). The `Firebolt::JSON` namespace provides a thin wrapper layer that maps JSON values to C++ types via a uniform `fromJson()` / `value()` interface. Downstream SDKs depend on this interface shape.
 
 ---
 
-### 8.1 All JSON serialization uses `nlohmann::json` *(enforce)*
+### 10.1 All JSON serialization uses `nlohmann::json` *(enforce)*
 
 ```cpp
 // include/firebolt/gateway.h
@@ -792,7 +903,7 @@ using EventCallback = std::function<void(void* usercb, const nlohmann::json& par
 
 ---
 
-### 8.2 JSON type wrappers: `fromJson()` + `value()` interface *(enforce)*
+### 10.2 JSON type wrappers: `fromJson()` + `value()` interface *(enforce)*
 
 ```cpp
 // include/firebolt/json_types.h
@@ -815,7 +926,7 @@ using Integer = BasicType<int32_t>;
 
 ---
 
-### 8.3 Let `nlohmann::json::get<T>()` throw on type mismatch *(enforce)*
+### 10.3 Let `nlohmann::json::get<T>()` throw on type mismatch *(enforce)*
 
 ```cpp
 // include/firebolt/json_types.h — BasicType
@@ -829,7 +940,7 @@ EXPECT_THROW(str.fromJson(jsonInt), nlohmann::json::type_error);
 
 ---
 
-### 8.4 Use `.at()` not `[]` for mandatory field access *(adopt going forward)*
+### 10.4 Use `.at()` not `[]` for mandatory field access *(adopt going forward)*
 
 ```cpp
 // test/unit/helperTest.cpp — TestJson
@@ -842,7 +953,7 @@ void fromJson(const nlohmann::json& json) { v = json.at("value").get<int>(); }
 
 ---
 
-### 8.5 `// clang-format off` is permitted for JSON-keyed initializers *(enforce)*
+### 10.5 `// clang-format off` is permitted for JSON-keyed initializers *(enforce)*
 
 ```cpp
 // src/logger.cpp
@@ -859,14 +970,14 @@ std::map<Firebolt::LogLevel, const char*> _logLevelNames = {
 
 ---
 
-## 9. Build System and Tooling
+## 11. Build System and Tooling
 
 ### Rationale
 The build environment is hermetic: all library dependencies live inside the Docker image built from `.github/Dockerfile`. The wrapper scripts in the repo root abstract Docker invocation, image-build-on-demand, and environment setup. Bypassing them produces a binary that diverges from CI and cannot be trusted for regression validation.
 
 ---
 
-### 9.1 Use wrapper scripts only; never invoke cmake directly on the host *(enforce)*
+### 11.1 Use wrapper scripts only; never invoke cmake directly on the host *(enforce)*
 
 | Script | Purpose |
 |--------|---------|
@@ -874,7 +985,8 @@ The build environment is hermetic: all library dependencies live inside the Dock
 | `./fmt.sh` | clang-format check (dry-run, `--Werror`). Mirrors the CI format gate exactly. |
 | `./fmt.sh --fix` | Reformat all `src/` and `include/` sources in-place. |
 | `./build.sh +tests` | Manual CMake configure and build with tests enabled. Requires the `SYSROOT_PATH` environment variable. |
-
+| `./cov_build.sh` | Submit a Coverity cloud scan (requires Coverity credentials). |
+| `./coverity_local.sh` | Run a local Coverity static analysis pass. |
 `./test.sh` and `./fmt.sh` build the Docker image (`firebolt-cpp-transport-ci:local`) automatically on first run from `.github/Dockerfile`; subsequent invocations reuse the cached image.
 
 **Rule**: Never run `cmake`, `make`, or any equivalent tool directly on the host machine. All production dependencies (`nlohmann_json`, `websocketpp`, `GTest`, `gcovr`) are installed only inside the Docker image. A host-side configure may silently succeed if those libraries are incidentally present, producing a binary that passes locally but fails or behaves differently in CI.
@@ -885,7 +997,7 @@ Evidence: `.github/Dockerfile` installs all deps into the image only. `README.md
 
 ---
 
-### 9.2 Build directory ownership and cache validity *(enforce)*
+### 11.2 Build directory ownership and cache validity *(enforce)*
 
 `build-dev/` is created inside the Docker container and is owned by `root` from the host filesystem's perspective.
 
@@ -897,9 +1009,32 @@ Evidence: `.github/Dockerfile` installs all deps into the image only. `README.md
 
 ---
 
-## 10. Assumptions and Open Questions
+## 12. Anti-Patterns Catalogue
 
-### 10.1 Explicit assumptions made during analysis
+The following patterns are explicitly wrong for this codebase. Each entry notes the risk source.
+
+| # | Anti-Pattern | Why It Is Wrong Here |
+|---|---|---|
+| AP-1 | Adding `<websocketpp/...>` or `<boost/...>` includes to `include/firebolt/` | Public ABI must not expose transport-layer dependencies; downstream SDKs would acquire a transitive dependency on websocketpp |
+| AP-2 | Adding any third-party include to `include/firebolt/` beyond `<nlohmann/json.hpp>` | `nlohmann::json` is the sole approved exception (it is the public wire-format type); all others violate §1.1 |
+| AP-3 | Calling `messageReceiver_` or `connectionReceiver_` directly from a websocketpp handler | Handlers run on the I/O thread; calling the receiver directly risks deadlock if the receiver tries to acquire a mutex held by the I/O thread — always enqueue instead (§6.2) |
+| AP-4 | Using `std::this_thread::sleep_for` in worker threads (non-watchdog) | Worker threads must wait with a condition variable predicate, not sleep; `sleep_for` in a worker causes fixed-latency wake even when the queue is already full |
+| AP-5 | Using `std::unique_lock` where `std::lock_guard` suffices | `unique_lock` has overhead; reserve it exclusively for condition-variable `.wait()` calls (§6.3) |
+| AP-6 | Returning `bool` for success/failure from a public API method | All public methods return `Firebolt::Error` or `Result<T>`; a bare `bool` loses the error code |
+| AP-7 | Replacing `void*` in `EventCallback` or `IGateway::subscribe()` with a typed pointer or `std::any` | The `void*`/`reinterpret_cast` pair is the established public ABI; downstream SDKs depend on the exact signature |
+| AP-8 | Adding `catch` blocks inside `fromJson()` implementations | Let `nlohmann::json::type_error` propagate to `IHelper::get<>()` which has the uniform catch-and-log handler (§10.3) |
+| AP-9 | Logging response header values at Notice level or above | Headers may contain authentication tokens; log the header name only, never the value, and only at Debug level (§8.4) |
+| AP-10 | Introducing raw `new`/`delete` in `src/` or `include/` | All heap allocation uses smart pointers or STL containers (§5.5) |
+| AP-11 | Spinning up a real WebSocket connection in a unit test (non-integration fixture) | Mock `IGateway` with GMock instead; real connections belong in integration fixtures (`GatewayUTest`, `TransportIntegrationUTest`) |
+| AP-12 | Using `auto` for short named types | `auto err`, `auto result`, `auto id` silently mask type mismatches; spell out `Firebolt::Error`, `Result<T>`, `SubscriptionId` (§2.11) |
+| AP-13 | Declaring a new third-party dependency in `src/CMakeLists.txt` without first adding it to `.github/Dockerfile` | The Dockerfile is the authoritative approved-dependency list; a PR that adds the include without the Dockerfile entry passes locally but fails in CI (§1.7) |
+| AP-14 | Making a copy of `void* usercb` outside of the `HelperImpl::subscribe()` / `unsubscribe()` pair | The pointer is the address of a `std::map` entry; it is only valid while that entry exists in `HelperImpl::subscriptions_` |
+
+---
+
+## 13. Assumptions and Open Questions
+
+### 13.1 Explicit assumptions made during analysis
 
 These conventions are observed consistently but are not documented in any existing file. They are treated as binding rules in this document. If a maintainer disagrees, the relevant rule should be revised.
 
@@ -913,22 +1048,24 @@ These conventions are observed consistently but are not documented in any existi
 
 ---
 
-### 10.2 Flagged items requiring maintainer confirmation before treating as binding
+### 13.2 Flagged items requiring maintainer confirmation before treating as binding
 
 | Tag | Rule reference | Question |
 |-----|----------------|----------|
 | **[A]** | §2.2 | Should `NL_Json_Basic` be renamed `INL_Json_Basic` to follow the interface prefix convention? |
 | **[B]** | §2.4 | Is a bulk rename of non-underscore private members in `GatewayImpl`/`Client`/`Server` in scope for a near-term PR? |
 | **[C]** | §2.5 | Should `runtime_waitTime_ms` and `watchdog_interval_ms` be converted to `constexpr` constants (or at least renamed to `k*`)? Currently they are written during `connect()` from `Config`, so they are not compile-time constants. Clarify intended mutability. |
-| **[D]** | §3.3 | Is the teardown order in `HelperImpl::~HelperImpl()` and `HelperImpl::unsubscribeAll()` safe? The map entry address (`notificationPtr`) is passed to `gateway_.unsubscribe()` before the map entry is erased — confirm this is always the case and no code path erases the map before calling the gateway. |
+| **[D]** | §5.3 | **Partially answered**: The synchronous unsubscribe paths (`HelperImpl::unsubscribe()`, `unsubscribeAll()`, `~HelperImpl()`) are safe — `gateway_.unsubscribe()` is always called before the map entry is erased, and `Server::unsubscribe()` only compares the `void*` for equality and never dereferences it. The open question is the **notification-queue race**: if `Server::notify()` already enqueued a `QueuedNotification` (copying callbacks to a local vector) before `unsubscribeAll()` ran, the notification worker thread may call `lambda(usercb, params)` after the map entry has been erased, dereferencing a freed `void*`. Confirm whether the expected lifecycle guarantees that all in-flight event delivery completes before any subscription teardown (e.g., is `unsubscribeAll()` always called from a path that is serialized with respect to notification delivery?). |
+| **[E]** | §4.1 | Should `HelperImpl` and `GatewayImpl` explicitly delete copy and move operations? Both are implicitly non-copyable (reference members, non-copyable sub-objects), but explicit `= delete` would document intent and prevent future maintenance mistakes. |
+| **[F]** | §4.3 | Should `SubscriptionManager` delete move operations? It is an RAII resource manager; a moved-from instance would call `unsubscribeAll()` on destruction, which is idempotent but potentially surprising. Deleting move prevents ambiguous ownership patterns. |
 
 ---
 
-*Last updated: 2026-07-14. Derived from direct analysis of: `include/firebolt/gateway.h`, `include/firebolt/helpers.h`, `include/firebolt/json_types.h`, `include/firebolt/types.h`, `include/firebolt/logger.h`, `include/firebolt/config.h.in`, `src/gateway.cpp`, `src/transport.h`, `src/transport.cpp`, `src/helpers_impl.h`, `src/helpers_impl.cpp`, `src/utils.h`, `src/utils.cpp`, `src/logger.cpp`, `test/unit/gatewayTest.cpp`, `test/unit/helperTest.cpp`, `test/unit/transportTest.cpp`, `test/unit/loggerTest.cpp`, `test/unit/json_typesTest.cpp`, `CMakeLists.txt`, `src/CMakeLists.txt`, `test/CMakeLists.txt`, `.clang-format`, `.github/Dockerfile`.*
+*Last updated: 2026-07-16. Derived from direct analysis of: `include/firebolt/gateway.h`, `include/firebolt/helpers.h`, `include/firebolt/json_types.h`, `include/firebolt/types.h`, `include/firebolt/logger.h`, `include/firebolt/config.h.in`, `src/gateway.cpp`, `src/transport.h`, `src/transport.cpp`, `src/helpers_impl.h`, `src/helpers_impl.cpp`, `src/utils.h`, `src/utils.cpp`, `src/logger.cpp`, `test/unit/gatewayTest.cpp`, `test/unit/helperTest.cpp`, `test/unit/transportTest.cpp`, `test/unit/loggerTest.cpp`, `test/unit/json_typesTest.cpp`, `CMakeLists.txt`, `src/CMakeLists.txt`, `test/CMakeLists.txt`, `.clang-format`, `.github/Dockerfile`.*
 
 ---
 
-## 11. Relationship to Other Policy Files
+## 14. Relationship to Other Policy Files
 
 This document is the **single authoritative source** for all coding conventions, architecture rules, testing patterns, and build tooling guidance in `firebolt-cpp-transport`. All rules previously in `.github/copilot-instructions.md` are either covered here or are intentionally absent because they are not coding conventions (CI branch targets, release tag format).
 
