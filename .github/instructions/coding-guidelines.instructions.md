@@ -1,6 +1,7 @@
 ---
 applyTo:
   - "**/*.h"
+  - "**/*.h.in"
   - "**/*.cpp"
   - "**/CMakeLists.txt"
 ---
@@ -398,7 +399,7 @@ Transport& operator=(Transport&&) = delete;
 
 ---
 
-### 4.2 RAII helper classes must delete copy and move *(enforce)*
+### 4.2 RAII helper classes must delete copy and move *(adopt going forward)*
 
 `SubscriptionManager` is an RAII resource manager: its destructor calls `unsubscribeAll()`. It correctly deletes copy:
 
