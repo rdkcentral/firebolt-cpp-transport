@@ -1,5 +1,8 @@
 ---
-applyTo: "**/*.h,**/*.cpp,**/CMakeLists.txt"
+applyTo:
+  - "**/*.h"
+  - "**/*.cpp"
+  - "**/CMakeLists.txt"
 ---
 
 # Coding Guidelines — firebolt-cpp-transport
@@ -759,7 +762,7 @@ for (const auto& header : headers)
 
 Response headers are stored silently. They are only readable by callers via `getResponseHeader()`.
 
-**Rule**: If response headers ever need to be logged for debugging, log only the header name, not the value, at Info level. Never log header values at non-Debug levels — headers may contain authentication tokens. (Currently no header logging exists in production code — this rule prevents a future AI-introduced regression.)
+**Rule**: If response headers ever need to be logged for debugging, log only the header name (never the value) and only at Debug level. Never log header values at any level — headers may contain authentication tokens. (Currently no header logging exists in production code — this rule prevents a future AI-introduced regression.)
 
 ---
 
@@ -1023,7 +1026,7 @@ The following patterns are explicitly wrong for this codebase. Each entry notes 
 | AP-6 | Returning `bool` for success/failure from a public API method | All public methods return `Firebolt::Error` or `Result<T>`; a bare `bool` loses the error code |
 | AP-7 | Replacing `void*` in `EventCallback` or `IGateway::subscribe()` with a typed pointer or `std::any` | The `void*`/`reinterpret_cast` pair is the established public ABI; downstream SDKs depend on the exact signature |
 | AP-8 | Adding `catch` blocks inside `fromJson()` implementations | Let `nlohmann::json::type_error` propagate to `IHelper::get<>()` which has the uniform catch-and-log handler (§10.3) |
-| AP-9 | Logging response header values at Notice level or above | Headers may contain authentication tokens; log the header name only, never the value, and only at Debug level (§8.4) |
+| AP-9 | Logging response header values at any level, or logging header names above Debug level | Headers may contain authentication tokens; if debugging requires it, log only the header name at Debug level — never the value at any level (§8.4) |
 | AP-10 | Introducing raw `new`/`delete` in `src/` or `include/` | All heap allocation uses smart pointers or STL containers (§5.5) |
 | AP-11 | Spinning up a real WebSocket connection in a unit test (non-integration fixture) | Mock `IGateway` with GMock instead; real connections belong in integration fixtures (`GatewayUTest`, `TransportIntegrationUTest`) |
 | AP-12 | Using `auto` for short named types | `auto err`, `auto result`, `auto id` silently mask type mismatches; spell out `Firebolt::Error`, `Result<T>`, `SubscriptionId` (§2.11) |
