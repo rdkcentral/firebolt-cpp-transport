@@ -5,14 +5,25 @@ applyTo:
   - "**/CMakeLists.txt"
 ---
 
-# Coding Guidelines — firebolt-cpp-transport
+# firebolt-cpp-transport — Coding Guidelines
 
-> **Target audience**: AI agents (Copilot, openspec), contributors, and reviewers.
-> **Status**: Each rule is labeled *(enforce)*, *(adopt going forward)*, or *(anti-pattern)*.
-> **Format enforcement**: clang-format (`.clang-format`) and the CI format-check job handle all whitespace and layout rules — those are not restated here.
-> **How to verify locally**: `./fmt.sh --fix` (reformat), `./test.sh` (build + test).
+**Scope:** This document governs code generation and modification for the `firebolt-cpp-transport` repository.
+It is intended for use by both AI agents (Copilot, openspec) and human developers.
+
+**How to read this document:**
+- **Current practice** *(enforce)* — observed consistently across `src/`, `include/firebolt/`, and `test/unit/`; must be preserved in all new and modified code.
+- **Recommended going forward** *(adopt going forward)* — not yet uniformly applied across all existing code (e.g., trailing-underscore members in `src/gateway.cpp`, `std::promise`/`std::future` in tests), but required for all new or modified code.
+- **Anti-pattern** *(anti-pattern)* — either already present in the repo as a legacy inconsistency, or a pattern likely to be introduced by AI code generation; each entry in §12 explains why it is wrong in this specific codebase.
+
+**Format:** All whitespace, indentation, and brace-style rules are enforced by clang-format (`.clang-format`) and the CI format-check job — those rules are not restated here.
+Run `./fmt.sh --fix` to reformat `src/` and `include/` in-place. Run `./test.sh` to build all targets and run the full unit test suite inside the hermetic Docker environment.
+
+Markers:
+- `[ASSUMPTION]` — inferred from code patterns where no explicit policy document exists; full list in §13.1.
+- `[MAINTAINER CONFIRMATION NEEDED]` — rule or fact that requires explicit maintainer decision before treating as binding; full list in §13.2.
 
 ---
+
 
 ## Contents
 
