@@ -79,7 +79,7 @@ Evidence: `test/unit/helperTest.cpp` includes `"helpers_impl.h"` for direct cons
 
 ### 1.4 `Transport` is a private implementation detail *(enforce)*
 
-`Transport` (`src/transport.h`) manages the websocketpp connection. It is not an interface and has no virtual methods. It is never referenced from `include/`.
+`Transport` (`src/transport.h`) manages the websocketpp connection. It is not an interface and has only a virtual destructor — no other virtual methods. It is never referenced from `include/`.
 
 **Rule**: Do not make `Transport` public or add it to `include/firebolt/`. If a new transport backend is needed (e.g., TLS), do it by extending `Transport` internally or adding a new private class, not by adding a new public interface.
 
@@ -326,7 +326,7 @@ auto connect(const Config& cfg, ...) -> Firebolt::Error; // WRONG: use Firebolt:
 - All public headers under `include/firebolt/` use `#pragma once`: `gateway.h`, `helpers.h`, `json_types.h`, `types.h`, `logger.h`, `config.h.in` — confirmed.
 - All private `src/` headers that are true multi-include guards use `#pragma once`: `src/transport.h`, `src/utils.h` — confirmed.
 
-**Exception**: `src/helpers_impl.h` has no header guard and no `#pragma once`. This is intentional — it is an implementation file in `.h` form, containing the full `HelperImpl` class definition inline. It is included in exactly two translation units: `src/helpers_impl.cpp` (production singleton) and `test/unit/helperTest.cpp` (test-only direct instantiation). All methods are implicitly `inline`, making multiple-TU inclusion ODR-safe. Do not add `#pragma once` to it without also extracting the implementation into a `.cpp` file.
+**Exception**: `src/helpers_impl.h` has no header guard and no `#pragma once`. This is intentional — it is an implementation file in `.h` form, containing the full `HelperImpl` class definition inline. It is included in exactly two translation units: `src/helpers_impl.cpp` (production singleton) and `test/unit/helperTest.cpp` (test-only direct instantiation). All methods are implicitly `inline`, making multiple-TU inclusion ODR-safe. (Adding `#pragma once` would also be harmless — it only prevents double-inclusion within a single TU, which is already not a concern here. The file simply has no guard because it is a deliberately narrow-use implementation header.)
 
 **Rule**: All new `.h` files under `include/firebolt/` and `src/` must begin with `#pragma once`. Do not use `#ifndef`/`#define`/`#endif` guards — those are reserved for CMake-generated output (`transport_export.h`, `config.h`). If a new implementation header follows the `helpers_impl.h` single-include pattern, document the intent with a comment at the top of the file.
 
@@ -922,7 +922,7 @@ using Integer = BasicType<int32_t>;
 
 **Rule**: New JSON-mapped types in `Firebolt::JSON` must inherit from `NL_Json_Basic<T>` and implement `fromJson()` and `value()`. Do not create ad-hoc structs that manually parse `nlohmann::json` without going through this interface — consistency here is required for the `IHelper::get<JsonType, PropertyType>()` template to work correctly.
 
-**Cleanup**: `include/firebolt/json_types.h` declares `T virtual value() const = 0;` in the `NL_Json_Basic` base class — placing `virtual` after the return type is a non-standard compiler extension accepted by GCC/Clang but not required by the C++17 standard. The conformant form is `virtual T value() const = 0;`. Correct this in a follow-on PR.
+**Cleanup**: `include/firebolt/json_types.h` declares `T virtual value() const = 0;` in the `NL_Json_Basic` base class. This ordering is valid standard C++ (`virtual` is a `decl-specifier` and may appear before or after the return type) but is unconventional and misleading to readers. Prefer `virtual T value() const = 0;` for consistency and readability. Correct this in a follow-on PR.
 
 ---
 
