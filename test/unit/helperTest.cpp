@@ -622,11 +622,13 @@ TEST_F(HelperUTest, WeakPtrGuard_NotificationDeliveredWhileSubscribed)
     void* capturedUsercb = nullptr;
 
     EXPECT_CALL(mockGateway, subscribe("test.onEvent", _, _))
-        .WillOnce([&](const std::string&, Firebolt::Transport::EventCallback cb, void* ucb) {
-            capturedCallback = cb;
-            capturedUsercb = ucb;
-            return Error::None;
-        });
+        .WillOnce(
+            [&](const std::string&, Firebolt::Transport::EventCallback cb, void* ucb)
+            {
+                capturedCallback = std::move(cb);
+                capturedUsercb = ucb;
+                return Error::None;
+            });
 
     std::promise<int> deliveredValue;
     auto future = deliveredValue.get_future();
@@ -665,11 +667,13 @@ TEST_F(HelperUTest, WeakPtrGuard_NotificationDroppedAfterUnsubscribeAll)
     void* capturedUsercb = nullptr;
 
     EXPECT_CALL(mockGateway, subscribe("tts.onSpeechInterrupted", _, _))
-        .WillOnce([&](const std::string&, Firebolt::Transport::EventCallback cb, void* ucb) {
-            capturedCallback = cb;
-            capturedUsercb = ucb;
-            return Error::None;
-        });
+        .WillOnce(
+            [&](const std::string&, Firebolt::Transport::EventCallback cb, void* ucb)
+            {
+                capturedCallback = std::move(cb);
+                capturedUsercb = ucb;
+                return Error::None;
+            });
 
     bool notificationFired = false;
     std::function<void(int)> notification = [&notificationFired](int) { notificationFired = true; };
@@ -705,11 +709,13 @@ TEST_F(HelperUTest, WeakPtrGuard_NotificationDroppedAfterUnsubscribeById)
     void* capturedUsercb = nullptr;
 
     EXPECT_CALL(mockGateway, subscribe("test.onEvent", _, _))
-        .WillOnce([&](const std::string&, Firebolt::Transport::EventCallback cb, void* ucb) {
-            capturedCallback = cb;
-            capturedUsercb = ucb;
-            return Error::None;
-        });
+        .WillOnce(
+            [&](const std::string&, Firebolt::Transport::EventCallback cb, void* ucb)
+            {
+                capturedCallback = std::move(cb);
+                capturedUsercb = ucb;
+                return Error::None;
+            });
 
     bool notificationFired = false;
     std::function<void(int)> notification = [&notificationFired](int) { notificationFired = true; };

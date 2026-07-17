@@ -18,7 +18,9 @@
 
 #include "firebolt/gateway.h"
 #include "firebolt/helpers.h"
+#include <map>
 #include <memory>
+#include <mutex>
 
 namespace Firebolt::Helpers
 {
@@ -36,7 +38,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& subscription : subscriptions_)
         {
-            void* notificationPtr = reinterpret_cast<void*>(subscription.second.get());
+            void* notificationPtr = static_cast<void*>(subscription.second.get());
             gateway_.unsubscribe(subscription.second->eventName, notificationPtr);
         }
         subscriptions_.clear();
@@ -77,7 +79,7 @@ public:
         {
             return Result<void>{Error::General};
         }
-        void* notificationPtr = reinterpret_cast<void*>(it->second.get());
+        void* notificationPtr = static_cast<void*>(it->second.get());
         auto errorStatus{gateway_.unsubscribe(it->second->eventName, notificationPtr)};
         subscriptions_.erase(it);
         return Result<void>{errorStatus};
@@ -90,7 +92,7 @@ public:
         {
             if (it->second->owner == owner)
             {
-                void* notificationPtr = reinterpret_cast<void*>(it->second.get());
+                void* notificationPtr = static_cast<void*>(it->second.get());
                 gateway_.unsubscribe(it->second->eventName, notificationPtr);
                 it = subscriptions_.erase(it);
             }
@@ -119,7 +121,7 @@ private:
         uint64_t newId = currentId_++;
         auto spData = std::make_shared<SubscriptionData>(SubscriptionData{owner, eventName, std::move(notification)});
         subscriptions_[newId] = spData;
-        void* notificationPtr = reinterpret_cast<void*>(spData.get());
+        void* notificationPtr = static_cast<void*>(spData.get());
 
         // Guard the callback with a weak_ptr so that any notification already queued
         // to the async worker thread at the time of unsubscribe is safely dropped
@@ -128,21 +130,20 @@ private:
         // the worker dispatching them after SubscriptionData has been destroyed.
         std::weak_ptr<SubscriptionData> wpData = spData;
         Firebolt::Transport::EventCallback wrappedCallback =
-            [wpData, callback, eventName](void* usercb, const nlohmann::json& json)
+            [wpData, callback, eventName](void* /*usercb*/, const nlohmann::json& json)
         {
             if (auto sp = wpData.lock())
             {
-                callback(usercb, json);
+                callback(sp.get(), json);
             }
             else
             {
-                FIREBOLT_LOG_DEBUG("Helper",
-                                   "[subscription] notification dropped for already-unsubscribed event='%s'",
+                FIREBOLT_LOG_DEBUG("Helper", "[subscription] notification dropped for already-unsubscribed event='%s'",
                                    eventName.c_str());
             }
         };
 
-        Error status = gateway_.subscribe(eventName, wrappedCallback, notificationPtr);
+        Error status = gateway_.subscribe(eventName, std::move(wrappedCallback), notificationPtr);
 
         if (Error::None != status)
         {

@@ -370,14 +370,18 @@ public:
                 {
                     FIREBOLT_LOG_ERROR("Gateway",
                                        "[notification-worker] bad_any_cast dispatching event='%s': %s — "
-                                       "subscription may have been removed while notification was in-flight",
+                                       "notification type does not match the registered callback signature",
                                        callback.eventName.c_str(), e.what());
                 }
                 catch (const std::exception& e)
                 {
-                    FIREBOLT_LOG_ERROR("Gateway",
-                                       "[notification-worker] exception dispatching event='%s': %s",
+                    FIREBOLT_LOG_ERROR("Gateway", "[notification-worker] exception dispatching event='%s': %s",
                                        callback.eventName.c_str(), e.what());
+                }
+                catch (...)
+                {
+                    FIREBOLT_LOG_ERROR("Gateway", "[notification-worker] unknown exception dispatching event='%s'",
+                                       callback.eventName.c_str());
                 }
             }
         }
