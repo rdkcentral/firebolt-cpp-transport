@@ -236,6 +236,8 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     FIREBOLT_LOG_DEBUG("Transport", "[connect] websocket logging masks include=0x%x exclude=0x%x",
                        static_cast<unsigned>(include), static_cast<unsigned>(exclude));
 
+    FIREBOLT_LOG_NOTICE("Transport", "[connect] Full WebSocket URL: %s", url.c_str());
+    
     websocketpp::lib::error_code ec;
     client::connection_ptr con = client_->get_connection(url, ec);
 
