@@ -675,8 +675,9 @@ TEST_F(HelperUTest, WeakPtrGuard_NotificationDroppedAfterUnsubscribeAll)
     std::function<void(int)> notification = [&notificationFired](int) { notificationFired = true; };
 
     IHelper& ihelper = helper;
-    ihelper.subscribe(this, "tts.onSpeechInterrupted", std::move(notification),
-                      onPropertyChangedCallback<TestJson, int>);
+    auto subResult = ihelper.subscribe(this, "tts.onSpeechInterrupted", std::move(notification),
+                                       onPropertyChangedCallback<TestJson, int>);
+    ASSERT_TRUE(subResult);
 
     // Lifecycle background event fires → Monarch calls unsubscribeAll()
     // shared_ptr ref count drops to 0 → SubscriptionData is destroyed
