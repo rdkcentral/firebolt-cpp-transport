@@ -361,7 +361,23 @@ public:
 
             for (auto& callback : notification.callbacks)
             {
-                callback.lambda(callback.usercb, notification.params);
+                try
+                {
+                    callback.lambda(callback.usercb, notification.params);
+                }
+                catch (const std::bad_any_cast& e)
+                {
+                    FIREBOLT_LOG_ERROR("Gateway",
+                                       "[notification-worker] bad_any_cast dispatching event='%s': %s — "
+                                       "subscription may have been removed while notification was in-flight",
+                                       callback.eventName.c_str(), e.what());
+                }
+                catch (const std::exception& e)
+                {
+                    FIREBOLT_LOG_ERROR("Gateway",
+                                       "[notification-worker] exception dispatching event='%s': %s",
+                                       callback.eventName.c_str(), e.what());
+                }
             }
         }
     }

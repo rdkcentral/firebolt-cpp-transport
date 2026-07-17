@@ -605,3 +605,128 @@ TEST(GetHelperInstanceTest, ReturnsSingleton)
     // Same singleton reference
     EXPECT_EQ(&helper1, &helper2);
 }
+
+// ---------------------------------------------------------------------------
+// Race condition fix tests (MONUI-908)
+//
+// These tests validate the weak_ptr guard introduced in HelperImpl::subscribe.
+// The guard prevents a use-after-free crash that occurred when:
+//   1. The platform sent an event notification (e.g. onSpeechInterrupted).
+//   2. Before the worker thread dispatched it, unsubscribeAll() ran and
+//      destroyed the SubscriptionData object.
+//   3. The worker thread then invoked the registered callback with a dangling
+//      void* pointer → bad_any_cast → std::terminate → device crash.
+TEST_F(HelperUTest, WeakPtrGuard_NotificationDeliveredWhileSubscribed)
+{
+    Firebolt::Transport::EventCallback capturedCallback;
+    void* capturedUsercb = nullptr;
+
+    EXPECT_CALL(mockGateway, subscribe("test.onEvent", _, _))
+        .WillOnce([&](const std::string&, Firebolt::Transport::EventCallback cb, void* ucb) {
+            capturedCallback = cb;
+            capturedUsercb = ucb;
+            return Error::None;
+        });
+
+    std::promise<int> deliveredValue;
+    auto future = deliveredValue.get_future();
+    std::function<void(int)> notification = [&deliveredValue](int val) { deliveredValue.set_value(val); };
+
+    IHelper& ihelper = helper;
+    auto subResult =
+        ihelper.subscribe(this, "test.onEvent", std::move(notification), onPropertyChangedCallback<TestJson, int>);
+    ASSERT_TRUE(subResult);
+    ASSERT_TRUE(capturedCallback) << "wrappedCallback must have been captured";
+
+    // Worker thread dispatches notification while subscription is still alive
+    capturedCallback(capturedUsercb, nlohmann::json{{"value", 42}});
+
+    auto status = future.wait_for(std::chrono::seconds(1));
+    ASSERT_EQ(status, std::future_status::ready);
+    EXPECT_EQ(future.get(), 42);
+
+    // Destructor will unsubscribe the remaining active subscription
+    EXPECT_CALL(mockGateway, unsubscribe("test.onEvent", _)).WillOnce(Return(Error::None));
+}
+
+// ---------------------------------------------------------------------------
+// Test name: HelperUTest.WeakPtrGuard_NotificationDroppedAfterUnsubscribeAll
+// Covers: wrappedCallback drops in-flight notification when SubscriptionData
+//         has been destroyed by unsubscribeAll() — the exact MONUI-908 race.
+//
+//   Before fix: capturedUsercb is dangling → bad_any_cast → std::terminate
+//   After fix:  wpData.lock() returns nullptr → silently dropped, no crash
+//
+// Scenario type: race condition regression test
+// ---------------------------------------------------------------------------
+TEST_F(HelperUTest, WeakPtrGuard_NotificationDroppedAfterUnsubscribeAll)
+{
+    Firebolt::Transport::EventCallback capturedCallback;
+    void* capturedUsercb = nullptr;
+
+    EXPECT_CALL(mockGateway, subscribe("tts.onSpeechInterrupted", _, _))
+        .WillOnce([&](const std::string&, Firebolt::Transport::EventCallback cb, void* ucb) {
+            capturedCallback = cb;
+            capturedUsercb = ucb;
+            return Error::None;
+        });
+
+    bool notificationFired = false;
+    std::function<void(int)> notification = [&notificationFired](int) { notificationFired = true; };
+
+    IHelper& ihelper = helper;
+    ihelper.subscribe(this, "tts.onSpeechInterrupted", std::move(notification),
+                      onPropertyChangedCallback<TestJson, int>);
+
+    // Lifecycle background event fires → Monarch calls unsubscribeAll()
+    // shared_ptr ref count drops to 0 → SubscriptionData is destroyed
+    EXPECT_CALL(mockGateway, unsubscribe("tts.onSpeechInterrupted", _)).WillOnce(Return(Error::None));
+    helper.unsubscribeAll(this);
+
+    // Platform sends onSpeechInterrupted — notification was already queued in-flight
+    // Replay the race: call the wrappedCallback with the now-stale usercb address.
+    ASSERT_TRUE(capturedCallback) << "wrappedCallback must have been captured";
+    capturedCallback(capturedUsercb, nlohmann::json{{"value", 1}});
+
+    // Notification must NOT be delivered to Monarch
+    EXPECT_FALSE(notificationFired);
+    // Reaching this line without crashing IS the primary assertion of this test
+}
+
+// ---------------------------------------------------------------------------
+// Test name: HelperUTest.WeakPtrGuard_NotificationDroppedAfterUnsubscribeById
+// Covers: Same weak_ptr guard works for single unsubscribe (not just unsubscribeAll)
+// Scenario type: race condition regression test
+// ---------------------------------------------------------------------------
+TEST_F(HelperUTest, WeakPtrGuard_NotificationDroppedAfterUnsubscribeById)
+{
+    Firebolt::Transport::EventCallback capturedCallback;
+    void* capturedUsercb = nullptr;
+
+    EXPECT_CALL(mockGateway, subscribe("test.onEvent", _, _))
+        .WillOnce([&](const std::string&, Firebolt::Transport::EventCallback cb, void* ucb) {
+            capturedCallback = cb;
+            capturedUsercb = ucb;
+            return Error::None;
+        });
+
+    bool notificationFired = false;
+    std::function<void(int)> notification = [&notificationFired](int) { notificationFired = true; };
+
+    IHelper& ihelper = helper;
+    auto subResult =
+        ihelper.subscribe(this, "test.onEvent", std::move(notification), onPropertyChangedCallback<TestJson, int>);
+    ASSERT_TRUE(subResult);
+    SubscriptionId id = *subResult;
+
+    // Unsubscribe by specific ID → SubscriptionData destroyed
+    EXPECT_CALL(mockGateway, unsubscribe("test.onEvent", _)).WillOnce(Return(Error::None));
+    helper.unsubscribe(id);
+
+    // In-flight notification arrives after the subscription was removed
+    ASSERT_TRUE(capturedCallback) << "wrappedCallback must have been captured";
+    capturedCallback(capturedUsercb, nlohmann::json{{"value", 99}});
+
+    EXPECT_FALSE(notificationFired);
+    // Reaching this line without crashing IS the primary assertion of this test
+}
