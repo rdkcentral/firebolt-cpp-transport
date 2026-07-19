@@ -36,8 +36,15 @@ struct Config
     /** Custom headers to send during connection. */
     std::map<std::string, std::string> headers;
 
-    /** Timeout for RPC responses in milliseconds. Default: 3000. */
-    unsigned waitTime_ms = 3000;
+    /** Timeout for RPC responses in milliseconds. Default: 5000.
+     *
+     *  Set to 5000ms to provide adequate headroom above the EU XVP
+     *  PutResumePoint p99 latency (~2493ms).  The previous default of 3000ms
+     *  left only a 507ms margin, causing false timeouts on slow-tail XVP calls,
+     *  which triggered reconnect-retry storms and a ~20s black screen on app
+     *  exit.  Can be further tuned at runtime via FIREBOLT_WAIT_TIME_MS env var.
+     */
+    unsigned waitTime_ms = 5000;
 
     /** Enable legacy RPC v1 support for event notification. Default: @FIREBOLT_LEGACY_RPC_V1@. */
     bool legacyRPCv1 = @FIREBOLT_LEGACY_RPC_V1@;
