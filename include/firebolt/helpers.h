@@ -40,10 +40,10 @@ template <typename JsonType, typename... Args>
 void onPropertyChangedCallback(void* subscriptionDataPtr, const nlohmann::json& jsonResponse)
 {
     SubscriptionData* subscriptionData = reinterpret_cast<SubscriptionData*>(subscriptionDataPtr);
-    auto notifier = std::any_cast<std::function<void(Args...)>>(subscriptionData->notification);
-    JsonType jsonType;
     try
     {
+        auto notifier = std::any_cast<std::function<void(Args...)>>(subscriptionData->notification);
+        JsonType jsonType;
         jsonType.fromJson(jsonResponse);
         if constexpr (sizeof...(Args) > 1)
         {

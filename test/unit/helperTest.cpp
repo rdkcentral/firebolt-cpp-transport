@@ -640,7 +640,7 @@ TEST_F(HelperUTest, WeakPtrGuard_NotificationDeliveredWhileSubscribed)
     ASSERT_TRUE(subResult);
     ASSERT_TRUE(capturedCallback) << "wrappedCallback must have been captured";
 
-    // Worker thread dispatches notification while subscription is still alive
+    // Simulate the worker thread dispatching a notification while the subscription is still alive
     capturedCallback(capturedUsercb, nlohmann::json{{"value", 42}});
 
     auto status = future.wait_for(std::chrono::seconds(1));
@@ -688,8 +688,8 @@ TEST_F(HelperUTest, WeakPtrGuard_NotificationDroppedAfterUnsubscribeAll)
     EXPECT_CALL(mockGateway, unsubscribe("tts.onSpeechInterrupted", _)).WillOnce(Return(Error::None));
     helper.unsubscribeAll(this);
 
-    // Platform sends onSpeechInterrupted — notification was already queued in-flight
-    // Replay the race: call the wrappedCallback with the now-stale usercb address.
+    // Simulate the platform sending onSpeechInterrupted after unsubscribeAll() — replay the race by calling
+    // the wrappedCallback with the now-stale usercb address.
     ASSERT_TRUE(capturedCallback) << "wrappedCallback must have been captured";
     capturedCallback(capturedUsercb, nlohmann::json{{"value", 1}});
 
