@@ -369,7 +369,7 @@ public:
                 catch (const std::bad_any_cast& e)
                 {
                     FIREBOLT_LOG_ERROR("Gateway",
-                                       "[notification-worker] bad_any_cast dispatching event='%s': %s — "
+                                       "[notification-worker] bad_any_cast dispatching event='%s': %s - "
                                        "notification type does not match the registered callback signature",
                                        callback.eventName.c_str(), e.what());
                 }
