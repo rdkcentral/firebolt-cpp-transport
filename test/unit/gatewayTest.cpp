@@ -1505,3 +1505,41 @@ TEST_F(GatewayUTest, DisconnectCancelsPendingRequests)
     EXPECT_FALSE(result.has_value());
     EXPECT_EQ(result.error(), Firebolt::Error::NotConnected);
 }
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.DisconnectIsNotTimebound
+// Covers: disconnect() completes immediately without waiting for watchdog interval
+// Scenario type: performance
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, DisconnectIsNotTimebound)
+{
+    m_messageHandler = [](connection_hdl, server::message_ptr) {};
+
+    IGateway& gateway = connectAndWait();
+
+    // Fire a request that the server will never answer.
+    auto responseFuture = gateway.request("test.neverResponds", nlohmann::json{});
+
+    // The request is now in-flight and the future is pending. Disconnect and
+    // measure the time it takes. With the condition_variable::wait_for refactoring,
+    // disconnect() should complete immediately (< 100ms) rather than waiting
+    // for the full watchdog interval (500ms).
+    auto t0 = std::chrono::steady_clock::now();
+    Firebolt::Error disconnectErr = gateway.disconnect();
+    auto t1 = std::chrono::steady_clock::now();
+    auto disconnectDuration = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+    EXPECT_EQ(disconnectErr, Firebolt::Error::None);
+
+    // Disconnect should complete well within the watchdog interval (500ms).
+    // Allow some overhead but it should be significantly faster than 500ms.
+    EXPECT_LT(disconnectDuration, 200) << "disconnect() took " << disconnectDuration
+                                         << "ms, expected < 200ms (watchdog interval is 500ms)";
+
+    // After disconnect() returns, cancelAll() must have resolved the promise.
+    ASSERT_EQ(responseFuture.wait_for(std::chrono::milliseconds(0)), std::future_status::ready);
+
+    auto result = responseFuture.get();
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), Firebolt::Error::NotConnected);
+}
