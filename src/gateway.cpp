@@ -614,11 +614,10 @@ public:
                         {
                             break;
                         }
+                        lock.unlock();
                         try
                         {
-                            lock.unlock();
-                            client.checkPromises();
-                            lock.lock();
+                            client.checkPromises();   
                         }
                         catch (const std::exception& e)
                         {
@@ -628,6 +627,7 @@ public:
                         {
                             FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
                         }
+                        lock.lock();
                     }
                 });
             FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] thread started");
