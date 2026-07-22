@@ -37,7 +37,7 @@ jobs:
       - name: Checkout full history
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+          token: ${{ secrets.AUTOMATION_TOKEN }}
           fetch-depth: 0
 
       - name: Configure git identity
@@ -86,7 +86,7 @@ jobs:
       - name: Open PR on conflict
         if: steps.check.outputs.already_synced == 'false' && (steps.merge.outputs.conflict == 'true' || steps.push_merged.outputs.push_failed == 'true')
         env:
-          GH_TOKEN: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
         run: |
           PR_BRANCH="auto-sync/${{ env.SOURCE_BRANCH }}-to-${{ env.TARGET_BRANCH }}"
           REASON="merge conflict"
