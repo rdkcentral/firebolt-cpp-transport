@@ -517,8 +517,12 @@ public:
 
     ~GatewayImpl()
     {
-        std::lock_guard<std::mutex> lock(connectionLog_mtx);
-        if (lastConnectionState)
+        bool isConnected = false;
+        {
+            std::lock_guard<std::mutex> lock(connectionLog_mtx);
+            isConnected = lastConnectionState;
+        }
+        if (isConnected)
         {
             disconnect();
         }
