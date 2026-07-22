@@ -517,13 +517,10 @@ public:
 
     ~GatewayImpl()
     {
-        if (watchdogRunning)
+        std::lock_guard<std::mutex> lock(connectionLog_mtx);
+        if (lastConnectionState)
         {
-            watchdogRunning = false;
-            if (watchdogThread.joinable())
-            {
-                watchdogThread.join();
-            }
+            disconnect();
         }
     }
 
