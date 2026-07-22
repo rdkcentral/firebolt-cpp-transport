@@ -24,6 +24,7 @@
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -1476,6 +1477,55 @@ TEST_F(GatewayUTest, LegacyUnsubscribeIteratesPastNonMatchingEntry)
     // Clean up eventA
     err = gateway.unsubscribe("test.onEventA", &cbA);
     EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.NotificationWorkerContinuesAfterCallbackException
+// Covers: src/gateway.cpp: notification worker for-loop catch block — the
+//         worker must continue dispatching remaining callbacks in the same
+//         notification batch even when one callback throws std::exception.
+//         Regression: before the try/catch was added, the exception would
+//         escape the thread entry point and call std::terminate.
+// Scenario type: regression
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, NotificationWorkerContinuesAfterCallbackException)
+{
+    IGateway& gateway = connectAndWait();
+
+    // Callback A intentionally throws — exercises catch(const std::exception&)
+    auto onEventA = [](void*, const nlohmann::json&) { throw std::runtime_error("test: simulated callback exception"); };
+    int cbA = 0;
+
+    // Callback B signals via a promise — confirms the worker reached it after A threw
+    std::promise<bool> deliveredPromise;
+    auto deliveredFuture = deliveredPromise.get_future();
+    auto onEventB = [](void* usercb, const nlohmann::json&)
+    { static_cast<std::promise<bool>*>(usercb)->set_value(true); };
+
+    // Both subscribe to the same event so they land in the same notification.callbacks vector
+    Firebolt::Error err = gateway.subscribe("test.onWorkerContinues", onEventA, &cbA);
+    EXPECT_EQ(err, Firebolt::Error::None);
+    err = gateway.subscribe("test.onWorkerContinues", onEventB, &deliveredPromise);
+    EXPECT_EQ(err, Firebolt::Error::None);
+
+    // Server fires the event once
+    m_onMessageAction = [](server* s, connection_hdl hdl)
+    {
+        nlohmann::json eventMsg;
+        eventMsg["jsonrpc"] = "2.0";
+        eventMsg["method"] = "test.onWorkerContinues";
+        eventMsg["params"] = {{"fired", true}};
+        s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
+    };
+    gateway.send("dummy.message", {});
+
+    // Callback B must still fire — worker continued the loop despite A throwing
+    auto status = deliveredFuture.wait_for(std::chrono::seconds(2));
+    ASSERT_EQ(status, std::future_status::ready) << "Notification worker stopped after exception in callback A";
+    EXPECT_TRUE(deliveredFuture.get());
+
+    gateway.unsubscribe("test.onWorkerContinues", &cbA);
+    gateway.unsubscribe("test.onWorkerContinues", &deliveredPromise);
 }
 
 // Regression test: disconnect() must cancel all pending requests so that calling
