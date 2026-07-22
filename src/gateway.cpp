@@ -567,6 +567,28 @@ public:
         legacyRPCv1 = cfg.legacyRPCv1;
         watchdog_interval_ms = cfg.watchdogCycle_ms;
 
+        // Allow runtime override via environment variable.
+        // Useful for region-specific tuning (e.g. EU XVP latency ~2.5s vs NA ~0.6s)
+        // without requiring an app or transport rebuild.
+        // Example: FIREBOLT_WAIT_TIME_MS=5000 in the app's launch environment.
+        if (const char* env = std::getenv("FIREBOLT_WAIT_TIME_MS"))
+        {
+            char* end = nullptr;
+            unsigned long override_val = std::strtoul(env, &end, 10);
+            if (end != env && *end == '\0' && override_val > 0 && override_val <= 120000)
+            {
+                FIREBOLT_LOG_NOTICE("Gateway", "[connect] FIREBOLT_WAIT_TIME_MS env override: %u -> %lu ms",
+                                    runtime_waitTime_ms, override_val);
+                runtime_waitTime_ms = static_cast<unsigned>(override_val);
+            }
+            else
+            {
+                FIREBOLT_LOG_WARNING("Gateway",
+                                     "[connect] FIREBOLT_WAIT_TIME_MS='%s' ignored (invalid or out of range 1-120000)",
+                                     env);
+            }
+        }
+
         FIREBOLT_LOG_NOTICE("Gateway", "[connect] config waitTime_ms=%u watchdog_interval_ms=%u headers=%zu",
                             runtime_waitTime_ms, watchdog_interval_ms, cfg.headers.size());
         FIREBOLT_LOG_NOTICE("Gateway", "[connect] log level resolved=%d (cfg=%d), transport masks include=%s exclude=%s",

@@ -363,6 +363,119 @@ TEST_F(GatewayUTest, RequestTimeout)
     EXPECT_EQ(result.error(), Firebolt::Error::Timedout);
 }
 
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.RequestFalseTimeoutWhenServerRespondsLate
+// Covers: src/gateway.cpp — checkPromises() evicts promise before slow response
+// Scenario type: NEGATIVE — bug reproduction
+//
+// Mirrors the production defect:
+//   EU XVP p99 latency ~2493ms > waitTime_ms=3000ms margin of 507ms.
+//   When checkPromises() fires at waitTime_ms+watchdog (~1500ms here),
+//   it rejects the promise as Timedout.  The server then responds
+//   (~1200ms) but the promise is already gone — "No receiver for message".
+//   The caller sees Error::Timedout even though the operation succeeded
+//   server-side.
+//
+// Test parameters (scaled to unit-test timing):
+//   cfg.waitTime_ms  = 1000ms   (analogous to production 3000ms)
+//   server delay     = 1600ms   (analogous to EU XVP ~3500ms+)
+//   effective timeout = 1000–1500ms (waitTime + one watchdog cycle at 500ms)
+//   The first checkPromises tick that can evict: t=1500ms (age 1500 > 1000)
+//   Server responds at 1600ms — AFTER the eviction, so No receiver fires.
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, RequestFalseTimeoutWhenServerRespondsLate)
+{
+    // Server sends a valid success response, but only after waitTime_ms (1000ms).
+    // checkPromises() fires at t=1500ms (age 1500ms > waitTime 1000ms = TRUE)
+    // and evicts the promise BEFORE the server responds at 1600ms.
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        std::thread(
+            [this, hdl, msg]()
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1600)); // arrives AFTER 1500ms timeout
+                try
+                {
+                    auto req = nlohmann::json::parse(msg->get_payload());
+                    nlohmann::json resp;
+                    resp["jsonrpc"] = "2.0";
+                    resp["id"] = req["id"];
+                    resp["result"] = true; // server would have returned success
+                    m_server.send(hdl, resp.dump(), msg->get_opcode());
+                }
+                catch (...)
+                {
+                }
+            })
+            .detach();
+    };
+
+    IGateway& gateway = connectAndWait();
+    auto future = gateway.request("test.method", {});
+
+    ASSERT_EQ(future.wait_for(std::chrono::milliseconds(2500)), std::future_status::ready)
+        << "checkPromises should have fired within waitTime_ms + watchdog window";
+
+    auto result = future.get();
+    // BUG: server succeeded but client gets Timedout
+    EXPECT_EQ(result.error(), Firebolt::Error::Timedout)
+        << "Expected false timeout: server responded late but client already gave up";
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.EnvWaitTimeMsFixesFalseTimeout
+// Covers: src/gateway.cpp — FIREBOLT_WAIT_TIME_MS env override corrects the bug
+// Scenario type: POSITIVE — fix verification (paired with test above)
+//
+// Same conditions as RequestFalseTimeoutWhenServerRespondsLate, but with
+// FIREBOLT_WAIT_TIME_MS=5000 applied.  The server's 1200ms response now
+// arrives before the extended timeout fires, so the call succeeds.
+//
+// This is the direct "after" counterpart to the "before" test above.
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, EnvWaitTimeMsFixesFalseTimeout)
+{
+    ::setenv("FIREBOLT_WAIT_TIME_MS", "5000", 1);
+    struct Cleanup
+    {
+        ~Cleanup() { ::unsetenv("FIREBOLT_WAIT_TIME_MS"); }
+    } cleanup;
+
+    // Same server behaviour: responds at 1600ms — late for cfg.waitTime_ms=1000
+    // but comfortably within FIREBOLT_WAIT_TIME_MS=5000.
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        std::thread(
+            [this, hdl, msg]()
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1600));
+                try
+                {
+                    auto req = nlohmann::json::parse(msg->get_payload());
+                    nlohmann::json resp;
+                    resp["jsonrpc"] = "2.0";
+                    resp["id"] = req["id"];
+                    resp["result"] = true;
+                    m_server.send(hdl, resp.dump(), msg->get_opcode());
+                }
+                catch (...)
+                {
+                }
+            })
+            .detach();
+    };
+
+    IGateway& gateway = connectAndWait();
+    auto future = gateway.request("test.method", {});
+
+    ASSERT_EQ(future.wait_for(std::chrono::seconds(3)), std::future_status::ready)
+        << "Response should arrive before extended 5000ms timeout";
+
+    auto result = future.get();
+    // FIX: same server behaviour, env override prevents false timeout
+    EXPECT_TRUE(result.has_value()) << "Expected success: FIREBOLT_WAIT_TIME_MS=5000 should prevent false timeout";
+}
+
 TEST_F(GatewayUTest, RequestWithError)
 {
     m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
@@ -1554,4 +1667,170 @@ TEST_F(GatewayUTest, DisconnectCancelsPendingRequests)
     auto result = responseFuture.get();
     EXPECT_FALSE(result.has_value());
     EXPECT_EQ(result.error(), Firebolt::Error::NotConnected);
+}
+
+// ---------------------------------------------------------------------------
+// FIREBOLT_WAIT_TIME_MS environment variable override tests
+//
+// Background: EU XVP PutResumePoint p99 latency ~2493ms is within 507ms of the
+// default waitTime_ms=3000ms.  When XVP is at the slow tail, checkPromises()
+// rejects in-flight requests as Timedout even though the server completes them
+// successfully.  The prime.video app then reconnects and retries, causing a
+// ~20s black screen on exit and duplicate XVP submissions.
+//
+// Fix: allow waitTime_ms to be overridden at runtime via FIREBOLT_WAIT_TIME_MS
+// so the value can be tuned per-region (e.g. EU=5000ms, NA=3000ms) without a
+// rebuild.  The env var is read in connect() and overrides cfg.waitTime_ms.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.EnvWaitTimeMsOverridesConfig
+// Covers: src/gateway.cpp — FIREBOLT_WAIT_TIME_MS env var branch
+// Scenario type: config override
+// Verifies: a valid env var value is accepted and replaces the config value.
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, EnvWaitTimeMsOverridesConfig)
+{
+    // Arrange: set env var to a clearly distinct value
+    ::setenv("FIREBOLT_WAIT_TIME_MS", "7000", 1);
+    struct Cleanup
+    {
+        ~Cleanup() { ::unsetenv("FIREBOLT_WAIT_TIME_MS"); }
+    } cleanup;
+
+    // The config carries waitTime_ms=1000 (from getTestConfig()).
+    // After connect(), the effective timeout must be 7000ms not 1000ms.
+    // We verify this indirectly: a request that the server answers after
+    // 1200ms must NOT be timed out (it would be with waitTime_ms=1000).
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        std::thread(
+            [this, hdl, msg]()
+            {
+                // Respond after 1200ms — past the cfg.waitTime_ms=1000ms threshold
+                // but well within the FIREBOLT_WAIT_TIME_MS=7000ms override.
+                std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+                try
+                {
+                    auto req = nlohmann::json::parse(msg->get_payload());
+                    nlohmann::json resp;
+                    resp["jsonrpc"] = "2.0";
+                    resp["id"] = req["id"];
+                    resp["result"] = true;
+                    m_server.send(hdl, resp.dump(), msg->get_opcode());
+                }
+                catch (...)
+                {
+                }
+            })
+            .detach();
+    };
+
+    IGateway& gateway = connectAndWait();
+    auto future = gateway.request("test.method", {});
+
+    // Must be ready within 3s — the env override kept the promise alive
+    ASSERT_EQ(future.wait_for(std::chrono::seconds(3)), std::future_status::ready)
+        << "Request was timed out despite FIREBOLT_WAIT_TIME_MS=7000 override";
+    auto result = future.get();
+    EXPECT_TRUE(result.has_value()) << "Expected success but got error: " << static_cast<int>(result.error());
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.EnvWaitTimeMsInvalidValuesIgnored
+// Covers: src/gateway.cpp — FIREBOLT_WAIT_TIME_MS invalid-value guard
+// Scenario type: invalid input
+// Verifies: a non-numeric env value is ignored; cfg.waitTime_ms=1000 applies
+//           and checkPromises() still fires within the expected window.
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, EnvWaitTimeMsInvalidValuesIgnored)
+{
+    ::setenv("FIREBOLT_WAIT_TIME_MS", "not_a_number", 1);
+    struct Cleanup
+    {
+        ~Cleanup() { ::unsetenv("FIREBOLT_WAIT_TIME_MS"); }
+    } cleanup;
+
+    // Server never responds — request must timeout on cfg.waitTime_ms=1000
+    m_messageHandler = [](connection_hdl, server::message_ptr) {};
+
+    IGateway& gateway = connectAndWait();
+    auto future = gateway.request("test.method", {});
+
+    // Must still timeout within 1000ms + one watchdog cycle (500ms) + slack
+    ASSERT_EQ(future.wait_for(std::chrono::milliseconds(2500)), std::future_status::ready)
+        << "Invalid env var should be ignored; cfg.waitTime_ms=1000 must still apply";
+    auto result = future.get();
+    EXPECT_EQ(result.error(), Firebolt::Error::Timedout);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.EnvWaitTimeMsZeroIgnored
+// Covers: src/gateway.cpp — zero value guard in env override
+// Scenario type: boundary / invalid input
+// Verifies: FIREBOLT_WAIT_TIME_MS=0 is rejected; cfg.waitTime_ms is preserved.
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, EnvWaitTimeMsZeroIgnored)
+{
+    ::setenv("FIREBOLT_WAIT_TIME_MS", "0", 1);
+    struct Cleanup
+    {
+        ~Cleanup() { ::unsetenv("FIREBOLT_WAIT_TIME_MS"); }
+    } cleanup;
+
+    m_messageHandler = [](connection_hdl, server::message_ptr) {};
+
+    IGateway& gateway = connectAndWait();
+    auto future = gateway.request("test.method", {});
+
+    ASSERT_EQ(future.wait_for(std::chrono::milliseconds(2500)), std::future_status::ready)
+        << "Zero env var should be ignored; cfg.waitTime_ms=1000 must still apply";
+    EXPECT_EQ(future.get().error(), Firebolt::Error::Timedout);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.EnvWaitTimeMsAboveCapIgnored
+// Covers: src/gateway.cpp — 120000ms cap guard in env override
+// Scenario type: boundary / invalid input
+// Verifies: values above 120000 are rejected; cfg.waitTime_ms is preserved.
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, EnvWaitTimeMsAboveCapIgnored)
+{
+    ::setenv("FIREBOLT_WAIT_TIME_MS", "200000", 1);
+    struct Cleanup
+    {
+        ~Cleanup() { ::unsetenv("FIREBOLT_WAIT_TIME_MS"); }
+    } cleanup;
+
+    m_messageHandler = [](connection_hdl, server::message_ptr) {};
+
+    IGateway& gateway = connectAndWait();
+    auto future = gateway.request("test.method", {});
+
+    ASSERT_EQ(future.wait_for(std::chrono::milliseconds(2500)), std::future_status::ready)
+        << "Out-of-range env var should be ignored; cfg.waitTime_ms=1000 must still apply";
+    EXPECT_EQ(future.get().error(), Firebolt::Error::Timedout);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.NoEnvWaitTimeMsUsesConfigValue
+// Covers: src/gateway.cpp — default path (env var absent)
+// Scenario type: baseline / regression guard
+// Verifies: without the env var, cfg.waitTime_ms is used as-is.
+//           This guards against accidental changes to the default path.
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, NoEnvWaitTimeMsUsesConfigValue)
+{
+    ::unsetenv("FIREBOLT_WAIT_TIME_MS"); // ensure absent
+
+    // Server never responds — request must timeout on cfg.waitTime_ms=1000
+    m_messageHandler = [](connection_hdl, server::message_ptr) {};
+
+    IGateway& gateway = connectAndWait();
+    auto future = gateway.request("test.method", {});
+
+    ASSERT_EQ(future.wait_for(std::chrono::milliseconds(2500)), std::future_status::ready)
+        << "Request should have timed out on cfg.waitTime_ms=1000";
+    auto result = future.get();
+    EXPECT_EQ(result.error(), Firebolt::Error::Timedout);
 }

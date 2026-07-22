@@ -26,6 +26,9 @@ std::string buildGatewayUrl(std::string url, bool legacyRPCv1)
     const size_t hostStart = (schemePos == std::string::npos) ? 0 : schemePos + 3;
     const size_t pathPos = url.find('/', hostStart);
 
+    // DEBUG: Log input
+    fprintf(stderr, "[buildGatewayUrl] input='%s' legacyRPCv1=%d\n", url.c_str(), legacyRPCv1);
+
     if (pathPos == std::string::npos)
     {
         const size_t queryPos = url.find('?', hostStart);
@@ -41,17 +44,31 @@ std::string buildGatewayUrl(std::string url, bool legacyRPCv1)
 
     if (!legacyRPCv1)
     {
-        if (url.find('?', hostStart) == std::string::npos)
+        // Only add RPCv2=true if it's not already present
+        size_t rpcv2Pos = url.find("RPCv2=true");
+        fprintf(stderr, "[buildGatewayUrl] checking RPCv2: pos=%zu (npos=%zu)\n", rpcv2Pos, std::string::npos);
+
+        if (rpcv2Pos == std::string::npos)
         {
-            url += "?";
+            fprintf(stderr, "[buildGatewayUrl] RPCv2 not found, adding...\n");
+            if (url.find('?', hostStart) == std::string::npos)
+            {
+                url += "?";
+            }
+            else
+            {
+                url += "&";
+            }
+            url += "RPCv2=true";
         }
         else
         {
-            url += "&";
+            fprintf(stderr, "[buildGatewayUrl] RPCv2 already present, skipping\n");
         }
-        url += "RPCv2=true";
     }
 
+    // DEBUG: Log output
+    fprintf(stderr, "[buildGatewayUrl] output='%s'\n", url.c_str());
     return url;
 }
 } // namespace Firebolt::Transport
