@@ -22,6 +22,7 @@
 #include "firebolt/types.h"
 #include "transport.h"
 #include "utils.h"
+#include <any>
 #include <assert.h>
 #include <chrono>
 #include <condition_variable>
@@ -361,7 +362,27 @@ public:
 
             for (auto& callback : notification.callbacks)
             {
-                callback.lambda(callback.usercb, notification.params);
+                try
+                {
+                    callback.lambda(callback.usercb, notification.params);
+                }
+                catch (const std::bad_any_cast& e)
+                {
+                    FIREBOLT_LOG_ERROR("Gateway",
+                                       "[notification-worker] bad_any_cast dispatching event='%s': %s - "
+                                       "notification type does not match the registered callback signature",
+                                       callback.eventName.c_str(), e.what());
+                }
+                catch (const std::exception& e)
+                {
+                    FIREBOLT_LOG_ERROR("Gateway", "[notification-worker] exception dispatching event='%s': %s",
+                                       callback.eventName.c_str(), e.what());
+                }
+                catch (...)
+                {
+                    FIREBOLT_LOG_ERROR("Gateway", "[notification-worker] unknown exception dispatching event='%s'",
+                                       callback.eventName.c_str());
+                }
             }
         }
     }
