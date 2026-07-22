@@ -40,10 +40,10 @@ template <typename JsonType, typename... Args>
 void onPropertyChangedCallback(void* subscriptionDataPtr, const nlohmann::json& jsonResponse)
 {
     SubscriptionData* subscriptionData = reinterpret_cast<SubscriptionData*>(subscriptionDataPtr);
-    auto notifier = std::any_cast<std::function<void(Args...)>>(subscriptionData->notification);
-    JsonType jsonType;
     try
     {
+        auto notifier = std::any_cast<std::function<void(Args...)>>(subscriptionData->notification);
+        JsonType jsonType;
         jsonType.fromJson(jsonResponse);
         if constexpr (sizeof...(Args) > 1)
         {
@@ -54,9 +54,14 @@ void onPropertyChangedCallback(void* subscriptionDataPtr, const nlohmann::json& 
             notifier(jsonType.value());
         }
     }
+    catch (const std::bad_any_cast& e)
+    {
+        FIREBOLT_LOG_ERROR("Event", "Notification type mismatch for event '%s': %s",
+                           subscriptionData->eventName.c_str(), e.what());
+    }
     catch (const std::exception& e)
     {
-        FIREBOLT_LOG_ERROR("Event", "Cannot parse event data for event %s, payload: %s",
+        FIREBOLT_LOG_ERROR("Event", "Cannot parse event data for event '%s', payload: %s",
                            subscriptionData->eventName.c_str(), jsonResponse.dump().c_str());
     }
 }

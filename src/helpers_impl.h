@@ -18,6 +18,9 @@
 
 #include "firebolt/gateway.h"
 #include "firebolt/helpers.h"
+#include <map>
+#include <memory>
+#include <mutex>
 
 namespace Firebolt::Helpers
 {
@@ -35,8 +38,8 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& subscription : subscriptions_)
         {
-            void* notificationPtr = reinterpret_cast<void*>(&subscription.second);
-            gateway_.unsubscribe(subscription.second.eventName, notificationPtr);
+            void* notificationPtr = static_cast<void*>(subscription.second.get());
+            gateway_.unsubscribe(subscription.second->eventName, notificationPtr);
         }
         subscriptions_.clear();
     }
@@ -76,8 +79,8 @@ public:
         {
             return Result<void>{Error::General};
         }
-        void* notificationPtr = reinterpret_cast<void*>(&it->second);
-        auto errorStatus{gateway_.unsubscribe(it->second.eventName, notificationPtr)};
+        void* notificationPtr = static_cast<void*>(it->second.get());
+        auto errorStatus{gateway_.unsubscribe(it->second->eventName, notificationPtr)};
         subscriptions_.erase(it);
         return Result<void>{errorStatus};
     }
@@ -87,10 +90,10 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto it = subscriptions_.begin(); it != subscriptions_.end();)
         {
-            if (it->second.owner == owner)
+            if (it->second->owner == owner)
             {
-                void* notificationPtr = reinterpret_cast<void*>(&it->second);
-                gateway_.unsubscribe(it->second.eventName, notificationPtr);
+                void* notificationPtr = static_cast<void*>(it->second.get());
+                gateway_.unsubscribe(it->second->eventName, notificationPtr);
                 it = subscriptions_.erase(it);
             }
             else
@@ -116,10 +119,31 @@ private:
     {
         std::lock_guard<std::mutex> lock(mutex_);
         uint64_t newId = currentId_++;
-        subscriptions_[newId] = SubscriptionData{owner, eventName, std::move(notification)};
-        void* notificationPtr = reinterpret_cast<void*>(&subscriptions_[newId]);
+        auto spData = std::make_shared<SubscriptionData>(SubscriptionData{owner, eventName, std::move(notification)});
+        subscriptions_[newId] = spData;
+        void* notificationPtr = static_cast<void*>(spData.get());
 
-        Error status = gateway_.subscribe(eventName, callback, notificationPtr);
+        // Guard the callback with a weak_ptr so that any notification already queued
+        // to the async worker thread at the time of unsubscribe is safely dropped
+        // rather than invoking the callback through a dangling pointer.  This closes
+        // the race between Server::notify() copying callbacks under eventMap_mtx and
+        // the worker dispatching them after SubscriptionData has been destroyed.
+        std::weak_ptr<SubscriptionData> wpData = spData;
+        Firebolt::Transport::EventCallback wrappedCallback =
+            [wpData, callback, eventName](void* /*usercb*/, const nlohmann::json& json)
+        {
+            if (auto sp = wpData.lock())
+            {
+                callback(sp.get(), json);
+            }
+            else
+            {
+                FIREBOLT_LOG_DEBUG("Helper", "[subscription] notification dropped for already-unsubscribed event='%s'",
+                                   eventName.c_str());
+            }
+        };
+
+        Error status = gateway_.subscribe(eventName, std::move(wrappedCallback), notificationPtr);
 
         if (Error::None != status)
         {
@@ -131,7 +155,7 @@ private:
 
     Firebolt::Transport::IGateway& gateway_;
     std::mutex mutex_;
-    std::map<uint64_t, SubscriptionData> subscriptions_;
+    std::map<uint64_t, std::shared_ptr<SubscriptionData>> subscriptions_;
     uint64_t currentId_{0};
 };
 } // namespace Firebolt::Helpers
