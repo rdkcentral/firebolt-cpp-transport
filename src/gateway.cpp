@@ -986,7 +986,7 @@ private:
                                                       .count()));
         {
             std::lock_guard<std::mutex> lock(connectionLog_mtx);
-            connectionStarted = true;
+            connectionStarted = false;
         }
     }
 };
