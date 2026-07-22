@@ -527,6 +527,7 @@ private:
     Firebolt::Error lastConnectionError{Firebolt::Error::None};
     std::chrono::steady_clock::time_point lastConnectionLogTs{};
     size_t suppressedConnectionNoticeCount{0};
+    std::mutex cleanup_mtx;
 
 public:
     GatewayImpl()
@@ -983,6 +984,7 @@ private:
 
     void cleanupInternalState()
     {
+        std::lock_guard<std::mutex> lock(cleanup_mtx);
         if (watchdogRunning.exchange(false))
         {
             watchdogCv.notify_all();
