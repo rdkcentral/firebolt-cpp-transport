@@ -607,14 +607,14 @@ public:
                     while (watchdogRunning)
                     {
                         if (watchdogCv.wait_for(lock, std::chrono::milliseconds(watchdog_interval_ms),
-                                                 [this] { return !watchdogRunning; }))
+                                                [this] { return !watchdogRunning; }))
                         {
                             break;
                         }
                         lock.unlock();
                         try
                         {
-                            client.checkPromises();   
+                            client.checkPromises();
                         }
                         catch (const std::exception& e)
                         {

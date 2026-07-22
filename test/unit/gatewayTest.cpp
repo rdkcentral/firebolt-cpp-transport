@@ -1534,7 +1534,7 @@ TEST_F(GatewayUTest, DisconnectIsNotTimebound)
     // Disconnect should complete well within the watchdog interval (500ms).
     // Allow some overhead but it should be significantly faster than 500ms.
     EXPECT_LT(disconnectDuration, 200) << "disconnect() took " << disconnectDuration
-                                         << "ms, expected < 200ms (watchdog interval is 500ms)";
+                                       << "ms, expected < 200ms (watchdog interval is 500ms)";
 
     // After disconnect() returns, cancelAll() must have resolved the promise.
     ASSERT_EQ(responseFuture.wait_for(std::chrono::milliseconds(0)), std::future_status::ready);
