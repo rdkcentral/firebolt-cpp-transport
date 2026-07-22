@@ -502,6 +502,7 @@ private:
     std::mutex connectionLog_mtx;
     bool hasLastConnectionLog{false};
     bool lastConnectionState{false};
+    bool connectionStarted{false};
     Firebolt::Error lastConnectionError{Firebolt::Error::None};
     std::chrono::steady_clock::time_point lastConnectionLogTs{};
     size_t suppressedConnectionNoticeCount{0};
@@ -517,12 +518,12 @@ public:
 
     ~GatewayImpl()
     {
-        bool isConnected = false;
+        bool needsDisconnection = false;
         {
             std::lock_guard<std::mutex> lock(connectionLog_mtx);
-            isConnected = lastConnectionState;
+            needsDisconnection = connectionStarted;
         }
-        if (isConnected)
+        if (needsDisconnection)
         {
             disconnect();
         }
@@ -599,6 +600,11 @@ public:
             connectionChangeListener = std::move(previousConnectionChangeListener);
             FIREBOLT_LOG_ERROR("Gateway", "[connect] transport connect failed status=%d", static_cast<int>(status));
             return status;
+        }
+        else
+        {
+            std::lock_guard<std::mutex> lock(connectionLog_mtx);
+            connectionStarted = true;
         }
 
         if (!watchdogRunning.exchange(true))
