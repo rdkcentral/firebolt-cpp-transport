@@ -625,41 +625,45 @@ public:
         }
         else
         {
-            std::lock_guard<std::mutex> lock(connectionLog_mtx);
-            connectionStarted = true;
-        }
+            // Same lock as cleanupInternalState() so this doesn't run at the same time as a disconnect
+            std::lock_guard<std::mutex> cleanupLock(cleanup_mtx);
+            {
+                std::lock_guard<std::mutex> connectionLock(connectionLog_mtx);
+                connectionStarted = true;
+            }
 
-        if (!watchdogRunning.exchange(true))
-        {
-            FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] starting thread (interval=%u ms)", watchdog_interval_ms);
-            watchdogThread = std::thread(
-                [this]()
+             if (!watchdogRunning.exchange(true))
                 {
-                    std::unique_lock<std::mutex> lock(watchdogMtx);
-                    while (watchdogRunning)
-                    {
-                        if (watchdogCv.wait_for(lock, std::chrono::milliseconds(watchdog_interval_ms),
-                                                [this] { return !watchdogRunning; }))
+                    FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] starting thread (interval=%u ms)", watchdog_interval_ms);
+                    watchdogThread = std::thread(
+                        [this]()
                         {
-                            break;
-                        }
-                        lock.unlock();
-                        try
-                        {
-                            client.checkPromises();
-                        }
-                        catch (const std::exception& e)
-                        {
-                            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw: %s", e.what());
-                        }
-                        catch (...)
-                        {
-                            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
-                        }
-                        lock.lock();
-                    }
-                });
-            FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] thread started");
+                            std::unique_lock<std::mutex> lock(watchdogMtx);
+                            while (watchdogRunning)
+                            {
+                                if (watchdogCv.wait_for(lock, std::chrono::milliseconds(watchdog_interval_ms),
+                                                        [this] { return !watchdogRunning; }))
+                                {
+                                    break;
+                                }
+                                lock.unlock();
+                                try
+                                {
+                                    client.checkPromises();
+                                }
+                                catch (const std::exception& e)
+                                {
+                                    FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw: %s", e.what());
+                                }
+                                catch (...)
+                                {
+                                    FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
+                                }
+                                lock.lock();
+                            }
+                        });
+                    FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] thread started");
+                }
         }
 
         return status;

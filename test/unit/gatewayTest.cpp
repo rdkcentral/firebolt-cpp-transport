@@ -1559,7 +1559,7 @@ TEST_F(GatewayUTest, DisconnectCancelsPendingRequests)
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.DisconnectIsNotTimebound
 // Covers: disconnect() completes immediately without waiting for watchdog interval
-// Scenario type: performance
+// Scenario type: success
 // ---------------------------------------------------------------------------
 TEST_F(GatewayUTest, DisconnectIsNotTimebound)
 {
