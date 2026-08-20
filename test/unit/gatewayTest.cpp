@@ -133,6 +133,11 @@ protected:
     using server = websocketpp::server<websocketpp::config::asio>;
     using connection_hdl = websocketpp::connection_hdl;
 
+    // Match getTestConfig() cfg.waitTime_ms and Firebolt::Config default watchdogCycle_ms.
+    static constexpr int waitTime_ms = 1000;
+    static constexpr int watchdog_interval_ms = 500;
+    static constexpr int slack = 300;
+
     server m_server;
     std::unique_ptr<std::thread> m_serverThread;
     const std::string m_uri = "ws://localhost:9003";
@@ -1592,4 +1597,57 @@ TEST_F(GatewayUTest, DisconnectIsNotTimebound)
     auto result = responseFuture.get();
     EXPECT_FALSE(result.has_value());
     EXPECT_EQ(result.error(), Firebolt::Error::NotConnected);
+}
+
+// ---------------------------------------------------------------------------
+// Test name: GatewayUTest.WatchdogRestartsAfterReconnect
+// Covers: watchdog thread restarts correctly after a disconnect → reconnect cycle
+// ---------------------------------------------------------------------------
+TEST_F(GatewayUTest, WatchdogRestartsAfterReconnect)
+{
+    // First connect/disconnect cycle.
+    IGateway& gateway = connectAndWait();
+    EXPECT_EQ(gateway.disconnect(), Firebolt::Error::None);
+
+    // Reset the connection promise; the server is still listening.
+    m_connectionPromise = std::promise<bool>();
+    auto connectionFuture = m_connectionPromise.get_future();
+
+    // Reconnect to the same server.
+    Firebolt::Error connectErr = gateway.connect(getTestConfig(), [this](bool connected, const Firebolt::Error& err)
+                                                 { onConnectionChange(connected, err); });
+    ASSERT_EQ(connectErr, Firebolt::Error::None);
+    ASSERT_EQ(connectionFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    // New watchdog thread (post-reconnect) should still wake up immediately on disconnect.
+    m_messageHandler = [](connection_hdl, server::message_ptr) {};
+    auto responseFuture = gateway.request("test.neverResponds", nlohmann::json{});
+
+    auto t0 = std::chrono::steady_clock::now();
+    EXPECT_EQ(gateway.disconnect(), Firebolt::Error::None);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+
+    EXPECT_LT(elapsed, 200) << "disconnect after reconnect took " << elapsed
+                            << "ms, expected < 200ms (watchdog interval is 500ms)";
+
+    ASSERT_EQ(responseFuture.wait_for(std::chrono::milliseconds(0)), std::future_status::ready);
+    auto result = responseFuture.get();
+    EXPECT_EQ(result.error(), Firebolt::Error::NotConnected);
+}
+
+TEST_F(GatewayUTest, TimeoutStillDetectedWhileConnected)
+{
+    m_messageHandler = [](connection_hdl, server::message_ptr) {}; // never responds
+    IGateway& gateway = connectAndWait();  // short watchdogCycle_ms + waitTime_ms in this fixture's config
+
+    auto responseFuture = gateway.request("test.neverResponds", nlohmann::json{});
+
+    // Don't disconnect — let the watchdog's own checkPromises() catch this.
+    // Wait past the timeout threshold, plus one more watchdog cycle to detect it, plus slack for jitter.
+    auto status = responseFuture.wait_for(std::chrono::milliseconds(waitTime_ms + watchdog_interval_ms + slack));
+    ASSERT_EQ(status, std::future_status::ready);
+
+    auto result = responseFuture.get();
+    // Exact error check ensures checkPromises()'s (unmodified) timeout logic still works correctly.
+    EXPECT_EQ(result.error(), Firebolt::Error::Timedout);
 }
