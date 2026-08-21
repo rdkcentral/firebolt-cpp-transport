@@ -1638,7 +1638,7 @@ TEST_F(GatewayUTest, WatchdogRestartsAfterReconnect)
 TEST_F(GatewayUTest, TimeoutStillDetectedWhileConnected)
 {
     m_messageHandler = [](connection_hdl, server::message_ptr) {}; // never responds
-    IGateway& gateway = connectAndWait();  // short watchdogCycle_ms + waitTime_ms in this fixture's config
+    IGateway& gateway = connectAndWait(); // short watchdogCycle_ms + waitTime_ms in this fixture's config
 
     auto responseFuture = gateway.request("test.neverResponds", nlohmann::json{});
 
