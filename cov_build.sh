@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # cov_build.sh — configure and build firebolt-cpp-transport
 #
-# Run from the repo root after build_dependencies.sh has prepared the
-# environment.  Produces a Debug build with tests enabled so that
-# Coverity can intercept the full compilation including test code.
+# Run from the repo root. Tests are excluded — Coverity analyzes the library
+# sources; test builds require GTest which the Coverity container lacks.
 #
 # Usage: sh cov_build.sh
 set -x
@@ -14,6 +13,6 @@ cd "${GITHUB_WORKSPACE}"
 
 cmake -B build-dev -S . \
     -DCMAKE_BUILD_TYPE=Debug \
-    -DENABLE_TESTS=ON
+    -DENABLE_TESTS=OFF
 
 cmake --build build-dev --parallel
