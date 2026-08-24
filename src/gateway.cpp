@@ -513,6 +513,8 @@ private:
     Server server;
     std::thread watchdogThread;
     std::atomic<bool> watchdogRunning;
+    std::condition_variable watchdogCv;
+    std::mutex watchdogMtx;
     bool legacyRPCv1;
 
     std::map<MessageID, std::string> rpcv1_eventMap;
@@ -521,9 +523,11 @@ private:
     std::mutex connectionLog_mtx;
     bool hasLastConnectionLog{false};
     bool lastConnectionState{false};
+    bool connectionStarted{false};
     Firebolt::Error lastConnectionError{Firebolt::Error::None};
     std::chrono::steady_clock::time_point lastConnectionLogTs{};
     size_t suppressedConnectionNoticeCount{0};
+    std::mutex cleanup_mtx;
 
 public:
     GatewayImpl()
@@ -536,13 +540,14 @@ public:
 
     ~GatewayImpl()
     {
-        if (watchdogRunning)
+        bool needsDisconnection = false;
         {
-            watchdogRunning = false;
-            if (watchdogThread.joinable())
-            {
-                watchdogThread.join();
-            }
+            std::lock_guard<std::mutex> lock(connectionLog_mtx);
+            needsDisconnection = connectionStarted;
+        }
+        if (needsDisconnection)
+        {
+            disconnect();
         }
     }
 
@@ -618,31 +623,47 @@ public:
             FIREBOLT_LOG_ERROR("Gateway", "[connect] transport connect failed status=%d", static_cast<int>(status));
             return status;
         }
-
-        if (!watchdogRunning.exchange(true))
+        else
         {
-            FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] starting thread (interval=%u ms)", watchdog_interval_ms);
-            watchdogThread = std::thread(
-                [this]()
-                {
-                    while (watchdogRunning)
+            // Same lock as cleanupInternalState() so this doesn't run at the same time as a disconnect
+            std::lock_guard<std::mutex> cleanupLock(cleanup_mtx);
+            {
+                std::lock_guard<std::mutex> connectionLock(connectionLog_mtx);
+                connectionStarted = true;
+            }
+
+            if (!watchdogRunning.exchange(true))
+            {
+                FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] starting thread (interval=%u ms)", watchdog_interval_ms);
+                watchdogThread = std::thread(
+                    [this]()
                     {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(watchdog_interval_ms));
-                        try
+                        std::unique_lock<std::mutex> lock(watchdogMtx);
+                        while (watchdogRunning)
                         {
-                            client.checkPromises();
+                            if (watchdogCv.wait_for(lock, std::chrono::milliseconds(watchdog_interval_ms),
+                                                    [this] { return !watchdogRunning; }))
+                            {
+                                break;
+                            }
+                            lock.unlock();
+                            try
+                            {
+                                client.checkPromises();
+                            }
+                            catch (const std::exception& e)
+                            {
+                                FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw: %s", e.what());
+                            }
+                            catch (...)
+                            {
+                                FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
+                            }
+                            lock.lock();
                         }
-                        catch (const std::exception& e)
-                        {
-                            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw: %s", e.what());
-                        }
-                        catch (...)
-                        {
-                            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
-                        }
-                    }
-                });
-            FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] thread started");
+                    });
+                FIREBOLT_LOG_DEBUG("Gateway", "[watchdog] thread started");
+            }
         }
 
         return status;
@@ -662,27 +683,7 @@ public:
         {
             return status;
         }
-        if (watchdogRunning.exchange(false))
-        {
-            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] waiting for watchdog thread join...");
-            auto t0_wdog = std::chrono::steady_clock::now();
-            if (watchdogThread.joinable())
-            {
-                watchdogThread.join();
-            }
-            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %lld ms",
-                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                          std::chrono::steady_clock::now() - t0_wdog)
-                                                          .count()));
-        }
-        client.cancelAll();
-        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] stopping notification worker...");
-        auto t0_nw = std::chrono::steady_clock::now();
-        server.stopNotificationWorker();
-        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %lld ms",
-                           static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                      std::chrono::steady_clock::now() - t0_nw)
-                                                      .count()));
+        cleanupInternalState();
         return Error::None;
     }
 
@@ -945,6 +946,12 @@ private:
             }
         }
 
+        // Disconnection can also happen from the server, it's necessary to cleanup if this ever happens.
+        if (!connected)
+        {
+            cleanupInternalState();
+        }
+
         if (emitNotice)
         {
             FIREBOLT_LOG_NOTICE("Gateway", "[connection] state=%s error=%d suppressed_repeats=%zu",
@@ -977,6 +984,37 @@ private:
     std::optional<std::string> getResponseHeader(const std::string& headerName) override
     {
         return transport.getResponseHeader(headerName);
+    }
+
+    void cleanupInternalState()
+    {
+        std::lock_guard<std::mutex> lock(cleanup_mtx);
+        if (watchdogRunning.exchange(false))
+        {
+            watchdogCv.notify_all();
+            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] waiting for watchdog thread join...");
+            auto t0_wdog = std::chrono::steady_clock::now();
+            if (watchdogThread.joinable())
+            {
+                watchdogThread.join();
+            }
+            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %lld ms",
+                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                          std::chrono::steady_clock::now() - t0_wdog)
+                                                          .count()));
+        }
+        client.cancelAll();
+        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] stopping notification worker...");
+        auto t0_nw = std::chrono::steady_clock::now();
+        server.stopNotificationWorker();
+        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %lld ms",
+                           static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                      std::chrono::steady_clock::now() - t0_nw)
+                                                      .count()));
+        {
+            std::lock_guard<std::mutex> lock(connectionLog_mtx);
+            connectionStarted = false;
+        }
     }
 };
 
