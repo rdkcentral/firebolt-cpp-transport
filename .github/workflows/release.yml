@@ -134,24 +134,6 @@ jobs:
             exit 1
           fi
 
-      - name: Create tag
-        env:
-          TAG: ${{ steps.version.outputs.next }}
-          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
-        shell: bash
-        run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Tag ${TAG} already exists on origin; skipping tag creation."
-            exit 0
-          fi
-          # Set git identity from the token owner so the tag is attributed correctly
-          author_login="$(gh api user --jq '.login')"
-          author_name="$(gh api user --jq '.name // .login')"
-          git config user.name "$author_name"
-          git config user.email "${author_login}@users.noreply.github.com"
-          git tag -a "${TAG}" -m "Release ${TAG}"
-          git push origin "${TAG}"
-
       - name: Build release archive
         id: asset
         env:
@@ -171,6 +153,7 @@ jobs:
           TAG: ${{ steps.version.outputs.next }}
           IS_RC: ${{ steps.version.outputs.is_rc }}
           ARCHIVE: ${{ steps.asset.outputs.archive }}
+          TARGET_SHA: ${{ github.sha }}
         shell: bash
         run: |
           release_flags=()
@@ -178,7 +161,11 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ARCHIVE" --clobber
           else
+            # No tag is pushed beforehand -- the Releases API creates it here,
+            # pointing at TARGET_SHA. This avoids pushing a bare tag ref directly,
+            # which the repo's tag ruleset rejects.
             gh release create "$TAG" \
+              --target "$TARGET_SHA" \
               --title "$TAG" \
               --notes-file release_notes.md \
               "${release_flags[@]}" \
