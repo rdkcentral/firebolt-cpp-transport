@@ -2,10 +2,20 @@ name: Manual Release
 
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 jobs:
   release:
-    if: github.ref_name == 'main' || endsWith(github.ref_name, '-rc') || endsWith(github.ref_name, '.x-maintenance')
+    # .rc branches produce RC tags (v1.1.12.rc1, rc2, …); main and *.x-maintenance produce stable tags
+    if: github.ref_name == 'main' || endsWith(github.ref_name, '.rc') || endsWith(github.ref_name, '.x-maintenance')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -19,15 +29,122 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.AUTOMATION_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 'lts/*'
-
-      - name: Install release deps
-        run: npm ci --prefix .github/release
-
-      - name: Run semantic-release
-        run: npm --prefix .github/release exec -- semantic-release --extends ./.github/release/releaserc.json
+      - name: Compute next version
+        id: version
         env:
-          GITHUB_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+          BUMP: ${{ inputs.bump }}
+        shell: bash
+        run: |
+          git fetch --tags --force origin
+
+          branch="${GITHUB_REF_NAME}"
+          is_rc=false
+          [[ "$branch" == *.rc ]] && is_rc=true
+
+          # For *.x-maintenance branches scope the tag search to that major.minor range
+          if [[ "$branch" =~ ^([0-9]+)\.([0-9]+)\.x-maintenance$ ]]; then
+            range_major="${BASH_REMATCH[1]}"
+            range_minor="${BASH_REMATCH[2]}"
+            latest="$(git tag --list "v${range_major}.${range_minor}.*" --sort=-v:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
+          else
+            latest="$(git tag --list 'v*' --sort=-v:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
+          fi
+          [ -z "$latest" ] && latest="v0.0.0"
+
+          ver="${latest#v}"
+          IFS='.' read -r major minor patch <<< "$ver"
+          case "$BUMP" in
+            major) major=$((major+1)); minor=0; patch=0 ;;
+            minor) minor=$((minor+1)); patch=0 ;;
+            patch) patch=$((patch+1)) ;;
+          esac
+          next_stable="v${major}.${minor}.${patch}"
+
+          if [ "$is_rc" = "true" ]; then
+            last_rc_num="$(git tag --list "${next_stable}.rc*" \
+              | sed 's/.*\.rc//' | grep -E '^[0-9]+$' | sort -n | tail -1)"
+            rc_num=$(( ${last_rc_num:-0} + 1 ))
+            next="${next_stable}.rc${rc_num}"
+          else
+            next="$next_stable"
+          fi
+
+          echo "latest=$latest" | tee -a "$GITHUB_OUTPUT"
+          echo "next=$next"     | tee -a "$GITHUB_OUTPUT"
+          echo "is_rc=$is_rc"   | tee -a "$GITHUB_OUTPUT"
+
+      - name: Validate release has changes
+        env:
+          LATEST: ${{ steps.version.outputs.latest }}
+        shell: bash
+        run: |
+          if [ "$LATEST" = "v0.0.0" ]; then
+            echo "No previous tag found; proceeding with initial release."
+            exit 0
+          fi
+          count="$(git rev-list --count "${LATEST}..HEAD")"
+          if [ "$count" -eq 0 ]; then
+            echo "ERROR: No new commits since ${LATEST}; refusing to create a duplicate release."
+            exit 1
+          fi
+
+      - name: Validate CHANGELOG
+        shell: bash
+        run: |
+          if grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md has an [Unreleased] section. Update it before releasing."
+            exit 1
+          fi
+
+      - name: Create tag
+        env:
+          TAG: ${{ steps.version.outputs.next }}
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists on origin; skipping tag creation."
+            exit 0
+          fi
+          # Set git identity from the token owner so the tag is attributed correctly
+          author_login="$(gh api user --jq '.login')"
+          author_name="$(gh api user --jq '.name // .login')"
+          git config user.name "$author_name"
+          git config user.email "${author_login}@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
+      - name: Build release archive
+        id: asset
+        env:
+          VERSION: ${{ steps.version.outputs.next }}
+        shell: bash
+        run: |
+          bare="${VERSION#v}"
+          ./.github/scripts/mk-release-package.sh \
+            --version "${bare}" \
+            --package firebolt-cpp-transport
+          awk '/^## / { if (s) exit; s=1 } s{ print }' CHANGELOG.md > release_notes.md
+          echo "archive=build/firebolt-cpp-transport-${bare}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+          TAG: ${{ steps.version.outputs.next }}
+          IS_RC: ${{ steps.version.outputs.is_rc }}
+          ARCHIVE: ${{ steps.asset.outputs.archive }}
+        shell: bash
+        run: |
+          release_flags=()
+          [ "$IS_RC" = "true" ] && release_flags+=(--prerelease)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ARCHIVE" --clobber
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file release_notes.md \
+              "${release_flags[@]}" \
+              "$ARCHIVE"
+          fi
