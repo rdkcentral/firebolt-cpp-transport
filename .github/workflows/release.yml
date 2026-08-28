@@ -4,17 +4,22 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: 'Version bump type'
+        description: 'Version bump -- required to start a new RC or stable release; leave "none" to continue an existing RC series'
         required: true
         type: choice
         options:
+          - none
           - patch
           - minor
           - major
+      create_rc:
+        description: 'Create RC tag (checked = RC, unchecked = stable release)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   release:
-    # .rc branches produce RC tags (v1.1.12.rc1, rc2, …); main and *.x-maintenance produce stable tags
     if: github.ref_name == 'main' || endsWith(github.ref_name, '.rc') || endsWith(github.ref_name, '.x-maintenance')
     runs-on: ubuntu-latest
     permissions:
@@ -33,60 +38,91 @@ jobs:
         id: version
         env:
           BUMP: ${{ inputs.bump }}
+          CREATE_RC: ${{ inputs.create_rc }}
         shell: bash
         run: |
           git fetch --tags --force origin
 
+          if [ "$BUMP" = "none" ] && [ "$CREATE_RC" != "true" ]; then
+            echo "ERROR: Select a bump type or enable 'Create RC'."
+            exit 1
+          fi
+
           branch="${GITHUB_REF_NAME}"
-          is_rc=false
-          [[ "$branch" == *.rc ]] && is_rc=true
 
-          # For *.x-maintenance branches scope the tag search to that major.minor range
+          # Bump a vX.Y.Z string by the requested level
+          bump_stable() {
+            local ver="${1#v}" major minor patch
+            IFS='.' read -r major minor patch <<< "$ver"
+            case "$2" in
+              major) echo "v$((major+1)).0.0" ;;
+              minor) echo "v${major}.$((minor+1)).0" ;;
+              patch) echo "v${major}.${minor}.$((patch+1))" ;;
+            esac
+          }
+
+          # Find the latest stable tag (scoped to major.minor for maintenance branches)
           if [[ "$branch" =~ ^([0-9]+)\.([0-9]+)\.x-maintenance$ ]]; then
-            range_major="${BASH_REMATCH[1]}"
-            range_minor="${BASH_REMATCH[2]}"
-            latest="$(git tag --list "v${range_major}.${range_minor}.*" --sort=-v:refname \
+            latest_stable="$(git tag --list "v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.*" --sort=-v:refname \
               | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
           else
-            latest="$(git tag --list 'v*' --sort=-v:refname \
+            latest_stable="$(git tag --list 'v*' --sort=-v:refname \
               | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
           fi
-          [ -z "$latest" ] && latest="v0.0.0"
+          [ -z "$latest_stable" ] && latest_stable="v0.0.0"
 
-          ver="${latest#v}"
-          IFS='.' read -r major minor patch <<< "$ver"
-          case "$BUMP" in
-            major) major=$((major+1)); minor=0; patch=0 ;;
-            minor) minor=$((minor+1)); patch=0 ;;
-            patch) patch=$((patch+1)) ;;
-          esac
-          next_stable="v${major}.${minor}.${patch}"
+          is_rc=false
+          next=""
+          baseline=""
 
-          if [ "$is_rc" = "true" ]; then
-            last_rc_num="$(git tag --list "${next_stable}.rc*" \
-              | sed 's/.*\.rc//' | grep -E '^[0-9]+$' | sort -n | tail -1)"
-            rc_num=$(( ${last_rc_num:-0} + 1 ))
-            next="${next_stable}.rc${rc_num}"
+          if [ "$CREATE_RC" = "true" ] && [ "$BUMP" != "none" ]; then
+            # New RC series: bump stable version and start at rc1
+            next_stable="$(bump_stable "$latest_stable" "$BUMP")"
+            next="${next_stable}.rc1"
+            baseline="$latest_stable"
+            is_rc=true
+
+          elif [ "$CREATE_RC" = "true" ] && [ "$BUMP" = "none" ]; then
+            # Continue existing RC series: find the highest rcN globally and increment
+            last_rc="$(git tag --list 'v*.rc*' --sort=-v:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.rc[0-9]+$' | head -1)"
+            if [ -z "$last_rc" ]; then
+              echo "ERROR: No existing RC tag found. Select a bump type to start a new RC series."
+              exit 1
+            fi
+            next_stable="${last_rc%%.rc*}"
+            # Reject if the RC's base version is already released as stable
+            if git tag --list "$next_stable" | grep -qxF "$next_stable"; then
+              echo "ERROR: ${next_stable} is already released as stable. Select a bump type to start a new RC series."
+              exit 1
+            fi
+            last_rc_num="${last_rc##*.rc}"
+            next="${next_stable}.rc$((last_rc_num + 1))"
+            baseline="$last_rc"
+            is_rc=true
+
           else
-            next="$next_stable"
+            # Stable release
+            next="$(bump_stable "$latest_stable" "$BUMP")"
+            baseline="$latest_stable"
           fi
 
-          echo "latest=$latest" | tee -a "$GITHUB_OUTPUT"
-          echo "next=$next"     | tee -a "$GITHUB_OUTPUT"
-          echo "is_rc=$is_rc"   | tee -a "$GITHUB_OUTPUT"
+          echo "baseline=$baseline" | tee -a "$GITHUB_OUTPUT"
+          echo "next=$next"         | tee -a "$GITHUB_OUTPUT"
+          echo "is_rc=$is_rc"       | tee -a "$GITHUB_OUTPUT"
 
       - name: Validate release has changes
         env:
-          LATEST: ${{ steps.version.outputs.latest }}
+          BASELINE: ${{ steps.version.outputs.baseline }}
         shell: bash
         run: |
-          if [ "$LATEST" = "v0.0.0" ]; then
+          if [ "$BASELINE" = "v0.0.0" ]; then
             echo "No previous tag found; proceeding with initial release."
             exit 0
           fi
-          count="$(git rev-list --count "${LATEST}..HEAD")"
+          count="$(git rev-list --count "${BASELINE}..HEAD")"
           if [ "$count" -eq 0 ]; then
-            echo "ERROR: No new commits since ${LATEST}; refusing to create a duplicate release."
+            echo "ERROR: No new commits since ${BASELINE}; refusing to create a duplicate release."
             exit 1
           fi
 
