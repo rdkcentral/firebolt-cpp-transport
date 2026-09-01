@@ -122,6 +122,10 @@ jobs:
             echo "Promoting ${BASELINE} to a stable release; same commit is expected, skipping check."
             exit 0
           fi
+          if ! git merge-base --is-ancestor "${BASELINE}" HEAD; then
+            echo "ERROR: ${BASELINE} is not an ancestor of HEAD; select a Previous Release tag from this branch."
+            exit 1
+          fi
           count="$(git rev-list --count "${BASELINE}..HEAD")"
           if [ "$count" -eq 0 ]; then
             echo "ERROR: No new commits since ${BASELINE}; refusing to create a duplicate release."
