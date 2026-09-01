@@ -1,10 +1,14 @@
-name: Manual Release
+name: Create Release
 
 on:
   workflow_dispatch:
     inputs:
+      previous_release:
+        description: 'Existing tag to release from'
+        required: true
+        type: string
       bump:
-        description: 'Version bump -- required to start a new RC or stable release; leave "none" to continue an existing RC series'
+        description: 'Version bump -- required when Previous Release is a stable tag; leave "none" when Previous Release is an RC (to continue its RC series or promote it to stable)'
         required: true
         type: choice
         options:
@@ -13,7 +17,7 @@ on:
           - minor
           - major
       create_rc:
-        description: 'Create RC tag (checked = RC, unchecked = stable release)'
+        description: 'Create RC tag (Note: unchecked = stable release / promote an existing RC to stable)'
         required: false
         type: boolean
         default: false
@@ -32,23 +36,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.AUTOMATION_TOKEN }}
+          # Using it here wires the SSH remote
+          # for the "Create tag" push below.
+          ssh-key: ${{ secrets.RDKCM_DEPLOY_KEY }}
 
       - name: Compute next version
         id: version
         env:
+          PREV: ${{ inputs.previous_release }}
           BUMP: ${{ inputs.bump }}
           CREATE_RC: ${{ inputs.create_rc }}
         shell: bash
         run: |
           git fetch --tags --force origin
 
-          if [ "$BUMP" = "none" ] && [ "$CREATE_RC" != "true" ]; then
-            echo "ERROR: Select a bump type or enable 'Create RC'."
+          if ! git tag --list "$PREV" | grep -qxF "$PREV"; then
+            echo "ERROR: '${PREV}' is not an existing tag on this repo. Check Previous Release for typos."
             exit 1
           fi
-
-          branch="${GITHUB_REF_NAME}"
 
           # Bump a vX.Y.Z string by the requested level
           bump_stable() {
@@ -61,64 +66,69 @@ jobs:
             esac
           }
 
-          # Find the latest stable tag (scoped to major.minor for maintenance branches)
-          if [[ "$branch" =~ ^([0-9]+)\.([0-9]+)\.x-maintenance$ ]]; then
-            latest_stable="$(git tag --list "v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.*" --sort=-v:refname \
-              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
-          else
-            latest_stable="$(git tag --list 'v*' --sort=-v:refname \
-              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
-          fi
-          [ -z "$latest_stable" ] && latest_stable="v0.0.0"
-
           is_rc=false
+          is_promotion=false
           next=""
-          baseline=""
 
-          if [ "$CREATE_RC" = "true" ] && [ "$BUMP" != "none" ]; then
-            # New RC series: bump stable version and start at rc1
-            next_stable="$(bump_stable "$latest_stable" "$BUMP")"
-            next="${next_stable}.rc1"
-            baseline="$latest_stable"
-            is_rc=true
-
-          elif [ "$CREATE_RC" = "true" ] && [ "$BUMP" = "none" ]; then
-            # Continue existing RC series: find the highest rcN globally and increment
-            last_rc="$(git tag --list 'v*.rc*' --sort=-v:refname \
-              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\.rc[0-9]+$' | head -1)"
-            if [ -z "$last_rc" ]; then
-              echo "ERROR: No existing RC tag found. Select a bump type to start a new RC series."
+          if [[ "$PREV" =~ ^v[0-9]+\.[0-9]+\.[0-9]+\.rc[0-9]+$ ]]; then
+            # Previous release is itself an RC -- no bump makes sense here;
+            # either continue its RC series or promote it straight to stable.
+            if [ "$BUMP" != "none" ]; then
+              echo "ERROR: A version bump isn't supported when Previous Release is an RC tag (${PREV}). Select its underlying stable tag instead."
               exit 1
             fi
-            next_stable="${last_rc%%.rc*}"
-            # Reject if the RC's base version is already released as stable
-            if git tag --list "$next_stable" | grep -qxF "$next_stable"; then
-              echo "ERROR: ${next_stable} is already released as stable. Select a bump type to start a new RC series."
+            base_stable="${PREV%%.rc*}"
+            if [ "$CREATE_RC" = "true" ]; then
+              rc_num="${PREV##*.rc}"
+              next="${base_stable}.rc$((rc_num + 1))"
+              is_rc=true
+            else
+              next="$base_stable"
+              is_promotion=true
+            fi
+
+          elif [[ "$PREV" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # Previous release is a stable tag -- a bump is required to know
+            # what comes next.
+            if [ "$BUMP" = "none" ]; then
+              echo "ERROR: Select a version bump to release from stable tag ${PREV}."
               exit 1
             fi
-            last_rc_num="${last_rc##*.rc}"
-            next="${next_stable}.rc$((last_rc_num + 1))"
-            baseline="$last_rc"
-            is_rc=true
+            next_stable="$(bump_stable "$PREV" "$BUMP")"
+            if [ "$CREATE_RC" = "true" ]; then
+              next="${next_stable}.rc1"
+              is_rc=true
+            else
+              next="$next_stable"
+            fi
 
           else
-            # Stable release
-            next="$(bump_stable "$latest_stable" "$BUMP")"
-            baseline="$latest_stable"
+            echo "ERROR: '${PREV}' doesn't look like a release tag (expected vX.Y.Z or vX.Y.Z.rcN)."
+            exit 1
           fi
 
-          echo "baseline=$baseline" | tee -a "$GITHUB_OUTPUT"
-          echo "next=$next"         | tee -a "$GITHUB_OUTPUT"
-          echo "is_rc=$is_rc"       | tee -a "$GITHUB_OUTPUT"
+          echo "baseline=$PREV"             | tee -a "$GITHUB_OUTPUT"
+          echo "next=$next"                 | tee -a "$GITHUB_OUTPUT"
+          echo "is_rc=$is_rc"                | tee -a "$GITHUB_OUTPUT"
+          echo "is_promotion=$is_promotion"  | tee -a "$GITHUB_OUTPUT"
 
       - name: Validate release has changes
         env:
           BASELINE: ${{ steps.version.outputs.baseline }}
+          IS_PROMOTION: ${{ steps.version.outputs.is_promotion }}
         shell: bash
         run: |
-          if [ "$BASELINE" = "v0.0.0" ]; then
-            echo "No previous tag found; proceeding with initial release."
+          if [ "$IS_PROMOTION" = "true" ]; then
+            if [ "$(git rev-parse HEAD)" != "$(git rev-parse "${BASELINE}^{commit}")" ]; then
+              echo "ERROR: HEAD has moved past ${BASELINE}. Cut a new RC from the current HEAD before promoting to stable."
+              exit 1
+            fi
+            echo "Promoting ${BASELINE} to stable; HEAD matches the RC commit."
             exit 0
+          fi
+          if ! git merge-base --is-ancestor "${BASELINE}" HEAD; then
+            echo "ERROR: ${BASELINE} is not an ancestor of HEAD; select a Previous Release tag from this branch."
+            exit 1
           fi
           count="$(git rev-list --count "${BASELINE}..HEAD")"
           if [ "$count" -eq 0 ]; then
@@ -133,6 +143,27 @@ jobs:
             echo "ERROR: CHANGELOG.md has an [Unreleased] section. Update it before releasing."
             exit 1
           fi
+
+      - name: Create tag
+        env:
+          TAG: ${{ steps.version.outputs.next }}
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists on origin; skipping tag creation."
+            exit 0
+          fi
+          # Identity is just for the annotated tag's metadata -- AUTOMATION_TOKEN is
+          # fine for this lookup, it doesn't touch ref creation.
+          author_login="$(gh api user --jq '.login')"
+          author_name="$(gh api user --jq '.name // .login')"
+          git config user.name "$author_name"
+          git config user.email "${author_login}@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          # Pushed over the SSH remote configured by the deploy key in Checkout --
+          # this is the operation protected_tags.rule1 bypasses for deploy keys.
+          git push origin "${TAG}"
 
       - name: Build release archive
         id: asset
@@ -153,7 +184,6 @@ jobs:
           TAG: ${{ steps.version.outputs.next }}
           IS_RC: ${{ steps.version.outputs.is_rc }}
           ARCHIVE: ${{ steps.asset.outputs.archive }}
-          TARGET_SHA: ${{ github.sha }}
         shell: bash
         run: |
           release_flags=()
@@ -161,11 +191,10 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ARCHIVE" --clobber
           else
-            # No tag is pushed beforehand -- the Releases API creates it here,
-            # pointing at TARGET_SHA. This avoids pushing a bare tag ref directly,
-            # which the repo's tag ruleset rejects.
+            # The tag already exists (pushed via the deploy key in "Create tag"),
+            # so this only creates the release object against it -- no ref
+            # creation happens here, so the tag ruleset doesn't apply.
             gh release create "$TAG" \
-              --target "$TARGET_SHA" \
               --title "$TAG" \
               --notes-file release_notes.md \
               "${release_flags[@]}" \
