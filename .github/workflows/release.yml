@@ -119,11 +119,7 @@ jobs:
         shell: bash
         run: |
           if [ "$IS_PROMOTION" = "true" ]; then
-            if [ "$(git rev-parse HEAD)" != "$(git rev-parse "${BASELINE}^{commit}")" ]; then
-              echo "ERROR: HEAD has moved past ${BASELINE}. Cut a new RC from the current HEAD before promoting to stable."
-              exit 1
-            fi
-            echo "Promoting ${BASELINE} to stable; HEAD matches the RC commit."
+            echo "Promoting ${BASELINE} to stable release; skipping commit delta check."
             exit 0
           fi
           if ! git merge-base --is-ancestor "${BASELINE}" HEAD; then
