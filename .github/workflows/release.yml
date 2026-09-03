@@ -119,7 +119,11 @@ jobs:
         shell: bash
         run: |
           if [ "$IS_PROMOTION" = "true" ]; then
-            echo "Promoting ${BASELINE} to stable release; skipping commit delta check."
+            if ! git merge-base --is-ancestor "${BASELINE}" HEAD; then
+              echo "ERROR: ${BASELINE} is not an ancestor of HEAD; select a descendant commit from this branch before promoting to stable."
+              exit 1
+            fi
+            echo "Promoting ${BASELINE} to stable release; current HEAD is a descendant."
             exit 0
           fi
           if ! git merge-base --is-ancestor "${BASELINE}" HEAD; then
