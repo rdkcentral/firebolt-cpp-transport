@@ -24,8 +24,11 @@ on:
 
 jobs:
   release:
-    if: github.ref_name == 'main' || endsWith(github.ref_name, '.rc') || endsWith(github.ref_name, '.x-maintenance')
+    if: github.ref_type == 'branch' && (github.ref_name == 'main' || endsWith(github.ref_name, '-rc') || endsWith(github.ref_name, '.x-maintenance'))
     runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
       issues: write
@@ -39,6 +42,17 @@ jobs:
           # Using it here wires the SSH remote
           # for the "Create tag" push below.
           ssh-key: ${{ secrets.RDKCM_DEPLOY_KEY }}
+
+      - name: Validate release branch
+        shell: bash
+        run: |
+          branch="${GITHUB_REF_NAME}"
+          if [[ "$branch" == "main" || "$branch" =~ ^[0-9]+\.[0-9]+(-rc|\.x-maintenance)$ ]]; then
+            echo "Release allowed from branch: $branch"
+          else
+            echo "Release blocked: branch '$branch' is not allowed. Use 'main', an 'N.N-rc' branch, or an 'N.N.x-maintenance' branch."
+            exit 1
+          fi
 
       - name: Compute next version
         id: version
@@ -137,10 +151,20 @@ jobs:
           fi
 
       - name: Validate CHANGELOG
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
         shell: bash
         run: |
           if grep -q '^## \[Unreleased\]' CHANGELOG.md; then
             echo "ERROR: CHANGELOG.md has an [Unreleased] section. Update it before releasing."
+            exit 1
+          fi
+          version="${NEXT#v}"
+          version="${version%%.rc*}"
+          top="$(awk '/^## \[[^]]+\]/ { sub(/^## \[/, ""); sub(/\].*$/, ""); print; exit }' CHANGELOG.md)"
+          top="${top%%.rc*}"
+          if [ -z "$top" ] || [ "$top" != "$version" ]; then
+            echo "ERROR: Top CHANGELOG.md entry (${top:-<none>}) does not match version ${version}. Move the ${version} entry to the top."
             exit 1
           fi
 
@@ -151,7 +175,12 @@ jobs:
         shell: bash
         run: |
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Tag ${TAG} already exists on origin; skipping tag creation."
+            git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            if [ "$(git rev-parse "refs/tags/${TAG}^{commit}")" != "$(git rev-parse HEAD)" ]; then
+              echo "ERROR: Tag ${TAG} already exists on origin but does not point to the current HEAD; refusing to overwrite its release assets."
+              exit 1
+            fi
+            echo "Tag ${TAG} already exists at the current HEAD; resuming the release."
             exit 0
           fi
           # Identity is just for the annotated tag's metadata -- AUTOMATION_TOKEN is
