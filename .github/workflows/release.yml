@@ -162,7 +162,6 @@ jobs:
           version="${NEXT#v}"
           version="${version%%.rc*}"
           top="$(awk '/^## \[[^]]+\]/ { sub(/^## \[/, ""); sub(/\].*$/, ""); print; exit }' CHANGELOG.md)"
-          top="${top%%.rc*}"
           if [ -z "$top" ] || [ "$top" != "$version" ]; then
             echo "ERROR: Top CHANGELOG.md entry (${top:-<none>}) does not match version ${version}. Move the ${version} entry to the top."
             exit 1
