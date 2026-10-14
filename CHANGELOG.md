@@ -1,4 +1,4 @@
-## [1.1.12.rc1](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.11...v1.1.12.rc1)
+## [1.1.12](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.11...v1.1.12)
 
 ### Changed
 
