@@ -44,31 +44,14 @@ public:
         subscriptions_.clear();
     }
 
-    Result<void> set(const std::string& methodName, const nlohmann::json& parameters) override
-    {
-        nlohmann::json result;
-        nlohmann::json p;
-        if (parameters.is_object())
-        {
-            p = parameters;
-        }
-        else
-        {
-            p["value"] = parameters;
-        }
-        auto future = gateway_.request(methodName, p);
-        auto requestResult = future.get();
-
-        if (!requestResult)
-        {
-            return Result<void>{requestResult.error()};
-        }
-        return Result<void>{Error::None};
-    }
-
     Result<void> invoke(const std::string& methodName, const nlohmann::json& parameters) override
     {
-        return Result<void>{gateway_.send(methodName, parameters)};
+        auto result = getJson(methodName, parameters);
+        if (!result)
+        {
+            return Result<void>{result.error(), result.errorInfo()};
+        }
+        return Result<void>{Error::None};
     }
 
     Result<void> unsubscribe(SubscriptionId id) override

@@ -56,7 +56,7 @@ The repo is a pure outbound WebSocket + JSON-RPC transport library. The public s
 
 Every header placed in `include/firebolt/` is part of the public ABI consumed by downstream Firebolt C++ SDKs. Source headers: `gateway.h`, `helpers.h`, `json_types.h`, `types.h`, `logger.h`, `config.h.in`, `version.h.in`. CMake additionally generates and installs `config.h` (from `config.h.in`), `transport_version.h` (from `version.h.in`), and `transport_export.h` (from `GenerateExportHeader`) under the `firebolt/` include prefix at build time.
 
-**Rule**: Do not add `<websocketpp/...>` or `<boost/...>` includes, or any type from those libraries, to any header under `include/firebolt/`. The sole approved third-party type in public headers is `nlohmann::json`, which is already part of the established public ABI: `EventCallback`, `IGateway::request()`, `IGateway::send()`, and all JSON type adapters in `json_types.h` depend on `nlohmann::json` as the wire-format representation. Do not add any further third-party includes to `include/firebolt/` beyond `nlohmann/json.hpp`.
+**Rule**: Do not add `<websocketpp/...>` or `<boost/...>` includes, or any type from those libraries, to any header under `include/firebolt/`. The sole approved third-party type in public headers is `nlohmann::json`, which is already part of the established public ABI: `EventCallback`, `IGateway::request()`, and all JSON type adapters in `json_types.h` depend on `nlohmann::json` as the wire-format representation. Do not add any further third-party includes to `include/firebolt/` beyond `nlohmann/json.hpp`.
 
 Evidence: `transport.h` (which includes `<websocketpp/...>`) lives in `src/`, not `include/`. `include/firebolt/gateway.h` and `include/firebolt/helpers.h` include `<nlohmann/json.hpp>` — this is intentional and must remain.
 
@@ -210,7 +210,7 @@ uint64_t currentId_{0};
 
 **Inconsistency**: Trailing-underscore usage in `src/gateway.cpp` is mixed across the three internal classes:
 - `GatewayImpl` data members have no trailing underscores: `connectionChangeListener`, `transport`, `client`, `server`, `watchdogThread`, `watchdogRunning`, `legacyRPCv1`.
-- `Client` has `transport_` (with underscore) but `queue`, `queue_mtx`, `invokes`, `invokes_mtx` (without).
+- `Client` has `transport_` (with underscore) but `queue`, `queue_mtx` (without).
 - `Server` has `notificationQueue_`, `notificationQueueMutex_`, `notificationQueueCv_`, `notificationWorkerThread_`, `stopNotificationWorker_` (with underscores) but `eventList`, `eventMap_mtx` (without).
 
 These classes were developed incrementally; the newer notification-related members in `Client` and `Server` adopted the trailing-underscore style while older event-tracking members did not.

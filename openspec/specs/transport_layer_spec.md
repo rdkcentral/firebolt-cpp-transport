@@ -12,7 +12,7 @@ The transport layer is a standalone C++ library that abstracts WebSocket communi
 
 ## Requirements
 - Expose `IGateway` as the sole public interface for consumers.
-- Support connect, disconnect, send, request, subscribe, and unsubscribe operations.
+- Support connect, disconnect, request, subscribe, and unsubscribe operations.
 - Support configurable WebSocket URL, timeouts, watchdog, and logging.
 - Surface connection state changes via `ConnectionChangeCallback`.
 - Handle JSON-RPC requests and responses with unique message IDs.
@@ -137,7 +137,6 @@ _Not applicable — conformance test strategies are defined in [transport_recomm
 - include/firebolt/gateway.h:
     - IGateway::connect
     - IGateway::disconnect
-    - IGateway::send
     - IGateway::request
     - IGateway::subscribe
     - IGateway::unsubscribe
@@ -154,7 +153,6 @@ _Not applicable — conformance test strategies are defined in [transport_recomm
 - src/gateway.cpp:
     - Gateway::connect
     - Gateway::disconnect
-    - Gateway::send
     - Gateway::request
     - Gateway::subscribe
     - Gateway::unsubscribe

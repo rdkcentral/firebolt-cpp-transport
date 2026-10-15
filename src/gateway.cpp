@@ -33,7 +33,6 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <queue>
-#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -47,6 +46,11 @@ static unsigned watchdog_interval_ms = 500;
 
 using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
 using MessageID = uint32_t;
+
+static long long elapsedMs(Timestamp since)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - since).count();
+}
 
 IGateway::~IGateway() = default;
 
@@ -75,8 +79,6 @@ class Client
 
     std::map<MessageID, std::shared_ptr<Caller>> queue;
     mutable std::mutex queue_mtx;
-    std::set<MessageID> invokes;
-    mutable std::mutex invokes_mtx;
 
     IClientTransport& transport_;
 
@@ -148,17 +150,6 @@ public:
         }
     }
 
-    Firebolt::Error send(const std::string& method, const nlohmann::json& parameters)
-    {
-        MessageID id = transport_.getNextMessageID();
-        {
-            std::lock_guard lck(invokes_mtx);
-            invokes.insert(id);
-        }
-        FIREBOLT_LOG_DEBUG("Gateway", "[send] upstream produce method='%s' id=%u", method.c_str(), id);
-        return transport_.send(method, parameters, id);
-    }
-
     std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters,
                                                 std::optional<MessageID> idOpt)
     {
@@ -211,15 +202,6 @@ public:
     void response(const nlohmann::json& message)
     {
         MessageID id = message["id"];
-        {
-            std::lock_guard lck(invokes_mtx);
-            if (invokes.find(id) != invokes.end())
-            {
-                FIREBOLT_LOG_DEBUG("Gateway", "[response] dropping self-originated invoke ack id=%u", id);
-                invokes.erase(id);
-                return;
-            }
-        }
         // Grab and erase the caller under the mutex, then fulfill the promise
         // after releasing it.  Holding the mutex across set_value() / logging
         // adds unnecessary contention and risks deadlock if a continuation
@@ -675,22 +657,13 @@ public:
         auto t0_disc = std::chrono::steady_clock::now();
         Firebolt::Error status = transport.disconnect();
         FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() done in %lld ms, status=%d",
-                          static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                     std::chrono::steady_clock::now() - t0_disc)
-                                                     .count()),
-                          static_cast<int>(status));
+                          elapsedMs(t0_disc), static_cast<int>(status));
         if (status != Firebolt::Error::None)
         {
             return status;
         }
         cleanupInternalState();
         return Error::None;
-    }
-
-    Firebolt::Error send(const std::string& method, const nlohmann::json& parameters) override
-    {
-        FIREBOLT_LOG_DEBUG("Gateway", "[send] request from helper layer method='%s'", method.c_str());
-        return client.send(method, parameters);
     }
 
     std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters) override
@@ -729,21 +702,17 @@ public:
         FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] waiting for subscribe ACK for '%s'...", event.c_str());
         auto t0_sub = std::chrono::steady_clock::now();
         auto future_sub = request(event, params, id);
-        constexpr auto kSubscribeAckTimeout = std::chrono::milliseconds(50);
-        if (future_sub.wait_for(kSubscribeAckTimeout) != std::future_status::ready)
+        const auto subscribeAckTimeout = std::chrono::milliseconds(runtime_waitTime_ms);
+        if (future_sub.wait_for(subscribeAckTimeout) != std::future_status::ready)
         {
             FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' timed out after %lld ms", event.c_str(),
-                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                          std::chrono::steady_clock::now() - t0_sub)
-                                                          .count()));
+                               elapsedMs(t0_sub));
             status = Firebolt::Error::Timedout;
         }
         else
         {
             FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' received in %lld ms", event.c_str(),
-                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                          std::chrono::steady_clock::now() - t0_sub)
-                                                          .count()));
+                               elapsedMs(t0_sub));
             auto result = future_sub.get();
             if (!result)
             {
@@ -807,13 +776,10 @@ public:
                            event.c_str(), runtime_waitTime_ms);
         auto t0_unsub = std::chrono::steady_clock::now();
         auto future_unsub = request(event, params);
-        constexpr auto kUnsubscribeAckTimeout = std::chrono::milliseconds(50);
-        long long unsub_ms = 0;
-        if (future_unsub.wait_for(kUnsubscribeAckTimeout) == std::future_status::ready)
+        constexpr auto unsubscribeAckTimeout = std::chrono::milliseconds(50);
+        if (future_unsub.wait_for(unsubscribeAckTimeout) == std::future_status::ready)
         {
-            unsub_ms =
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
-            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK received after %lld ms", unsub_ms);
+            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK received after %lld ms", elapsedMs(t0_unsub));
             auto result = future_unsub.get();
             if (!result)
             {
@@ -822,9 +788,8 @@ public:
         }
         else
         {
-            unsub_ms =
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
-            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK timed out after %lld ms (server unresponsive)", unsub_ms);
+            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK timed out after %lld ms (server unresponsive)",
+                               elapsedMs(t0_unsub));
         }
 
         return status;
@@ -998,19 +963,13 @@ private:
             {
                 watchdogThread.join();
             }
-            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %lld ms",
-                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                          std::chrono::steady_clock::now() - t0_wdog)
-                                                          .count()));
+            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %lld ms", elapsedMs(t0_wdog));
         }
         client.cancelAll();
         FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] stopping notification worker...");
         auto t0_nw = std::chrono::steady_clock::now();
         server.stopNotificationWorker();
-        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %lld ms",
-                           static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                      std::chrono::steady_clock::now() - t0_nw)
-                                                      .count()));
+        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %lld ms", elapsedMs(t0_nw));
         {
             std::lock_guard<std::mutex> lock(connectionLog_mtx);
             connectionStarted = false;

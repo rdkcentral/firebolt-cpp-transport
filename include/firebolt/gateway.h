@@ -43,7 +43,6 @@ public:
     virtual Firebolt::Error connect(const Firebolt::Config& config, ConnectionChangeCallback onConnectionChange) = 0;
     virtual Firebolt::Error disconnect() = 0;
 
-    virtual Firebolt::Error send(const std::string& method, const nlohmann::json& parameters) = 0;
     virtual std::future<Firebolt::Result<nlohmann::json>> request(const std::string& method,
                                                                   const nlohmann::json& parameters) = 0;
     virtual Firebolt::Error subscribe(const std::string& event, EventCallback callback, void* usercb) = 0;
