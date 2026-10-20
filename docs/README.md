@@ -1,10 +1,10 @@
 # firebolt-cpp-transport
 
-`firebolt-cpp-transport` is a C++17 shared library that provides the WebSocket and JSON-RPC 2.0 transport layer shared by all Firebolt C++ SDKs. It abstracts connection management, request/response correlation, and event subscriptions, enabling higher-level SDK layers to work exclusively with typed method calls while the library manages wire-level messaging.
+`firebolt-cpp-transport` is a C++17 library that provides the WebSocket and JSON-RPC 2.0 transport layer for Firebolt C++ SDKs. It abstracts connection management, request/response correlation, and event subscriptions, enabling higher-level SDK layers to work exclusively with typed method calls while the library manages wire-level messaging.
 
 The library exposes two public interfaces: `IGateway`, which handles raw JSON-RPC framing over WebSocket, and `IHelper`, a typed wrapper that maps Firebolt SDK method calls onto `IGateway` operations. Applications and Firebolt C++ SDKs access these interfaces via `GetGatewayInstance()` and `GetHelperInstance()`.
 
-At the device level, the library establishes an outbound-only WebSocket connection to a Firebolt gateway daemon running on the same device. All communication uses JSON-RPC 2.0 messages. The library is a pure-software component whose sole external runtime dependency is the Firebolt gateway endpoint.
+At the device level, the library opens a WebSocket connection to a Firebolt Gateway running on the same device. The connection is bidirectional once established. All communication uses JSON-RPC 2.0 messages. The library is a pure-software component whose external service dependency is the Firebolt Gateway endpoint.
 
 ```mermaid
 flowchart LR
@@ -20,7 +20,7 @@ subgraph FBLayer["Firebolt Layer"]
 end
 
 subgraph RDKMW["RDK Core Middleware"]
-    GW["Firebolt Gateway Daemon"]
+    GW["Firebolt Gateway"]
     Thunder["WPE Framework (Thunder)"]
     AM["App Manager"]
 end
@@ -39,10 +39,10 @@ RDKMW -->|"HAL APIs"| VL
 
 **Key Features & Responsibilities:**
 
-- **WebSocket Connection Management**: Establishes and maintains an outbound WebSocket connection to the Firebolt gateway daemon, tracking the full lifecycle from `NotStarted` through `Connecting`, `Connected`, and `Disconnected` states.
+- **WebSocket Connection Management**: Establishes and maintains a WebSocket connection to the Firebolt Gateway, tracking the full lifecycle from `NotStarted` through `Connecting`, `Connected`, and `Disconnected` states.
 - **JSON-RPC 2.0 Request/Response Correlation**: Assigns unique message IDs to outgoing requests and matches incoming responses to the corresponding caller futures, surfacing results via `std::future<Result<T>>`.
 - **Event Subscription and Dispatch**: Registers named event callbacks via `IGateway::subscribe()` and dispatches incoming JSON-RPC notifications to registered handlers on a dedicated notification worker thread.
-- **Typed Helper Interface**: `IHelper` and `SubscriptionManager` wrap `IGateway` to provide type-safe property get/set, method invocation, and RAII subscription lifecycle management for SDK consumers.
+- **Typed Helper Interface**: `IHelper` and `SubscriptionManager` wrap `IGateway` to provide type-safe property get and set (via `invoke`), method invocation, and RAII subscription lifecycle management for SDK consumers.
 - **Watchdog and Timeout Enforcement**: A dedicated watchdog thread periodically scans pending requests and fulfils their promises with `Error::Timedout` when the configured `waitTime_ms` threshold is exceeded.
 - **Configurable Logging**: A built-in logger (`Firebolt::Logger`) with configurable log level, format flags (timestamp, thread ID, source location, function name), and output target controlled by `FIREBOLT_TRANSPORT_LOG_LEVEL` and `FIREBOLT_TRANSPORT_LOG_FILE` environment variables.
 - **Custom HTTP Header Injection**: Supports injecting custom HTTP headers (for example, `Authorization`) during the WebSocket upgrade handshake and retrieving server response headers after connection.
@@ -54,15 +54,15 @@ RDKMW -->|"HAL APIs"| VL
 
 The library is structured as a layered stack. The outermost layer (`IHelper` / `SubscriptionManager`) provides a type-safe, RAII-managed interface that maps SDK-level operations to JSON-RPC method names and typed JSON deserializers. Beneath that, `IGateway` owns the JSON-RPC protocol logic: it generates message IDs, correlates responses to outstanding requests, manages event listener registration, and runs a watchdog thread that enforces request timeouts. The innermost layer (`Transport`) owns the WebSocket connection using `websocketpp` with an Asio event loop and decouples received message payloads from protocol processing through an internal message queue.
 
-Northbound callers interact only through the `IGateway` and `IHelper` abstract interfaces. Implementation types are kept internal; `GetGatewayInstance()` and `GetHelperInstance()` return stable references scoped to the process lifetime. All data flow through these interfaces is outbound toward the Firebolt gateway daemon.
+Northbound callers interact only through the `IGateway` and `IHelper` abstract interfaces. Implementation types are kept internal; `GetGatewayInstance()` and `GetHelperInstance()` return stable references scoped to the process lifetime. Data flows through these interfaces in both directions: requests and subscriptions go to the Firebolt Gateway, and responses and event notifications come back from it.
 
-The southbound boundary is a single outbound WebSocket connection to the Firebolt gateway daemon. The connection URL, retry policy, and timeout parameters are all supplied through the `Firebolt::Config` struct passed to `IGateway::connect()`.
+The southbound boundary is a single WebSocket connection to the Firebolt Gateway. The connection URL, headers, and timeout parameters are supplied through the `Firebolt::Config` struct passed to `IGateway::connect()`. The `reconnect_max_attempts`, `reconnect_delay_ms`, and `connect_attempt_timeout_ms` fields are currently unused. Callers manage connection retries.
 
-The library holds in-memory state: the current connection handle, the pending request map, and the registered event callback list. This state is reset on `disconnect()`.
+The library holds in-memory state: the current connection handle, the pending request map, and the registered event callback list. `disconnect()` resets the transport, cancels pending requests, and stops the workers, but local event callback registrations remain until explicitly unsubscribed or the gateway is destroyed.
 
 ```mermaid
 graph TD
-    subgraph LibBoundary["firebolt-cpp-transport (Shared Library)"]
+    subgraph LibBoundary["firebolt-cpp-transport (Library)"]
         subgraph PublicAPI["Public API"]
             IGW["IGateway\n(gateway.h)"]
             IH["IHelper\n(helpers.h)"]
@@ -84,7 +84,7 @@ graph TD
         end
     end
 
-    ExtGW[("Firebolt Gateway Daemon\nws://127.0.0.1:9998")]
+    ExtGW[("Firebolt Gateway\nws://127.0.0.1:9998")]
 
     SM --> IH
     IH --> IGW
@@ -93,10 +93,10 @@ graph TD
     WSPP <-->|"WebSocket / JSON-RPC 2.0"| ExtGW
 ```
 
-#### Threading Model
+### Threading Model
 
 - **Threading Architecture**: Multi-threaded — four distinct threads collaborate to decouple I/O, message processing, event dispatch, and timeout enforcement.
-- **Connection Thread**: Runs the WebSocket Asio event loop and handles connection open, close, fail, and message events. Invokes the `ConnectionChangeCallback` on the calling thread for the initial result; subsequent callbacks fire on this thread.
+- **Connection Thread**: Runs the WebSocket Asio event loop and handles connection open, close, fail, and message events. All `ConnectionChangeCallback` invocations, including the initial result, run on this thread. Callbacks must be thread-safe and non-blocking. A blocking call such as `get`, `invoke`, or `subscribe` waits for a reply that this same thread must receive, so it can time out.
 - **Message Worker Thread**: Dequeues raw WebSocket payloads, parses them as JSON, and routes responses and event notifications to the appropriate handlers. Keeps the connection thread unblocked during parsing.
 - **Notification Worker Thread**: Dequeues and dispatches incoming event notifications to registered callbacks asynchronously, preventing event handlers from blocking the message worker.
 - **Watchdog Thread**: Wakes at the interval configured by `watchdogCycle_ms` and expires pending requests older than `waitTime_ms` with `Error::Timedout`.
@@ -108,7 +108,7 @@ graph TD
 #### Platform and Integration Requirements
 
 - **Build Dependencies**: `nlohmann-json` (JSON serialization), `websocketpp` (WebSocket transport), `boost` (Asio backend for websocketpp). At runtime, `boost-system` is required.
-- **Gateway Availability**: The Firebolt gateway daemon must be reachable at the configured WebSocket URL before `IGateway::connect()` returns. The configurable retry policy (`reconnect_max_attempts`, `reconnect_delay_ms`, `connect_attempt_timeout_ms`) supports environments where the gateway starts after the calling process.
+- **Gateway Availability**: `IGateway::connect()` initiates an asynchronous connection attempt. A return value of `Error::None` confirms that the attempt was dispatched. Wait for `ConnectionChangeCallback` with `connected = true` before issuing requests or subscriptions. The caller manages connection retries.
 
 ---
 
@@ -116,53 +116,43 @@ graph TD
 
 #### Initialization to Active State
 
-The library lifecycle begins when a caller invokes `IGateway::connect()` with a populated `Firebolt::Config`. The library configures the logger, constructs the WebSocket URL (appending `RPCv2=true` for the default JSON-RPC v2 mode), starts the Asio event loop on the connection thread, and initiates the WebSocket handshake. If the handshake succeeds, the watchdog thread is started and the `ConnectionChangeCallback` is invoked with `connected = true`. The library then enters its active state and is ready to process requests and event subscriptions.
+The library lifecycle begins when a caller invokes `IGateway::connect()` with a populated `Firebolt::Config`. The library configures the logger, constructs the WebSocket URL (appending `RPCv2=true` for the default JSON-RPC v2 mode), starts the Asio event loop on the connection thread, and dispatches the asynchronous connection attempt. The watchdog thread starts at this point, before the handshake completes. When the handshake succeeds, the `ConnectionChangeCallback` is invoked with `connected = true` on the connection thread. Callers should issue requests and subscriptions only after that callback. The library then enters its active state.
 
-The component transitions through the following states during its lifecycle: **NotStarted** (no connection attempt made) → **Connecting** (WebSocket handshake in progress; transport started, Asio running) → **Connected** (handling requests, responses, and event notifications; watchdog active) → **Disconnected** (connection closed or lost; pending requests cancelled; resources released).
+The component transitions through the following states during its lifecycle: **NotStarted** (no connection attempt made) → **Connecting** (connection attempt dispatched; Asio running; watchdog started; handshake in progress) → **Connected** (handshake complete and `ConnectionChangeCallback(true)` delivered; handling requests, responses, and event notifications) → **Disconnected** (connection closed or lost; watchdog stopped; pending requests cancelled; resources released).
 
 ```mermaid
 sequenceDiagram
     participant Caller as Caller (Firebolt C++ SDK)
     participant IGW as IGateway
     participant TP as Transport
-    participant FGW as Firebolt Gateway Daemon
+    participant FGW as Firebolt Gateway
 
     Caller->>IGW: connect(config, onConnectionChange)
     IGW->>IGW: Configure logger and build WebSocket URL
-    IGW->>TP: Connect to gateway URL with headers
-    TP->>FGW: TCP connect + WebSocket handshake
-    FGW-->>TP: HTTP 101 Switching Protocols
-    TP-->>IGW: Connection established
+    IGW->>TP: connect(url, headers) - asynchronous dispatch
+    TP-->>IGW: Error::None (attempt dispatched)
     IGW->>IGW: Start watchdog thread
+    IGW-->>Caller: connect() returns Error::None (attempt in progress)
+    TP->>FGW: TCP connect + WebSocket handshake (connection thread)
+    FGW-->>TP: HTTP 101 Switching Protocols
+    TP-->>IGW: onOpen (connection thread)
     IGW-->>Caller: onConnectionChange(connected=true, Error::None)
-
-    loop Runtime
-        Caller->>IGW: request / subscribe / send
-        FGW-->>IGW: JSON-RPC response / notification
-    end
-
-    Caller->>IGW: disconnect()
-    IGW->>TP: Close WebSocket connection
-    TP->>FGW: WebSocket close handshake
-    FGW-->>TP: Connection closed
-    IGW->>IGW: Stop watchdog, cancel pending requests
-    IGW-->>Caller: disconnect() returns Error::None
 ```
 
 #### Runtime State Changes
 
-During normal operation the library reacts to WebSocket close or fail events delivered by the connection thread. These events trigger the registered `ConnectionChangeCallback` with `connected = false`. Pending requests are resolved with `Error::NotConnected`. The watchdog thread continues running until `disconnect()` is called explicitly.
+During normal operation the library reacts to WebSocket close or fail events delivered by the connection thread. These events trigger the registered `ConnectionChangeCallback` with `connected = false`. Pending requests are resolved with `Error::NotConnected`. On a remote close or failure, `cleanupInternalState()` stops the watchdog and notification worker and cancels pending requests before the callback is invoked. The next successful `connect()` restarts the watchdog.
 
 **State Change Triggers:**
 
-- **Gateway daemon disconnect**: When the remote gateway closes the WebSocket, all pending requests are resolved with `Error::NotConnected` and the registered callback is notified. Callers invoke `IGateway::connect()` again to re-establish the connection.
+- **Gateway disconnect**: When the remote gateway closes the WebSocket, all pending requests are resolved with `Error::NotConnected` and the registered callback is notified. Callers invoke `IGateway::connect()` again to re-establish the connection.
 - **Handshake failure / network error**: The transport transitions to `Disconnected` and the caller's `ConnectionChangeCallback` is invoked with the mapped `Firebolt::Error`.
-- **Request timeout**: Detected by the watchdog thread. The promise for the timed-out request is resolved with `Error::Timedout`; the connection itself is not affected.
+- **Request timeout**: Detected by the watchdog thread. The promise for the timed-out request is resolved with `Error::Timedout`; the connection remains open.
 
 **Context Switching Scenarios:**
 
-- **Reconnection**: Callers may call `IGateway::connect()` again after a disconnect. The previous `ConnectionChangeCallback` is replaced atomically and the watchdog restarts.
-- **Log level override at runtime**: The `FIREBOLT_TRANSPORT_LOG_FILE` environment variable is re-evaluated on every log call, allowing the log destination to be redirected without reconnection. `FIREBOLT_TRANSPORT_LOG_LEVEL` is resolved once at connect time; a reconnect is required for level changes to take effect.
+- **Reconnection**: Callers may call `IGateway::connect()` again after a disconnect. The previous `ConnectionChangeCallback` is replaced under a mutex and the watchdog restarts.
+- **Log level override at runtime**: The `FIREBOLT_TRANSPORT_LOG_FILE` environment variable is re-evaluated on every log call, allowing the log destination to change while the connection is active. `FIREBOLT_TRANSPORT_LOG_LEVEL` is resolved once at connect time; a reconnect is required for level changes to take effect.
 
 ---
 
@@ -175,16 +165,18 @@ sequenceDiagram
     participant Caller as Caller (Firebolt C++ SDK)
     participant IGW as IGateway
     participant TP as Transport
-    participant FGW as Firebolt Gateway Daemon
+    participant FGW as Firebolt Gateway
 
     Caller->>IGW: connect(config, onConnectionChange)
     IGW->>IGW: Configure logger and build WebSocket URL
-    IGW->>TP: Connect to gateway URL with headers
-    TP->>FGW: TCP connect + WebSocket handshake
-    FGW-->>TP: HTTP 101 Switching Protocols
-    TP-->>IGW: Connection established
+    IGW->>TP: connect(url, headers) - asynchronous dispatch
+    TP-->>IGW: Error::None (attempt dispatched)
     IGW->>IGW: Start watchdog thread
-    IGW-->>Caller: onConnectionChange(true, Error::None)
+    IGW-->>Caller: connect() returns Error::None (attempt in progress)
+    TP->>FGW: TCP connect + WebSocket handshake (connection thread)
+    FGW-->>TP: HTTP 101 Switching Protocols
+    TP-->>IGW: onOpen (connection thread)
+    IGW-->>Caller: onConnectionChange(connected=true, Error::None)
 ```
 
 #### Request Processing Call Flow
@@ -197,11 +189,11 @@ sequenceDiagram
     participant IH as IHelper
     participant IGW as IGateway
     participant TP as Transport
-    participant FGW as Firebolt Gateway Daemon
+    participant FGW as Firebolt Gateway
 
-    SDK->>IH: get<JsonType, T>("module.method", params)
+    SDK->>IH: get<JsonType, PropertyType>("module.method", params)
     IH->>IGW: request("module.method", params)
-    IGW->>TP: send JSON-RPC request with unique message ID
+    IGW->>TP: forward JSON-RPC request with unique message ID
     TP->>FGW: WebSocket frame { jsonrpc, method, params, id }
     FGW-->>TP: WebSocket frame { jsonrpc, result, id }
     TP->>IGW: deliver parsed response (matched by id)
@@ -214,41 +206,40 @@ sequenceDiagram
 
 ## Internal Modules
 
-| Module / Class           | Description                                                                                                                                                                                                   | Key Files                                                                  |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `IGateway`               | Public abstract interface for JSON-RPC 2.0 over WebSocket. Exposes `connect`, `disconnect`, `send`, `request`, `subscribe`, `unsubscribe`, and `getResponseHeader`.                                           | `include/firebolt/gateway.h`                                               |
-| `GatewayImpl`            | Concrete implementation of `IGateway`. Manages JSON-RPC request/response correlation, event listener registration and dispatch, connection lifecycle, and watchdog-based timeout enforcement.                 | `src/gateway.cpp`                                                          |
-| `Transport`              | Manages the WebSocket connection using `websocketpp` with an Asio event loop. Handles the connection lifecycle and delivers received frames to the protocol layer.                                            | `src/transport.h`, `src/transport.cpp`                                     |
-| `IHelper` / `HelperImpl` | Typed wrapper over `IGateway`. Provides `get<T>`, `set`, `invoke`, `subscribe`, and `unsubscribe` with `Result<T>` returns and automatic JSON de/serialisation.                                               | `include/firebolt/helpers.h`, `src/helpers_impl.h`, `src/helpers_impl.cpp` |
-| `SubscriptionManager`    | RAII helper that owns a set of subscriptions on behalf of a caller. Automatically calls `unsubscribeAll()` on destruction to prevent dangling callbacks.                                                      | `include/firebolt/helpers.h`, `src/helpers_impl.cpp`                       |
-| `Logger`                 | Thread-safe, level-filtered logger. Writes formatted lines to stderr or a file. Supports syslog output when built with `ENABLE_SYSLOG`. Log level and output path are configurable via environment variables. | `include/firebolt/logger.h`, `src/logger.cpp`                              |
-| `JSON Types`             | Template utilities for serialising/deserialising Firebolt data types. Provides `NL_Json_Basic<T>`, `BasicType<T>`, `NL_Json_Array<T>`, and `toString()` for enum mapping.                                     | `include/firebolt/json_types.h`                                            |
-| `Utils`                  | URL construction helper. `buildGatewayUrl()` ensures the WebSocket URL contains a path component and appends the `RPCv2=true` query parameter when legacy mode is inactive.                                   | `src/utils.h`, `src/utils.cpp`                                             |
+| Module / Class           | Description                                                                                                                                                                                                    | Key Files                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `IGateway`               | Public abstract interface for JSON-RPC 2.0 over WebSocket. Exposes `connect`, `disconnect`, `request`, `subscribe`, `unsubscribe`, and `getResponseHeader`.                                                    | `include/firebolt/gateway.h`                                               |
+| `GatewayImpl`            | Concrete implementation of `IGateway`. Manages JSON-RPC request/response correlation, event listener registration and dispatch, connection lifecycle, and watchdog-based timeout enforcement.                  | `src/gateway.cpp`                                                          |
+| `Transport`              | Manages the WebSocket connection using `websocketpp` with an Asio event loop. Handles the connection lifecycle and delivers received frames to the protocol layer.                                             | `src/transport.h`, `src/transport.cpp`                                     |
+| `IHelper` / `HelperImpl` | Typed wrapper over `IGateway`. Provides `get<JsonType, PropertyType>`, `invoke` (the path for property setters), `subscribe`, and `unsubscribe`, with `Result<T>` returns and automatic JSON de/serialisation. | `include/firebolt/helpers.h`, `src/helpers_impl.h`, `src/helpers_impl.cpp` |
+| `SubscriptionManager`    | RAII helper that owns a set of subscriptions on behalf of a caller. Automatically calls `unsubscribeAll()` on destruction to prevent dangling callbacks.                                                       | `include/firebolt/helpers.h`, `src/helpers_impl.cpp`                       |
+| `Logger`                 | Thread-safe, level-filtered logger. Writes formatted lines to stderr or a file. Supports syslog output when built with `ENABLE_SYSLOG`. Log level and output path are configurable via environment variables.  | `include/firebolt/logger.h`, `src/logger.cpp`                              |
+| `JSON Types`             | Template utilities for serialising/deserialising Firebolt data types. Provides `NL_Json_Basic<T>`, `BasicType<T>`, `NL_Json_Array<T>`, and `toString()` for enum mapping.                                      | `include/firebolt/json_types.h`                                            |
+| `Utils`                  | URL construction helper. `buildGatewayUrl()` ensures the WebSocket URL contains a path component and appends the `RPCv2=true` query parameter when legacy mode is inactive.                                    | `src/utils.h`, `src/utils.cpp`                                             |
 
 ---
 
----
 
 ## Component Interactions
 
-The library communicates with the Firebolt gateway daemon over a WebSocket connection. All interactions are client-initiated and outbound.
+The library communicates with the Firebolt Gateway over a WebSocket connection. All interactions are client-initiated. Requests and subscriptions go to the gateway, and responses and event notifications come back over the same connection.
 
 ### Interaction Matrix
 
-| Target Component / Layer | Interaction Purpose                                                                  | Key APIs / Topics                                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| **External Systems**     |                                                                                      |                                                                                                           |
-| Firebolt Gateway Daemon  | JSON-RPC 2.0 request / response and event notification exchange                      | `IGateway::request()`, `IGateway::send()`, `IGateway::subscribe()` over `ws://127.0.0.1:9998`             |
-| **Callers (Northbound)** |                                                                                      |                                                                                                           |
-| Firebolt C++ SDK         | Provides typed access to Firebolt platform capabilities via `IHelper` and `IGateway` | `IHelper::get<T>()`, `IHelper::set()`, `IHelper::invoke()`, `IHelper::subscribe()`, `IGateway::connect()` |
+| Target Component / Layer | Interaction Purpose                                                                  | Key APIs / Topics                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| **External Systems**     |                                                                                      |                                                                                                                                 |
+| Firebolt Gateway         | JSON-RPC 2.0 request / response and event notification exchange                      | `IGateway::request()`, `IGateway::subscribe()` over `ws://127.0.0.1:9998`                                                       |
+| **Callers (Northbound)** |                                                                                      |                                                                                                                                 |
+| Firebolt C++ SDK         | Provides typed access to Firebolt platform capabilities via `IHelper` and `IGateway` | `IHelper::get<JsonType, PropertyType>()`, `IHelper::invoke()` (property setters), `IHelper::subscribe()`, `IGateway::connect()` |
 
 ### Events Received
 
-The library receives JSON-RPC notifications from the Firebolt gateway daemon and dispatches them to locally registered callbacks.
+The library receives JSON-RPC notifications from the Firebolt Gateway and dispatches them to locally registered callbacks.
 
-| Incoming Notification                                    | Source                  | Dispatch Mechanism                             | Local Subscriber                              |
-| -------------------------------------------------------- | ----------------------- | ---------------------------------------------- | --------------------------------------------- |
-| Any registered event name (e.g., `device.onNameChanged`) | Firebolt Gateway Daemon | `IGateway` internal dispatch → `EventCallback` | Caller-registered via `IGateway::subscribe()` |
+| Incoming Notification                                    | Source           | Dispatch Mechanism                             | Local Subscriber                              |
+| -------------------------------------------------------- | ---------------- | ---------------------------------------------- | --------------------------------------------- |
+| Any registered event name (e.g., `device.onNameChanged`) | Firebolt Gateway | `IGateway` internal dispatch → `EventCallback` | Caller-registered via `IGateway::subscribe()` |
 
 ### IPC Flow Patterns
 
@@ -261,10 +252,10 @@ sequenceDiagram
     participant SDK as Firebolt C++ SDK
     participant IGW as IGateway
     participant TP as Transport
-    participant FGW as Firebolt Gateway Daemon
+    participant FGW as Firebolt Gateway
 
     SDK->>IGW: request("module.method", params)
-    IGW->>TP: send JSON-RPC request with unique message ID
+    IGW->>TP: forward JSON-RPC request with unique message ID
     TP->>FGW: WebSocket frame { jsonrpc, method, params, id }
     FGW-->>TP: WebSocket frame { jsonrpc, result, id }
     TP->>IGW: deliver parsed response (matched by id)
@@ -277,7 +268,7 @@ Incoming JSON-RPC notifications (messages without an `id` field) are matched by 
 
 ```mermaid
 sequenceDiagram
-    participant FGW as Firebolt Gateway Daemon
+    participant FGW as Firebolt Gateway
     participant TP as Transport
     participant IGW as IGateway
     participant CB1 as Registered Callback 1
@@ -295,15 +286,15 @@ sequenceDiagram
 
 ### Key Implementation Logic
 
-- **State / Lifecycle Management**: Connection state transitions through `NotStarted`, `Connecting`, `Connected`, and `Disconnected` phases, driven by WebSocket lifecycle events. The watchdog thread is started on successful connection and stopped on `disconnect()`.
+- **State / Lifecycle Management**: Connection state transitions through `NotStarted`, `Connecting`, `Connected`, and `Disconnected` phases, driven by WebSocket lifecycle events. The watchdog thread starts when `connect()` successfully dispatches the connection attempt, before the handshake completes. It stops on `disconnect()` or on a remote close or failure.
   - Connection state: `src/transport.cpp`, `src/transport.h`
   - Watchdog and gateway lifecycle: `src/gateway.cpp`
 
-- **Event Processing**: Incoming WebSocket frames are queued and processed by the message worker thread, which parses each frame as JSON and routes it based on whether it carries a response ID (directed to the pending request) or an event method name (directed to registered subscribers). Subscriber callbacks are dispatched asynchronously; exceptions thrown by individual callbacks are caught and logged so that one faulty handler cannot affect others.
+- **Event Processing**: Incoming WebSocket frames are queued and processed by the message worker thread, which parses each frame as JSON and routes it based on whether it carries a response ID (directed to the pending request) or an event method name (directed to registered subscribers). Subscriber callbacks are dispatched asynchronously; exceptions thrown by individual callbacks are caught and logged so that each handler runs independently.
   - Message queue and worker: `src/transport.cpp`
   - Notification queue and worker: `src/gateway.cpp`
 
-- **Error Handling Strategy**: All public API calls return `Firebolt::Error` or `Result<T>`. JSON-RPC error responses are parsed defensively, replacing missing or malformed fields with safe defaults. WebSocket transport errors are mapped to `Firebolt::Error` values. Timed-out requests are expired by the watchdog without disrupting the connection, and pending requests are cancelled gracefully on disconnect.
+- **Error Handling Strategy**: All public API calls return `Firebolt::Error` or `Result<T>`. JSON-RPC error responses are parsed defensively, replacing missing or malformed fields with safe defaults. WebSocket transport errors are mapped to `Firebolt::Error` values. Timed-out requests are expired by the watchdog while the connection stays active, and pending requests are cancelled gracefully on disconnect.
   - Error mapping: `src/transport.cpp`
   - Request timeout and disconnect cancellation: `src/gateway.cpp`
 
@@ -322,7 +313,7 @@ sequenceDiagram
 
 | Parameter                    | Type                 | Default               | Description                                                                                                                                                        |
 | ---------------------------- | -------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `wsUrl`                      | `std::string`        | `ws://127.0.0.1:9998` | WebSocket URL of the Firebolt gateway daemon.                                                                                                                      |
+| `wsUrl`                      | `std::string`        | `ws://127.0.0.1:9998` | WebSocket URL of the Firebolt Gateway.                                                                                                                             |
 | `headers`                    | `map<string,string>` | `{}`                  | Custom HTTP headers injected during the WebSocket upgrade handshake (for example, `Authorization`).                                                                |
 | `waitTime_ms`                | `unsigned`           | `3000`                | Timeout in milliseconds for an individual JSON-RPC response. Requests older than this value are expired by the watchdog with `Error::Timedout`.                    |
 | `legacyRPCv1`                | `bool`               | Build-time flag       | When `true`, enables compatibility with the legacy event notification wire format. Controlled at build time by `ENABLE_LEGACY_RPC_V1`; overridable per connection. |
@@ -334,13 +325,13 @@ sequenceDiagram
 | `log.format.function`        | `bool`               | `true`                | Include the function name in each log line.                                                                                                                        |
 | `log.format.location`        | `bool`               | `false`               | Include the source file and line number in each log line.                                                                                                          |
 | `watchdogCycle_ms`           | `unsigned`           | `500`                 | Interval in milliseconds between watchdog scans for timed-out requests.                                                                                            |
-| `reconnect_max_attempts`     | `unsigned`           | `0`                   | Number of additional connection attempts if the initial attempt fails. When set to `0`, a single connection attempt is made. Capped internally at 100.             |
-| `reconnect_delay_ms`         | `unsigned`           | `1000`                | Delay in milliseconds between successive reconnect attempts.                                                                                                       |
-| `connect_attempt_timeout_ms` | `unsigned`           | `10000`               | Maximum time in milliseconds for a single connection attempt (DNS + TCP + WebSocket handshake) before it is aborted and counted as a failure.                      |
+| `reconnect_max_attempts`     | `unsigned`           | `0`                   | **Currently unused.** Callers manage connection retries.                                                                 |
+| `reconnect_delay_ms`         | `unsigned`           | `1000`                | **Currently unused.** Callers manage retry timing.                                                                        |
+| `connect_attempt_timeout_ms` | `unsigned`           | `10000`               | **Currently unused.** Callers manage connection timeouts.                                                               |
 
 ### Runtime Configuration
 
-Log level and output path can be adjusted via environment variables without recompilation:
+Log level and output path can be set through environment variables:
 
 ```bash
 # Override log level (resolved once at IGateway::connect() time; reconnect required for changes)
@@ -363,4 +354,4 @@ The following CMake options are exposed as Yocto `PACKAGECONFIG` entries in the 
 | Yocto PACKAGECONFIG  | CMake Option              | Effect                                                                                                                                                                                                                                    |
 | -------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `legacy-rpc-v1`      | `ENABLE_LEGACY_RPC_V1=ON` | Sets the compiled-in default of `Firebolt::Config::legacyRPCv1` to `true`. When enabled, the library uses the legacy event notification wire format and connects without appending the `RPCv2=true` query parameter to the WebSocket URL. |
-| `disable-so-version` | `DISABLE_SO_VERSION=ON`   | Suppresses `SONAME` and `SOVERSION` properties on the shared library (`NO_SONAME ON`, version strings cleared). Useful for platforms where SONAME versioning is managed externally or not required.                                       |
+| `disable-so-version` | `DISABLE_SO_VERSION=ON`   | Suppresses `SONAME` and `SOVERSION` properties on the library (`NO_SONAME ON`, version strings cleared). Useful for platforms where SONAME versioning is managed externally.                                       |
