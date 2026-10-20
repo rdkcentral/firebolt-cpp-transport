@@ -275,6 +275,12 @@ protected:
         }
         return gateway;
     }
+
+    // Sends a request only so the server runs m_onMessageAction; the reply is not needed.
+    static void pokeServer(IGateway& gateway, const std::string& method = "test.trigger")
+    {
+        (void)gateway.request(method, {});
+    }
 };
 
 TEST_F(GatewayUTest, ConnectAndDisconnect)
@@ -309,15 +315,6 @@ TEST_F(GatewayUTest, Request)
     EXPECT_TRUE(result);
 }
 
-TEST_F(GatewayUTest, Send)
-{
-    IGateway& gateway = connectAndWait();
-
-    nlohmann::json params = {{"key", "value"}};
-    Firebolt::Error err = gateway.send("test.method", params);
-    EXPECT_EQ(err, Firebolt::Error::None);
-}
-
 TEST_F(GatewayUTest, SubscribeUnsubscribe)
 {
     IGateway& gateway = connectAndWait();
@@ -340,7 +337,7 @@ TEST_F(GatewayUTest, SubscribeUnsubscribe)
         s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
     };
 
-    gateway.send("dummy.message", {});
+    pokeServer(gateway);
 
     auto eventStatus = eventFuture.wait_for(std::chrono::seconds(2));
     ASSERT_EQ(eventStatus, std::future_status::ready) << "Event was not received";
@@ -350,6 +347,29 @@ TEST_F(GatewayUTest, SubscribeUnsubscribe)
 
     err = gateway.unsubscribe("test.onEvent", &eventPromise);
     EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+TEST_F(GatewayUTest, SubscribeAcceptsAcknowledgementWithinConfiguredTimeout)
+{
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        auto request = nlohmann::json::parse(msg->get_payload());
+        std::this_thread::sleep_for(std::chrono::milliseconds(75));
+
+        nlohmann::json response;
+        response["jsonrpc"] = "2.0";
+        response["id"] = request["id"];
+        response["result"] = {{"event", request["method"]}, {"listening", true}};
+        m_server.send(hdl, response.dump(), msg->get_opcode());
+    };
+    IGateway& gateway = connectAndWait();
+
+    std::promise<nlohmann::json> eventPromise;
+    auto onEvent = [](void* usercb, const nlohmann::json& params)
+    { static_cast<std::promise<nlohmann::json>*>(usercb)->set_value(params); };
+
+    EXPECT_EQ(gateway.subscribe("test.onEvent", onEvent, &eventPromise), Firebolt::Error::None);
+    EXPECT_EQ(gateway.unsubscribe("test.onEvent", &eventPromise), Firebolt::Error::None);
 }
 
 TEST_F(GatewayUTest, RequestTimeout)
@@ -428,7 +448,7 @@ TEST_F(GatewayUTest, MultipleSubscriptions)
         eventMsg["params"] = {{"fired", true}};
         s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
     };
-    gateway.send("dummy.message", {});
+    pokeServer(gateway);
 
     ASSERT_EQ(eventFuture1.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     ASSERT_EQ(eventFuture2.wait_for(std::chrono::seconds(2)), std::future_status::ready);
@@ -467,7 +487,7 @@ TEST_F(GatewayUTest, UnsubscribeSpecific)
         eventMsg["params"] = {{"fired", true}};
         s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
     };
-    gateway.send("dummy.message", {});
+    pokeServer(gateway);
 
     EXPECT_EQ(eventFuture1.wait_for(std::chrono::seconds(2)), std::future_status::timeout);
     ASSERT_EQ(eventFuture2.wait_for(std::chrono::seconds(2)), std::future_status::ready);
@@ -499,7 +519,7 @@ TEST_F(GatewayUTest, InvalidNotification)
         s->send(hdl, invalidMsg3.dump(), websocketpp::frame::opcode::text);
     };
 
-    gateway.send("dummy.message", {});
+    pokeServer(gateway);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -674,7 +694,7 @@ TEST_F(GatewayUTest, UnsubscribeFromCallbackDoesNotDeadlock)
     Firebolt::Error err = gateway.subscribe("test.onEvent", onEvent, &ctx);
     ASSERT_EQ(err, Firebolt::Error::None);
 
-    gateway.send("fire.event", {});
+    pokeServer(gateway, "fire.event");
 
     auto status = doneFuture.wait_for(std::chrono::seconds(2));
     EXPECT_EQ(status, std::future_status::ready) << "Callback blocked (possible deadlock)";
@@ -866,7 +886,7 @@ TEST_F(GatewayUTest, NotificationWithValueWrapping)
         eventMsg["params"] = {{"value", 42}};
         s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
     };
-    gateway.send("dummy", {});
+    pokeServer(gateway);
 
     auto status = eventFuture.wait_for(std::chrono::seconds(2));
     ASSERT_EQ(status, std::future_status::ready);
@@ -905,7 +925,7 @@ TEST_F(GatewayUTest, NotificationWithValueObjectNotUnwrapped)
         eventMsg["params"] = {{"value", {{"nested", true}}}};
         s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
     };
-    gateway.send("dummy", {});
+    pokeServer(gateway);
 
     auto status = eventFuture.wait_for(std::chrono::seconds(2));
     ASSERT_EQ(status, std::future_status::ready);
@@ -936,7 +956,7 @@ TEST_F(GatewayUTest, NotificationNoSubscribers)
         eventMsg["params"] = {{"data", true}};
         s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
     };
-    gateway.send("dummy", {});
+    pokeServer(gateway);
 
     // Give time for the notification to be processed (it should just log a warning)
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -966,7 +986,7 @@ TEST_F(GatewayUTest, ResponseWithNoReceiver)
         orphanResponse["result"] = {{"orphan", true}};
         s->send(hdl, orphanResponse.dump(), websocketpp::frame::opcode::text);
     };
-    gateway.send("dummy", {});
+    pokeServer(gateway);
 
     // Give time for the orphan to be processed
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -996,52 +1016,6 @@ TEST_F(GatewayUTest, SubscribeTimeout)
     Firebolt::Error err = gateway.subscribe("test.onTimeout", onEvent, &dummyCb);
     // Subscribe should return Timedout because the ACK never arrives
     EXPECT_EQ(err, Firebolt::Error::Timedout);
-}
-
-// ---------------------------------------------------------------------------
-// Test name: GatewayUTest.SendNotConnected
-// Covers: src/gateway.cpp:Client::send → transport.send NotConnected
-// Scenario type: failure
-// ---------------------------------------------------------------------------
-TEST_F(GatewayUTest, SendNotConnected)
-{
-    // Don't start the server — connect will fail
-    IGateway& gateway = GetGatewayInstance();
-    Firebolt::Config cfg = getTestConfig();
-    ReservedLoopbackPort reservedPort = reserveLikelyUnusedLoopbackPort();
-    ASSERT_GE(reservedPort.fd, 0) << "Failed to reserve loopback port for SendNotConnected";
-    cfg.wsUrl = "ws://127.0.0.1:" + std::to_string(reservedPort.port);
-
-    std::promise<Firebolt::Error> connectFailure;
-    auto connectFailureFuture = connectFailure.get_future();
-    Firebolt::Error err = gateway.connect(cfg,
-                                          [&connectFailure](bool connected, const Firebolt::Error& cbErr)
-                                          {
-                                              if (!connected)
-                                              {
-                                                  try
-                                                  {
-                                                      connectFailure.set_value(cbErr);
-                                                  }
-                                                  catch (const std::future_error&)
-                                                  {
-                                                  }
-                                              }
-                                          });
-    ASSERT_TRUE(err == Firebolt::Error::General || err == Firebolt::Error::None);
-
-    if (err == Firebolt::Error::None)
-    {
-        ASSERT_EQ(connectFailureFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-        EXPECT_EQ(connectFailureFuture.get(), Firebolt::Error::General);
-    }
-
-    // Send should fail with NotConnected
-    err = gateway.send("test.method", {});
-    EXPECT_EQ(err, Firebolt::Error::NotConnected);
-
-    // Disconnect while locals are still alive to prevent use-after-scope
-    gateway.disconnect();
 }
 
 // ---------------------------------------------------------------------------
@@ -1085,7 +1059,7 @@ TEST_F(GatewayUTest, NotificationMultipleParams)
         eventMsg["params"] = {{"key1", "val1"}, {"key2", "val2"}};
         s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
     };
-    gateway.send("dummy", {});
+    pokeServer(gateway);
 
     auto status = eventFuture.wait_for(std::chrono::seconds(2));
     ASSERT_EQ(status, std::future_status::ready);
@@ -1252,34 +1226,6 @@ TEST_F(GatewayUTest, WaitTimeConfiguration)
 // ---------------------------------------------------------------------------
 // Branch-coverage tests
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Test name: GatewayUTest.SendResponseIsIgnoredByClient
-// Covers: Client::response invoke-set erase path (fire-and-forget response dropped)
-// The response for a fire-and-forget send() ID should be silently dropped.
-// Scenario type: edge case
-// ---------------------------------------------------------------------------
-TEST_F(GatewayUTest, SendResponseIsIgnoredByClient)
-{
-    // Server echoes back a response for every message (including sends)
-    IGateway& gateway = connectAndWait();
-
-    // send() uses Client::send which adds the ID to the invokes set.
-    // When the echo comes back, client.response() should find it in invokes,
-    // erase it, and return without error.
-    nlohmann::json params = {{"key", "value"}};
-    Firebolt::Error err = gateway.send("test.fire_and_forget", params);
-    EXPECT_EQ(err, Firebolt::Error::None);
-
-    // Give time for the echo response to be processed
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    // Gateway should still be functional — the invoke response was silently dropped
-    auto future = gateway.request("test.method", {{"k", "v"}});
-    auto status = future.wait_for(std::chrono::seconds(2));
-    ASSERT_EQ(status, std::future_status::ready);
-    EXPECT_TRUE(future.get());
-}
 
 // ---------------------------------------------------------------------------
 // Test name: GatewayUTest.RequestFailsWhenSendErrors
@@ -1522,7 +1468,7 @@ TEST_F(GatewayUTest, NotificationWorkerContinuesAfterCallbackException)
         eventMsg["params"] = {{"fired", true}};
         s->send(hdl, eventMsg.dump(), websocketpp::frame::opcode::text);
     };
-    gateway.send("dummy.message", {});
+    pokeServer(gateway);
 
     // Callback B must still fire — worker continued the loop despite A throwing
     auto status = deliveredFuture.wait_for(std::chrono::seconds(2));

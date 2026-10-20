@@ -36,7 +36,6 @@ public:
     MOCK_METHOD(Error, connect, (const Config&, Firebolt::Transport::ConnectionChangeCallback), (override));
     MOCK_METHOD(Error, disconnect, (), (override));
     MOCK_METHOD(std::future<Result<nlohmann::json>>, request, (const std::string&, const nlohmann::json&), (override));
-    MOCK_METHOD(Error, send, (const std::string&, const nlohmann::json&), (override));
     MOCK_METHOD(Error, subscribe, (const std::string&, Firebolt::Transport::EventCallback, void*), (override));
     MOCK_METHOD(Error, unsubscribe, (const std::string&, void*), (override));
     MOCK_METHOD(std::optional<std::string>, getResponseHeader, (const std::string&), (override));
@@ -45,7 +44,6 @@ public:
 class MockHelper : public IHelper
 {
 public:
-    MOCK_METHOD(Result<void>, set, (const std::string& methodName, const nlohmann::json& parameters), (override));
     MOCK_METHOD(Result<void>, invoke, (const std::string& methodName, const nlohmann::json& parameters), (override));
     MOCK_METHOD(Result<nlohmann::json>, getJson, (const std::string& methodName, const nlohmann::json& parameters),
                 (override));
@@ -67,48 +65,69 @@ struct TestJson
 class HelperUTest : public ::testing::Test
 {
 protected:
+    static std::future<Result<nlohmann::json>> readyFuture(Result<nlohmann::json> result)
+    {
+        std::promise<Result<nlohmann::json>> promise;
+        promise.set_value(std::move(result));
+        return promise.get_future();
+    }
+
     MockGateway mockGateway;
     HelperImpl helper{mockGateway};
 };
-
-TEST_F(HelperUTest, SetSuccess)
-{
-    const std::string methodName = "test.set";
-    const nlohmann::json params = {{"key", "value"}};
-
-    std::promise<Result<nlohmann::json>> promise;
-    promise.set_value(Result<nlohmann::json>{nlohmann::json{}});
-
-    EXPECT_CALL(mockGateway, request(methodName, params)).WillOnce(Return(ByMove(promise.get_future())));
-
-    auto result = helper.set(methodName, params);
-    EXPECT_TRUE(result);
-}
-
-TEST_F(HelperUTest, SetFailure)
-{
-    const std::string methodName = "test.set";
-    const nlohmann::json params = {{"key", "value"}};
-
-    std::promise<Result<nlohmann::json>> promise;
-    promise.set_value(Result<nlohmann::json>{Error::General});
-
-    EXPECT_CALL(mockGateway, request(methodName, params)).WillOnce(Return(ByMove(promise.get_future())));
-
-    auto result = helper.set(methodName, params);
-    EXPECT_FALSE(result);
-    EXPECT_EQ(result.error(), Error::General);
-}
 
 TEST_F(HelperUTest, InvokeSuccess)
 {
     const std::string methodName = "test.invoke";
     const nlohmann::json params = {{"key", "value"}};
 
-    EXPECT_CALL(mockGateway, send(methodName, params)).WillOnce(Return(Error::None));
+    EXPECT_CALL(mockGateway, request(methodName, params))
+        .WillOnce(Return(ByMove(readyFuture(Result<nlohmann::json>{nlohmann::json{}}))));
 
     auto result = helper.invoke(methodName, params);
     EXPECT_TRUE(result);
+}
+
+TEST_F(HelperUTest, InvokeAcceptsNullResult)
+{
+    EXPECT_CALL(mockGateway, request("test.invoke", _))
+        .WillOnce(Return(ByMove(readyFuture(Result<nlohmann::json>{nlohmann::json{nullptr}}))));
+
+    EXPECT_TRUE(helper.invoke("test.invoke", {}));
+}
+
+TEST_F(HelperUTest, InvokeSendsParametersUnchanged)
+{
+    const nlohmann::json nullParams;
+
+    EXPECT_CALL(mockGateway, request("test.invoke", nullParams))
+        .WillOnce(Return(ByMove(readyFuture(Result<nlohmann::json>{nlohmann::json{}}))));
+
+    EXPECT_TRUE(helper.invoke("test.invoke", nullParams));
+}
+
+TEST_F(HelperUTest, InvokePropagatesBackendErrorInfo)
+{
+    const ErrorInfo backendError{static_cast<int32_t>(Error::CapabilityNotPermitted), "NotPermitted"};
+
+    EXPECT_CALL(mockGateway, request("test.invoke", _))
+        .WillOnce(Return(ByMove(readyFuture(Result<nlohmann::json>{Error::CapabilityNotPermitted, backendError}))));
+
+    auto result = helper.invoke("test.invoke", {});
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), Error::CapabilityNotPermitted);
+    EXPECT_EQ(result.errorInfo().error(), backendError.error());
+    EXPECT_EQ(result.errorInfo().message(), backendError.message());
+}
+
+TEST_F(HelperUTest, InvokeReturnsTimeout)
+{
+    EXPECT_CALL(mockGateway, request("test.invoke", _))
+        .WillOnce(Return(ByMove(readyFuture(Result<nlohmann::json>{Error::Timedout}))));
+
+    auto result = helper.invoke("test.invoke", {});
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), Error::Timedout);
 }
 
 TEST_F(HelperUTest, GetSuccess)
@@ -224,51 +243,6 @@ TEST(OnPropertyChangedCallbackUTest, InvalidJson)
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Test name: HelperUTest.SetWithNonObjectParams
-// Covers: HelperImpl::set non-object params wrapped in "value"
-// Scenario type: success
-// ---------------------------------------------------------------------------
-TEST_F(HelperUTest, SetWithNonObjectParams)
-{
-    const std::string methodName = "test.set";
-    const nlohmann::json params = 42; // scalar, not object
-
-    // The helper wraps non-object params as {"value": params}
-    nlohmann::json expectedParams;
-    expectedParams["value"] = 42;
-
-    std::promise<Result<nlohmann::json>> promise;
-    promise.set_value(Result<nlohmann::json>{nlohmann::json{}});
-
-    EXPECT_CALL(mockGateway, request(methodName, expectedParams)).WillOnce(Return(ByMove(promise.get_future())));
-
-    auto result = helper.set(methodName, params);
-    EXPECT_TRUE(result);
-}
-
-// ---------------------------------------------------------------------------
-// Test name: HelperUTest.SetWithArrayParams
-// Covers: HelperImpl::set array params wrapped in "value"
-// Scenario type: success
-// ---------------------------------------------------------------------------
-TEST_F(HelperUTest, SetWithArrayParams)
-{
-    const std::string methodName = "test.set";
-    const nlohmann::json params = nlohmann::json::array({1, 2, 3});
-
-    nlohmann::json expectedParams;
-    expectedParams["value"] = params;
-
-    std::promise<Result<nlohmann::json>> promise;
-    promise.set_value(Result<nlohmann::json>{nlohmann::json{}});
-
-    EXPECT_CALL(mockGateway, request(methodName, expectedParams)).WillOnce(Return(ByMove(promise.get_future())));
-
-    auto result = helper.set(methodName, params);
-    EXPECT_TRUE(result);
-}
-
-// ---------------------------------------------------------------------------
 // Test name: HelperUTest.InvokeFailure
 // Covers: HelperImpl::invoke gateway error propagation
 // Scenario type: failure
@@ -278,7 +252,8 @@ TEST_F(HelperUTest, InvokeFailure)
     const std::string methodName = "test.invoke";
     const nlohmann::json params = {{"key", "value"}};
 
-    EXPECT_CALL(mockGateway, send(methodName, params)).WillOnce(Return(Error::NotConnected));
+    EXPECT_CALL(mockGateway, request(methodName, params))
+        .WillOnce(Return(ByMove(readyFuture(Result<nlohmann::json>{Error::NotConnected}))));
 
     auto result = helper.invoke(methodName, params);
     EXPECT_FALSE(result);

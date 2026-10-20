@@ -1,4 +1,18 @@
-## [1.1.12.rc1](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.11...v1.1.12.rc1)
+## [1.1.13](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.12...v1.1.13)
+
+### Fixed
+- `IHelper::invoke()` now waits for the backend response and returns its result. Errors such as `-40300 NotPermitted` are returned to the caller instead of being discarded. This applies to every void API (for example `Lifecycle2.close`, `Metrics.*`, `Discovery.watched`).
+- `subscribe()` now waits up to `waitTime_ms` for the subscribe acknowledgement instead of 50 ms, so a slightly slow backend no longer causes a false `Timedout`.
+
+### Changed
+- `invoke()` now blocks until the backend replies, or until `waitTime_ms` expires with `Timedout`.
+
+### Removed
+- `IHelper::set()`: unused; `invoke()` replaces it.
+- `IGateway::send()`, which sent requests without waiting for a reply; `invoke()` now uses `request()`.
+
+
+## [1.1.12](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.11...v1.1.12)
 
 ### Changed
 
