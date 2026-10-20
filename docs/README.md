@@ -118,7 +118,9 @@ graph TD
 
 The library lifecycle begins when a caller invokes `IGateway::connect()` with a populated `Firebolt::Config`. The library configures the logger, constructs the WebSocket URL (appending `RPCv2=true` for the default JSON-RPC v2 mode), starts the Asio event loop on the connection thread, and dispatches the asynchronous connection attempt. The watchdog thread starts at this point, before the handshake completes. When the handshake succeeds, the `ConnectionChangeCallback` is invoked with `connected = true` on the connection thread. Callers should issue requests and subscriptions only after that callback. The library then enters its active state.
 
-The component transitions through the following states during its lifecycle: **NotStarted** (no connection attempt made) → **Connecting** (connection attempt dispatched; Asio running; watchdog started; handshake in progress) → **Connected** (handshake complete and `ConnectionChangeCallback(true)` delivered; handling requests, responses, and event notifications) → **Disconnected** (connection closed or lost; watchdog stopped; pending requests cancelled; resources released).
+The component transitions through the following states during its lifecycle: **NotStarted** (initial state, or transport reset after an explicit `disconnect()`) → **Connecting** (connection attempt dispatched; Asio running; watchdog started; handshake in progress) → **Connected** (handshake complete and `ConnectionChangeCallback(true)` delivered; handling requests, responses, and event notifications) → **Disconnected** (remote connection closed or failed; gateway cleanup stops the watchdog and notification worker and cancels pending requests, but the Asio loop and message worker remain running).
+
+Explicit `disconnect()` stops and joins the transport workers, resets the client, and returns the transport to **NotStarted**.
 
 ```mermaid
 sequenceDiagram
