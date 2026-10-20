@@ -1,10 +1,10 @@
-name: CI Build and Test
+name: main-workflow
 
 on:
   push:
-    branches: [ main, develop, '+([0-9])\.+([0-9])\.x-maintenance', '+([0-9])\.+([0-9])-rc' ]
+    branches: [ main, develop, '*.rc' ]
   pull_request:
-    branches: [ main, develop, '+([0-9])\.+([0-9])\.x-maintenance', '+([0-9])\.+([0-9])-rc' ]
+    branches: [ main, develop, '*.rc' ]
   workflow_dispatch:
     inputs:
       protocol:
@@ -135,82 +135,19 @@ jobs:
           name: build-dir
           path: ${{ github.workspace }}/build
 
-  unit_tests:
+  trigger-L1:
     permissions:
       contents: read
       packages: read
     needs: [build_docker, build_project]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Download build directory
-        uses: actions/download-artifact@v4
-        with:
-          name: build-dir
-          path: ${{ github.workspace }}/build
-
-      - name: Run Unit Tests
-        run: |
-          chmod +x ${{ github.workspace }}/build/test/utApp
-          docker run --rm --user "$(id -u):$(id -g)" -v ${{ github.workspace }}:/workspace ${{ needs.build_docker.outputs.image_tag }} \
-            bash -c "ctest --test-dir build/test"
-
-      - name: Generate Coverage Report
-        run: |
-          docker run --rm --user "$(id -u):$(id -g)" -v ${{ github.workspace }}:/workspace ${{ needs.build_docker.outputs.image_tag }} \
-            bash -c " \
-              set -e \
-              && cd build \
-              && mkdir -p coverage \
-              && gcovr -r .. \
-                    --exclude '.*/test/.*\.h' \
-                    --exclude '.*/test/.*\.cpp' \
-                    --gcov-ignore-parse-errors=negative_hits.warn \
-                    --decisions \
-                    --medium-threshold 50 --high-threshold 75 \
-                    --html-details coverage/index.html \
-                    --cobertura coverage.cobertura.xml \
-                    --lcov coverage/coverage.info \
-            "
-
-      - name: Upload Coverage Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: ${{ github.workspace }}/build/coverage/
-
-      - name: Upload lcov artifact for coverage gate
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-lcov
-          path: ${{ github.workspace }}/build/coverage/coverage.info
-
-      - name: Code Coverage Summary Report
-        uses: irongut/CodeCoverageSummary@v1.3.0
-        with:
-          filename: build/coverage.cobertura.xml
-          badge: true
-          hide_complexity: true
-          format: markdown
-          output: both
-          thresholds: "50 75"
-          fail_below_min: false
-
-      - name: Add coverage summary to job summary
-        run: cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY
+    uses: ./.github/workflows/L1-tests.yml
+    with:
+      image_tag: ${{ needs.build_docker.outputs.image_tag }}
+    secrets: inherit
 
   coverage-gate:
     name: Coverage Gate
-    needs: [unit_tests]
+    needs: [trigger-L1]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -240,7 +177,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: coverage-lcov
+          name: artifacts-L1-transport
           path: ./coverage-lcov
 
       - name: Compare coverage to baseline
@@ -257,8 +194,8 @@ jobs:
     if: >
       github.event_name == 'push' &&
       github.ref == 'refs/heads/develop' &&
-      needs.unit_tests.result == 'success'
-    needs: [unit_tests]
+      needs.trigger-L1.result == 'success'
+    needs: [trigger-L1]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -277,7 +214,7 @@ jobs:
       - name: Download lcov artifact
         uses: actions/download-artifact@v4
         with:
-          name: coverage-lcov
+          name: artifacts-L1-transport
           path: ./coverage-lcov
 
       - name: Write new baseline JSON

@@ -37,13 +37,12 @@ class IGateway
 public:
     virtual ~IGateway();
 
-    // NOTE: onConnectionChange is invoked once with the final result on the
-    // connect() calling thread.  All subsequent callbacks (disconnect, watchdog
-    // reconnect) fire on the websocketpp IO thread.  Callers must be thread-safe.
+    // NOTE: onConnectionChange always runs on the websocketpp IO thread, so it must
+    // be thread-safe and must not call blocking APIs (get/invoke/subscribe): replies
+    // are read on that same thread and the call would just time out.
     virtual Firebolt::Error connect(const Firebolt::Config& config, ConnectionChangeCallback onConnectionChange) = 0;
     virtual Firebolt::Error disconnect() = 0;
 
-    virtual Firebolt::Error send(const std::string& method, const nlohmann::json& parameters) = 0;
     virtual std::future<Firebolt::Result<nlohmann::json>> request(const std::string& method,
                                                                   const nlohmann::json& parameters) = 0;
     virtual Firebolt::Error subscribe(const std::string& event, EventCallback callback, void* usercb) = 0;
