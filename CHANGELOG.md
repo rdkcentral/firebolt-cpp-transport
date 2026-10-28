@@ -1,7 +1,18 @@
 ## [Unreleased]
 
+Requires a **minor** version bump: `IGateway` and `IHelper` gain virtual methods (vtable change) and `Config` gains fields (layout change). Rebuild all dependants.
+
+### Added
+- Hibernation resilience for processes frozen by the container runtime (Dobby/memcr, `SIGSTOP`): wall-clock gaps longer than `Config.stopGapThreshold_ms` (default 2000, clamped to at least 4 x `watchdogCycle_ms`) are treated as stopped time
+- `Config.resumeGrace_ms` (default 5000, `0` disables): after a detected stop, pending requests and subscribe/unsubscribe acknowledgements get a grace window before timing out, covering traffic App Gateway still holds after thaw
+- `IGateway::setResumeListener(ResumeCallback)`: one listener, invoked on the notification worker thread with the stopped duration after a detected stop; gaps detected before delivery are coalesced. Non-pure with a no-op default
+- `IHelper::dispatchLocal(owner, eventName, payload)` and `SubscriptionManager::dispatch(eventName, payload)`: deliver a locally synthesized notification to one owner's subscribers through their normal callbacks, without gateway traffic. Non-pure; the default returns `Error::General`
+- `hibernationHarness` CTest (`HibernationSigstopHarness`): end-to-end `SIGSTOP`/`SIGCONT` of a forked child against a scripted gateway, with a negative control
+
 ### Changed
 - Response-header lookup is now case-insensitive, as required by HTTP; header values are unchanged.
+- `IGateway` is now exported from the shared library, so consumers can implement or mock it
+- `Config.waitTime_ms` and the subscribe/unsubscribe acknowledgement wait are measured in **active** (non-stopped) time; time spent stopped no longer causes spurious `Timedout`
 
 ## [1.1.12](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.11...v1.1.12)
 

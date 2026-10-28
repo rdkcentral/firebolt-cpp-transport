@@ -17,9 +17,11 @@
  */
 
 #include "firebolt/gateway.h"
+#include "active_clock.h"
 #include "firebolt/logger.h"
 #include "firebolt/transport_version.h"
 #include "firebolt/types.h"
+#include "gateway_testing.h"
 #include "transport.h"
 #include "utils.h"
 #include <any>
@@ -44,8 +46,10 @@ namespace Firebolt::Transport
 // Runtime configuration used by client/server watchdog and provider wait
 static unsigned runtime_waitTime_ms = 3000;
 static unsigned watchdog_interval_ms = 500;
+constexpr std::chrono::milliseconds kAckTimeout{50};
+constexpr std::chrono::milliseconds kAckPollSlice{10};
+constexpr const char* kResumeEventName = "<transport.resume>";
 
-using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
 using MessageID = uint32_t;
 
 IGateway::~IGateway() = default;
@@ -62,15 +66,16 @@ class Client
 {
     struct Caller
     {
-        Caller(MessageID id_, std::string method_)
+        Caller(MessageID id_, std::string method_, std::chrono::milliseconds activeAtEnqueue_)
             : id(id_),
-              method(std::move(method_))
+              method(std::move(method_)),
+              activeAtEnqueue(activeAtEnqueue_)
         {
         }
         const MessageID id;
         const std::string method;
         std::promise<Result<nlohmann::json>> promise;
-        Timestamp timestamp = std::chrono::steady_clock::now();
+        const std::chrono::milliseconds activeAtEnqueue;
     };
 
     std::map<MessageID, std::shared_ptr<Caller>> queue;
@@ -79,10 +84,12 @@ class Client
     mutable std::mutex invokes_mtx;
 
     IClientTransport& transport_;
+    ActiveClock& clock_;
 
 public:
-    Client(IClientTransport& transport)
-        : transport_(transport)
+    Client(IClientTransport& transport, ActiveClock& clock)
+        : transport_(transport),
+          clock_(clock)
     {
     }
 
@@ -97,11 +104,13 @@ public:
             // been erased yet, so all promises remain fulfillable.
             timedOut.reserve(queue.size());
             queueSizeSnapshot = queue.size();
-            auto now = std::chrono::steady_clock::now();
+            const std::chrono::milliseconds activeNow = clock_.activeNow();
+            const std::chrono::milliseconds graceUntil = clock_.graceUntil();
+            const std::chrono::milliseconds waitTime{runtime_waitTime_ms};
             for (auto it = queue.begin(); it != queue.end();)
             {
-                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
-                    runtime_waitTime_ms)
+                // A grace window opened by a resume extends every deadline that would end inside it.
+                if (activeNow > std::max(it->second->activeAtEnqueue + waitTime, graceUntil))
                 {
                     // Capture the Caller pointer under the lock. timedOut.push_back() may allocate;
                     // if it throws, the entry remains in the queue because we erase only after
@@ -171,7 +180,7 @@ public:
         {
             id = transport_.getNextMessageID();
         }
-        std::shared_ptr<Caller> c = std::make_shared<Caller>(id, method);
+        std::shared_ptr<Caller> c = std::make_shared<Caller>(id, method, clock_.activeNow());
         auto future = c->promise.get_future();
 
         std::size_t pendingAfterEnqueue = 0;
@@ -298,9 +307,16 @@ class Server
     std::condition_variable notificationQueueCv_;
     std::thread notificationWorkerThread_;
     std::atomic<bool> stopNotificationWorker_{false};
+    std::mutex workerLifecycle_mtx_;
+    std::mutex workerStop_mtx_;
+    bool workerJoining_ = false;
 
 public:
     Server() = default;
+
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    bool testStopRequested() const { return stopNotificationWorker_; }
+#endif
 
     virtual ~Server()
     {
@@ -314,24 +330,53 @@ public:
     void stopNotificationWorker()
     {
         FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] stop requested");
-        stopNotificationWorker_ = true;
+        std::lock_guard<std::mutex> stopLock(workerStop_mtx_);
+        std::thread worker;
+        {
+            std::lock_guard<std::mutex> lifecycleLock(workerLifecycle_mtx_);
+            workerJoining_ = true;
+            {
+                std::lock_guard<std::mutex> queueLock(notificationQueueMutex_);
+                stopNotificationWorker_ = true;
+            }
+            worker = std::move(notificationWorkerThread_);
+        }
         notificationQueueCv_.notify_all();
 
-        if (notificationWorkerThread_.joinable())
+        // Callbacks may subscribe while draining; never hold their lifecycle lock across join.
+        if (worker.joinable())
         {
-            notificationWorkerThread_.join();
+            worker.join();
             FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] joined");
+        }
+        {
+            std::lock_guard<std::mutex> lifecycleLock(workerLifecycle_mtx_);
+            workerJoining_ = false;
         }
     }
 
     void ensureNotificationWorkerStarted()
     {
-        if (!notificationWorkerThread_.joinable())
+        std::lock_guard<std::mutex> lifecycleLock(workerLifecycle_mtx_);
+        if (!workerJoining_ && !notificationWorkerThread_.joinable())
         {
             stopNotificationWorker_ = false;
             notificationWorkerThread_ = std::thread(&Server::processQueuedNotifications, this);
             FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] started");
         }
+    }
+
+    // Queues an internal (non-JSON-RPC) callback to run on the notification worker.
+    void post(const std::string& name, EventCallback lambda)
+    {
+        ensureNotificationWorkerStarted();
+        {
+            std::lock_guard<std::mutex> lock(notificationQueueMutex_);
+            QueuedNotification item;
+            item.callbacks.push_back(CallbackDataEvent{name, std::move(lambda), nullptr});
+            notificationQueue_.push(std::move(item));
+        }
+        notificationQueueCv_.notify_one();
     }
 
     void processQueuedNotifications()
@@ -508,6 +553,11 @@ class GatewayImpl : public IGateway, private IClientTransport
 private:
     ConnectionChangeCallback connectionChangeListener;
     std::mutex connectionChangeListener_mtx;
+    ActiveClock clock_;
+    std::mutex resume_mtx_;
+    ResumeCallback resumeListener_;
+    std::chrono::milliseconds pendingResume_{0};
+    bool resumeQueued_ = false;
     Transport transport;
     Client client;
     Server server;
@@ -531,7 +581,7 @@ private:
 
 public:
     GatewayImpl()
-        : client(*this),
+        : client(*this, clock_),
           server(),
           watchdogRunning(false),
           legacyRPCv1(false)
@@ -571,6 +621,18 @@ public:
         runtime_waitTime_ms = cfg.waitTime_ms;
         legacyRPCv1 = cfg.legacyRPCv1;
         watchdog_interval_ms = cfg.watchdogCycle_ms;
+
+        const std::chrono::milliseconds gapThreshold =
+            ActiveClock::effectiveGapThreshold(cfg.stopGapThreshold_ms, cfg.watchdogCycle_ms);
+        if (gapThreshold.count() != static_cast<long long>(cfg.stopGapThreshold_ms))
+        {
+            FIREBOLT_LOG_WARNING("Gateway", "[connect] stopGapThreshold_ms=%u clamped to %lld (4 x watchdogCycle_ms=%u)",
+                                 cfg.stopGapThreshold_ms, static_cast<long long>(gapThreshold.count()),
+                                 cfg.watchdogCycle_ms);
+        }
+        clock_.setGapThreshold(gapThreshold);
+        clock_.setResumeGrace(std::chrono::milliseconds(cfg.resumeGrace_ms));
+        clock_.reset();
 
         FIREBOLT_LOG_NOTICE("Gateway", "[connect] config waitTime_ms=%u watchdog_interval_ms=%u headers=%zu",
                             runtime_waitTime_ms, watchdog_interval_ms, cfg.headers.size());
@@ -647,18 +709,7 @@ public:
                                 break;
                             }
                             lock.unlock();
-                            try
-                            {
-                                client.checkPromises();
-                            }
-                            catch (const std::exception& e)
-                            {
-                                FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw: %s", e.what());
-                            }
-                            catch (...)
-                            {
-                                FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
-                            }
+                            watchdogTick();
                             lock.lock();
                         }
                     });
@@ -729,8 +780,7 @@ public:
         FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] waiting for subscribe ACK for '%s'...", event.c_str());
         auto t0_sub = std::chrono::steady_clock::now();
         auto future_sub = request(event, params, id);
-        constexpr auto kSubscribeAckTimeout = std::chrono::milliseconds(50);
-        if (future_sub.wait_for(kSubscribeAckTimeout) != std::future_status::ready)
+        if (!waitForAck(future_sub))
         {
             FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' timed out after %lld ms", event.c_str(),
                                static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -807,9 +857,8 @@ public:
                            event.c_str(), runtime_waitTime_ms);
         auto t0_unsub = std::chrono::steady_clock::now();
         auto future_unsub = request(event, params);
-        constexpr auto kUnsubscribeAckTimeout = std::chrono::milliseconds(50);
         long long unsub_ms = 0;
-        if (future_unsub.wait_for(kUnsubscribeAckTimeout) == std::future_status::ready)
+        if (waitForAck(future_unsub))
         {
             unsub_ms =
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
@@ -986,6 +1035,97 @@ private:
         return transport.getResponseHeader(headerName);
     }
 
+public:
+    void setResumeListener(ResumeCallback listener) override
+    {
+        std::lock_guard<std::mutex> lock(resume_mtx_);
+        resumeListener_ = std::move(listener);
+    }
+
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    void testSetTimeSource(TimeSource source) { clock_.setTimeSource(std::move(source)); }
+    void testWatchdogTick() { watchdogTick(); }
+    std::chrono::milliseconds testGapThreshold() const { return clock_.gapThreshold(); }
+    void testStopNotificationWorker() { server.stopNotificationWorker(); }
+    bool testNotificationWorkerStopRequested() const { return server.testStopRequested(); }
+#endif
+
+private:
+    // Waits for a subscribe/unsubscribe acknowledgement, counting only active time so a
+    // process stop during the wait does not consume the budget.
+    bool waitForAck(std::future<Firebolt::Result<nlohmann::json>>& future)
+    {
+        const std::chrono::milliseconds budget = std::max(kAckTimeout, clock_.graceRemaining());
+        const std::chrono::milliseconds start = clock_.activeNow();
+        while (future.wait_for(kAckPollSlice) != std::future_status::ready)
+        {
+            if (clock_.activeNow() - start >= budget)
+            {
+                return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+            }
+        }
+        return true;
+    }
+
+    // Accumulates stopped time and queues at most one resume dispatch; further gaps detected
+    // before it runs are coalesced into it.
+    void dispatchResumeIfStopped()
+    {
+        const std::chrono::milliseconds stopped = clock_.takeStoppedTime();
+        if (stopped <= std::chrono::milliseconds(0))
+        {
+            return;
+        }
+        FIREBOLT_LOG_NOTICE("Gateway", "[resume] process stop detected, stoppedFor=%lld ms",
+                            static_cast<long long>(stopped.count()));
+        {
+            std::lock_guard<std::mutex> lock(resume_mtx_);
+            pendingResume_ += stopped;
+            if (resumeQueued_ || !resumeListener_)
+            {
+                return;
+            }
+            resumeQueued_ = true;
+        }
+        server.post(kResumeEventName, [this](void* /*usercb*/, const nlohmann::json& /*params*/) { deliverResume(); });
+    }
+
+    void deliverResume()
+    {
+        ResumeCallback listener;
+        std::chrono::milliseconds stoppedFor{0};
+        {
+            std::lock_guard<std::mutex> lock(resume_mtx_);
+            listener = resumeListener_;
+            stoppedFor = pendingResume_;
+            pendingResume_ = std::chrono::milliseconds(0);
+            resumeQueued_ = false;
+        }
+        if (listener && stoppedFor > std::chrono::milliseconds(0))
+        {
+            FIREBOLT_LOG_DEBUG("Gateway", "[resume] invoking listener, stoppedFor=%lld ms",
+                               static_cast<long long>(stoppedFor.count()));
+            listener(stoppedFor);
+        }
+    }
+
+    void watchdogTick()
+    {
+        try
+        {
+            client.checkPromises();
+            dispatchResumeIfStopped();
+        }
+        catch (const std::exception& e)
+        {
+            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw: %s", e.what());
+        }
+        catch (...)
+        {
+            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
+        }
+    }
+
     void cleanupInternalState()
     {
         std::lock_guard<std::mutex> lock(cleanup_mtx);
@@ -1023,5 +1163,32 @@ IGateway& GetGatewayInstance()
     static GatewayImpl instance;
     return instance;
 }
+
+#ifdef FIREBOLT_TRANSPORT_TESTING
+void testSetGatewayTimeSource(TimeSource source)
+{
+    static_cast<GatewayImpl&>(GetGatewayInstance()).testSetTimeSource(std::move(source));
+}
+
+void testRunGatewayWatchdogTick()
+{
+    static_cast<GatewayImpl&>(GetGatewayInstance()).testWatchdogTick();
+}
+
+std::chrono::milliseconds testGatewayGapThreshold()
+{
+    return static_cast<GatewayImpl&>(GetGatewayInstance()).testGapThreshold();
+}
+
+void testStopGatewayNotificationWorker()
+{
+    static_cast<GatewayImpl&>(GetGatewayInstance()).testStopNotificationWorker();
+}
+
+bool testGatewayNotificationWorkerStopRequested()
+{
+    return static_cast<GatewayImpl&>(GetGatewayInstance()).testNotificationWorkerStopRequested();
+}
+#endif
 
 } // namespace Firebolt::Transport

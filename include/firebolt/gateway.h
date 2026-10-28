@@ -21,6 +21,7 @@
 #include "firebolt/config.h"
 #include "firebolt/transport_export.h"
 #include "firebolt/types.h"
+#include <chrono>
 #include <functional>
 #include <future>
 #include <nlohmann/json.hpp>
@@ -31,8 +32,9 @@ namespace Firebolt::Transport
 {
 using EventCallback = std::function<void(void* usercb, const nlohmann::json& params)>;
 using ConnectionChangeCallback = std::function<void(const bool connected, const Firebolt::Error error)>;
+using ResumeCallback = std::function<void(std::chrono::milliseconds stoppedFor)>;
 
-class IGateway
+class FIREBOLTTRANSPORT_EXPORT IGateway
 {
 public:
     virtual ~IGateway();
@@ -55,6 +57,18 @@ public:
      * @return The header value if present, otherwise std::nullopt.
      */
     virtual std::optional<std::string> getResponseHeader(const std::string& headerName) = 0;
+
+    /**
+     * @brief Register a listener invoked after the process resumes from a stop.
+     *
+     * While connected, the transport detects intervals in which the process did
+     * not run (e.g. container hibernation) and invokes the listener once per
+     * detected resume with the total stopped duration since the last dispatch.
+     * The listener runs on the notification worker thread, like event callbacks,
+     * and may issue requests. Setting a listener replaces the previous one;
+     * nullptr clears it.
+     */
+    virtual void setResumeListener(ResumeCallback /*listener*/) {}
 };
 
 FIREBOLTTRANSPORT_EXPORT IGateway& GetGatewayInstance();

@@ -74,3 +74,35 @@ if(DISCOVER_UT)
             ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/src"
     )
 endif()
+
+# End-to-end freeze harness: real SIGSTOP/SIGCONT of a forked child using the transport.
+# Plain executable (no gtest): it forks before any thread exists.
+set(HIBERNATION_HARNESS_APP hibernationHarness)
+
+add_executable(${HIBERNATION_HARNESS_APP} integration/hibernationHarness.cpp)
+
+target_link_libraries(${HIBERNATION_HARNESS_APP}
+    PRIVATE
+        FireboltTransport
+        nlohmann_json::nlohmann_json
+)
+
+target_include_directories(${HIBERNATION_HARNESS_APP}
+    PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/>
+        $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/src>
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/test/>
+)
+
+set_target_properties(${HIBERNATION_HARNESS_APP} PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    BUILD_RPATH "${CMAKE_BINARY_DIR}/src"
+)
+
+add_test(NAME HibernationSigstopHarness COMMAND ${HIBERNATION_HARNESS_APP})
+set_tests_properties(HibernationSigstopHarness PROPERTIES
+    TIMEOUT 60
+    LABELS "integration;hibernation"
+    ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/src"
+)

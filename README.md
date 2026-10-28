@@ -81,11 +81,38 @@ For cross-compilation against a sysroot (e.g. for device targets):
 SYSROOT_PATH=/path/to/sysroot ./build.sh --release
 ```
 
+## Hibernation / Process Freeze
+
+When the hosting container is hibernated the process is frozen (e.g. `SIGSTOP`, cgroup freezer) and later resumed. The transport detects this from the gap in its watchdog clock and adapts:
+
+| `Config` field | Default | Meaning |
+|---|---|---|
+| `waitTime_ms` | 3000 | Request timeout, counted in **active** time only; stopped time is excluded |
+| `stopGapThreshold_ms` | 2000 | Wall-clock gap treated as a stop. Clamped to at least 4 x `watchdogCycle_ms` |
+| `resumeGrace_ms` | 5000 | After a detected stop, pending requests and subscribe acknowledgements are not failed before this much active time has passed. `0` disables |
+
+```cpp
+gw.setResumeListener([](std::chrono::milliseconds stoppedFor) {
+    // Runs on the notification worker thread; may issue requests (e.g. re-query state).
+});
+gw.setResumeListener(nullptr); // clear
+```
+
+The transport is lifecycle-agnostic: it only reports that a stop happened. Reconciling application state (e.g. lifecycle) is the client library's job.
+
+Tests: `test/unit/hibernationTest.cpp` and `activeClockTest.cpp` use an injected clock (deterministic); `test/integration/hibernationHarness.cpp` freezes a real forked child with `SIGSTOP`/`SIGCONT`. Both run as part of `./test.sh`. To run only the harness after a build:
+
+```bash
+docker run --rm -v $PWD:/workspace firebolt-cpp-transport-ci:local \
+    bash -c "ctest --test-dir build-dev/test -L hibernation --output-on-failure"
+```
+
 ## Project Layout
 ```
 include/firebolt/   public headers (gateway.h, helpers.h, json_types.h, types.h, logger.h)
 src/                implementation
 test/unit/          GTest unit tests (*Test.cpp)
+test/integration/   integration tests and the SIGSTOP hibernation harness
 .github/Dockerfile  CI image definition
 ```
 
@@ -152,4 +179,3 @@ Example:
 export FIREBOLT_TRANSPORT_LOG_LEVEL=debug
 export FIREBOLT_TRANSPORT_LOG_FILE=/opt/logs/firebolt-transport.log
 ```
-

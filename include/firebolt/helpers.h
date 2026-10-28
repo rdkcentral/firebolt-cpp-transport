@@ -102,6 +102,17 @@ public:
     virtual Result<void> unsubscribe(SubscriptionId id) = 0;
     virtual void unsubscribeAll(void* owner) = 0;
 
+    /**
+     * Delivers payload, as if it had arrived from the gateway, to every subscription of
+     * eventName registered by owner. Nothing is sent on the wire. Callbacks run on the calling
+     * thread. Non-pure: the default returns Error::General.
+     */
+    virtual Result<void> dispatchLocal(void* /*owner*/, const std::string& /*eventName*/,
+                                       const nlohmann::json& /*payload*/)
+    {
+        return Result<void>{Error::General};
+    }
+
 private:
     virtual Result<nlohmann::json> getJson(const std::string& methodName, const nlohmann::json& parameters) = 0;
 };
@@ -124,6 +135,8 @@ public:
 
     Result<void> unsubscribe(SubscriptionId id);
     void unsubscribeAll();
+    // Delivers payload locally to this owner's subscribers of eventName; see IHelper::dispatchLocal.
+    Result<void> dispatch(const std::string& eventName, const nlohmann::json& payload);
 
 private:
     IHelper& helper_;
