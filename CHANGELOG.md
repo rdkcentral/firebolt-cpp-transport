@@ -1,3 +1,8 @@
+## [Unreleased]
+
+### Changed
+- Response-header lookup is now case-insensitive, as required by HTTP; header values are unchanged.
+
 ## [1.1.12](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.11...v1.1.12)
 
 ### Changed
