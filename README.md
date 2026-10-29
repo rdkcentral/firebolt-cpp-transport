@@ -45,6 +45,12 @@ gw.unsubscribe("module.onEvent", userdata);
 gw.disconnect();
 ```
 
+Local subscribers using the same exact event name share one upstream
+subscription, including mixed-case module names such as
+`Lifecycle2.onStateChanged`. Removing one local subscriber retains upstream
+delivery until the last subscriber is removed. Use the same wire spelling for
+subscribe, unsubscribe, and notifications; event names are not case-folded.
+
 ### `IHelper` — typed wrapper over IGateway
 ```cpp
 IHelper& helper = Firebolt::Helpers::GetHelperInstance();

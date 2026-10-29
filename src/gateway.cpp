@@ -528,18 +528,11 @@ public:
 
     bool isAnySubscriber(const std::string& method)
     {
-        std::string key = method;
-        size_t dotPos = key.find('.');
-        if (dotPos != std::string::npos)
-        {
-            std::transform(key.begin(), key.begin() + dotPos, key.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
-        }
         std::lock_guard lck(eventMap_mtx);
 
         for (auto& callback : eventList)
         {
-            if (callback.eventName == key)
+            if (callback.eventName == method)
             {
                 return true;
             }

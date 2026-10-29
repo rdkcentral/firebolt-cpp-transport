@@ -440,6 +440,40 @@ TEST_F(GatewayUTest, MultipleSubscriptions)
     gateway.unsubscribe("test.onEvent", &eventPromise2);
 }
 
+TEST_F(GatewayUTest, MixedCaseSubscriptionsShareUpstreamUntilLastUnsubscribe)
+{
+    std::atomic<unsigned> listens{0};
+    std::atomic<unsigned> unlistens{0};
+    m_messageHandler = [this, &listens, &unlistens](connection_hdl handle, server::message_ptr message)
+    {
+        const auto request = nlohmann::json::parse(message->get_payload());
+        if (request.at("params").at("listen").get<bool>())
+        {
+            ++listens;
+        }
+        else
+        {
+            ++unlistens;
+        }
+        const nlohmann::json response = {{"jsonrpc", "2.0"},
+                                         {"id", request.at("id")},
+                                         {"result", nlohmann::json::object()}};
+        m_server.send(handle, response.dump(), websocketpp::frame::opcode::text);
+    };
+
+    auto& gateway = connectAndWait();
+    int first = 0;
+    int second = 0;
+    const auto callback = [](void*, const nlohmann::json&) {};
+    EXPECT_EQ(gateway.subscribe("Lifecycle2.onStateChanged", callback, &first), Firebolt::Error::None);
+    EXPECT_EQ(gateway.subscribe("Lifecycle2.onStateChanged", callback, &second), Firebolt::Error::None);
+    EXPECT_EQ(listens.load(), 1u) << "The second local listener must share the upstream subscription";
+    EXPECT_EQ(gateway.unsubscribe("Lifecycle2.onStateChanged", &first), Firebolt::Error::None);
+    EXPECT_EQ(unlistens.load(), 0u) << "The remaining local listener still needs upstream events";
+    EXPECT_EQ(gateway.unsubscribe("Lifecycle2.onStateChanged", &second), Firebolt::Error::None);
+    EXPECT_EQ(unlistens.load(), 1u);
+}
+
 TEST_F(GatewayUTest, UnsubscribeSpecific)
 {
     IGateway& gateway = connectAndWait();
