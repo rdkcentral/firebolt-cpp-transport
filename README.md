@@ -72,6 +72,26 @@ helper.unsubscribe("device.onNameChanged", id);
 
 ## Building
 
+### Test-only ACK wait observation
+
+`-DFIREBOLT_TRANSPORT_ACK_OBSERVER=ON` enables an internal Linux test observer;
+it is **OFF by default and must not be enabled for release builds**. No public
+SDK API is added. A test controller may pass an inherited nonblocking pipe
+descriptor in `FIREBOLT_ACK_OBSERVER_FD`. Without that variable, the observer
+build emits nothing. Invalid descriptors or incomplete writes fail explicitly.
+
+Each subscribe/unsubscribe wait emits newline-delimited JSON entry/exit records
+with the wire operation ID, listen flag, original active-time budget,
+CLOCK_MONOTONIC start/observation timestamps and ready-future outcome. The
+controller owns SIGSTOP/SIGCONT and must independently prove that all threads
+stopped before the original budget expired, with no exit record at stop. Entry
+is observation, not a blocking barrier; no timeout or poll slice is extended.
+Unsubscribe's ordinary success return on ACK timeout is unchanged: an exit
+record with `ready: false` cannot qualify ACK receipt.
+
+Observer SDK artifacts require separate provenance. Their local test evidence
+does not qualify production release builds, actual Dobby/memcr or GUI survival.
+
 Dependencies (GTest, nlohmann_json, websocketpp, gcovr) are only available inside the CI Docker image. Use the helper scripts:
 
 ```bash

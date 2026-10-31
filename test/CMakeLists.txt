@@ -42,6 +42,9 @@ target_link_options(${UNIT_TESTS_APP} PRIVATE --coverage)
 # target that happens to link FireboltTransport during the test build.
 target_compile_definitions(FireboltTransport PRIVATE FIREBOLT_TRANSPORT_TESTING=1)
 target_compile_definitions(${UNIT_TESTS_APP} PRIVATE FIREBOLT_TRANSPORT_TESTING=1)
+if(FIREBOLT_TRANSPORT_ACK_OBSERVER)
+    target_compile_definitions(${UNIT_TESTS_APP} PRIVATE FIREBOLT_TRANSPORT_ACK_OBSERVER=1)
+endif()
 
 target_link_libraries(${UNIT_TESTS_APP}
     PRIVATE

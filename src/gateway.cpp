@@ -17,6 +17,7 @@
  */
 
 #include "firebolt/gateway.h"
+#include "ack_observer.h"
 #include "active_clock.h"
 #include "firebolt/logger.h"
 #include "firebolt/transport_version.h"
@@ -773,7 +774,7 @@ public:
         FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] waiting for subscribe ACK for '%s'...", event.c_str());
         auto t0_sub = std::chrono::steady_clock::now();
         auto future_sub = request(event, params, id);
-        if (!waitForAck(future_sub))
+        if (!waitForAck(future_sub, id, true))
         {
             FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' timed out after %lld ms", event.c_str(),
                                static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -849,9 +850,10 @@ public:
         FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] sending unsubscribe for '%s', waiting for ACK (waitTime_ms=%u)...",
                            event.c_str(), runtime_waitTime_ms);
         auto t0_unsub = std::chrono::steady_clock::now();
-        auto future_unsub = request(event, params);
+        const MessageID id = transport.getNextMessageID();
+        auto future_unsub = request(event, params, id);
         long long unsub_ms = 0;
-        if (waitForAck(future_unsub))
+        if (waitForAck(future_unsub, id, false))
         {
             unsub_ms =
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
@@ -1046,17 +1048,41 @@ public:
 private:
     // Waits for a subscribe/unsubscribe acknowledgement, counting only active time so a
     // process stop during the wait does not consume the budget.
-    bool waitForAck(std::future<Firebolt::Result<nlohmann::json>>& future)
+    bool waitForAck(std::future<Firebolt::Result<nlohmann::json>>& future, [[maybe_unused]] MessageID id,
+                    [[maybe_unused]] bool listen)
     {
+#ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
+        const int observer = Testing::ackObserverFd();
+        const auto startedNs = Testing::ackObserverNow();
+#endif
         const std::chrono::milliseconds budget = std::max(kAckTimeout, clock_.graceRemaining());
         const std::chrono::milliseconds start = clock_.activeNow();
+#ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
+        if (observer >= 0)
+        {
+            Testing::observeAck(observer, "entered", id, listen, budget.count(), startedNs, false);
+        }
+#endif
         while (future.wait_for(kAckPollSlice) != std::future_status::ready)
         {
             if (clock_.activeNow() - start >= budget)
             {
-                return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+                const bool ready = future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+#ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
+                if (observer >= 0)
+                {
+                    Testing::observeAck(observer, "exited", id, listen, budget.count(), startedNs, ready);
+                }
+#endif
+                return ready;
             }
         }
+#ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
+        if (observer >= 0)
+        {
+            Testing::observeAck(observer, "exited", id, listen, budget.count(), startedNs, true);
+        }
+#endif
         return true;
     }
 
