@@ -23,6 +23,7 @@
 #include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 using namespace Firebolt;
 using namespace Firebolt::Helpers;
@@ -723,6 +724,17 @@ TEST_F(HelperUTest, WeakPtrGuard_NotificationDroppedAfterUnsubscribeById)
 
 namespace
 {
+void throwingDispatchCallback(void*, const nlohmann::json&)
+{
+    throw std::runtime_error("subscriber failure");
+}
+
+void countingDispatchCallback(void* context, const nlohmann::json&)
+{
+    auto* subscription = static_cast<SubscriptionData*>(context);
+    ++*std::any_cast<int*>(subscription->notification);
+}
+
 // Implements only the pure virtuals, so dispatchLocal falls back to the IHelper default.
 class MinimalHelper : public IHelper
 {
@@ -777,6 +789,24 @@ TEST_F(HelperUTest, DispatchLocalDeliversToOwnerSubscribersOfEvent)
     EXPECT_TRUE(result);
     std::sort(delivered.begin(), delivered.end());
     EXPECT_EQ(delivered, (std::vector<std::string>{"a1:7", "a2:7"}));
+}
+
+TEST_F(HelperUTest, DispatchLocalContinuesAfterSubscriberThrows)
+{
+    EXPECT_CALL(mockGateway, subscribe(_, _, _)).WillRepeatedly(Return(Error::None));
+    EXPECT_CALL(mockGateway, unsubscribe(_, _)).WillRepeatedly(Return(Error::None));
+
+    int owner = 0;
+    int delivered = 0;
+    IHelper& ihelper = helper;
+    ASSERT_TRUE(ihelper.subscribe(&owner, "test.onEvent", std::any{}, throwingDispatchCallback));
+    ASSERT_TRUE(ihelper.subscribe(&owner, "test.onEvent", std::any{&delivered}, countingDispatchCallback));
+
+    auto result = ihelper.dispatchLocal(&owner, "test.onEvent", nlohmann::json::object());
+
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), Error::General);
+    EXPECT_EQ(delivered, 1);
 }
 
 // Covers: HelperImpl::dispatchLocal with no matching subscribers succeeds and delivers nothing

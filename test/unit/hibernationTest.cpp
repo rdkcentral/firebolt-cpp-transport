@@ -21,6 +21,7 @@
 #include "unit/scriptedGateway.h"
 #include "unit/testClock.h"
 #include <algorithm>
+#include <condition_variable>
 #include <csignal>
 #include <future>
 #include <gtest/gtest.h>
@@ -131,6 +132,9 @@ protected:
     Testing::JumpClock jumpClock_;
     Testing::ManualClock frozenClock_;
     ScriptedGateway server_;
+    std::atomic<unsigned> frozenClockSamples_{0};
+    std::mutex frozenClockSamplesMutex_;
+    std::condition_variable frozenClockSamplesCv_;
 
     void SetUp() override { ASSERT_TRUE(server_.start()) << "ScriptedGateway failed to start"; }
 
@@ -150,6 +154,44 @@ protected:
         cfg.resumeGrace_ms = resumeGrace_ms;
         cfg.log.level = Firebolt::LogLevel::Debug;
         return cfg;
+    }
+
+    void setObservedFrozenClock()
+    {
+        frozenClockSamples_.store(0);
+        auto source = frozenClock_.source();
+        testSetGatewayTimeSource(
+            [this, source = std::move(source)]() mutable
+            {
+                const auto now = source();
+                frozenClockSamples_.fetch_add(1);
+                frozenClockSamplesCv_.notify_all();
+                return now;
+            });
+    }
+
+    bool waitForAckWaitToStart()
+    {
+        std::unique_lock<std::mutex> lock(frozenClockSamplesMutex_);
+        return frozenClockSamplesCv_.wait_for(lock, kReadyTimeout, [this] { return frozenClockSamples_.load() >= 3; });
+    }
+
+    bool waitForFrozenClockSampleAfter(unsigned previousSampleCount)
+    {
+        std::unique_lock<std::mutex> lock(frozenClockSamplesMutex_);
+        return frozenClockSamplesCv_.wait_for(lock, kReadyTimeout, [this, previousSampleCount]
+                                              { return frozenClockSamples_.load() > previousSampleCount; });
+    }
+
+    void requireAckWaitStarted(std::future<Firebolt::Error>& pending, const std::string& event)
+    {
+        if (waitForAckWaitToStart())
+        {
+            return;
+        }
+        server_.release(event);
+        EXPECT_EQ(pending.wait_for(kReadyTimeout), std::future_status::ready);
+        FAIL() << "ACK wait did not reach its start sample";
     }
 
     // Advances the jump clock in sub-threshold steps, sampling after each, so all of it counts as active time.
@@ -424,14 +466,17 @@ TEST_F(HibernationUTest, SubscribeAckHeldAcrossStopSucceeds)
 TEST_F(HibernationUTest, SubscribeMissingAckTimesOut)
 {
     server_.holdMethod("test.onEvent");
-    IGateway& gateway = connectAndWait(makeConfig());
-    testSetGatewayTimeSource(frozenClock_.source());
+    Firebolt::Config cfg = makeConfig(60);
+    cfg.watchdogCycle_ms = 60000;
+    IGateway& gateway = connectAndWait(cfg);
+    setObservedFrozenClock();
 
     auto pending = std::async(std::launch::async, [&gateway, this]()
                               { return gateway.subscribe("test.onEvent", [](void*, const nlohmann::json&) {}, this); });
     ASSERT_TRUE(server_.waitForRequest("test.onEvent", 1, kReadyTimeout));
+    requireAckWaitStarted(pending, "test.onEvent");
 
-    frozenClock_.advance(std::chrono::milliseconds(60));
+    frozenClock_.advance(std::chrono::milliseconds(61));
     ASSERT_EQ(pending.wait_for(kReadyTimeout), std::future_status::ready);
     EXPECT_EQ(pending.get(), Firebolt::Error::Timedout);
 
@@ -476,14 +521,17 @@ TEST_F(HibernationUTest, UnsubscribeAckHeldAcrossStopSucceeds)
 // ---------------------------------------------------------------------------
 TEST_F(HibernationUTest, UnsubscribeMissingAckReturnsAfterActiveTimeout)
 {
-    IGateway& gateway = connectAndWait(makeConfig());
+    Firebolt::Config cfg = makeConfig();
+    cfg.watchdogCycle_ms = 60000;
+    IGateway& gateway = connectAndWait(cfg);
     ASSERT_EQ(gateway.subscribe("test.onEvent", [](void*, const nlohmann::json&) {}, this), Firebolt::Error::None);
     server_.holdMethod("test.onEvent");
-    testSetGatewayTimeSource(frozenClock_.source());
+    setObservedFrozenClock();
 
     auto pending =
         std::async(std::launch::async, [&gateway, this]() { return gateway.unsubscribe("test.onEvent", this); });
     ASSERT_TRUE(server_.waitForRequest("test.onEvent", 2, kReadyTimeout));
+    requireAckWaitStarted(pending, "test.onEvent");
 
     frozenClock_.advance(std::chrono::milliseconds(60));
     ASSERT_EQ(pending.wait_for(kReadyTimeout), std::future_status::ready);
@@ -638,6 +686,39 @@ TEST_F(HibernationUTest, SubscribeLateAckDuringGraceSucceeds)
     EXPECT_EQ(gateway.unsubscribe("test.onEvent", this), Firebolt::Error::None);
 }
 
+TEST_F(HibernationUTest, SubscribeAckWaitUsesGraceOpenedDuringWait)
+{
+    server_.holdMethod("test.onEvent");
+    Firebolt::Config cfg = makeConfig(3000, 5000);
+    cfg.watchdogCycle_ms = 1000;
+    IGateway& gateway = connectAndWait(cfg);
+    setObservedFrozenClock();
+
+    auto pending = std::async(std::launch::async, [&gateway, this]()
+                              { return gateway.subscribe("test.onEvent", [](void*, const nlohmann::json&) {}, this); });
+    ASSERT_TRUE(server_.waitForRequest("test.onEvent", 1, kReadyTimeout));
+    requireAckWaitStarted(pending, "test.onEvent");
+
+    unsigned sampleCount = frozenClockSamples_.load();
+    frozenClock_.advance(std::chrono::milliseconds(40));
+    ASSERT_TRUE(waitForFrozenClockSampleAfter(sampleCount));
+
+    sampleCount = frozenClockSamples_.load();
+    frozenClock_.advance(std::chrono::milliseconds(10000));
+    ASSERT_TRUE(waitForFrozenClockSampleAfter(sampleCount));
+
+    sampleCount = frozenClockSamples_.load();
+    frozenClock_.advance(std::chrono::milliseconds(100));
+    ASSERT_TRUE(waitForFrozenClockSampleAfter(sampleCount));
+    EXPECT_EQ(pending.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout)
+        << "subscribe timed out using its pre-resume budget instead of the active grace deadline";
+
+    server_.release("test.onEvent");
+    ASSERT_EQ(pending.wait_for(kReadyTimeout), std::future_status::ready);
+    EXPECT_EQ(pending.get(), Firebolt::Error::None);
+    EXPECT_EQ(gateway.unsubscribe("test.onEvent", this), Firebolt::Error::None);
+}
+
 // Resume-listener tests use a long watchdog cycle so only explicit testRunGatewayWatchdogTick() calls
 // sample and dispatch; the effective gap threshold is then 4 x 60000 ms.
 class ResumeListenerUTest : public HibernationUTest
@@ -777,6 +858,68 @@ TEST_F(ResumeListenerUTest, GapsBeforeDispatchAreCoalesced)
     EXPECT_GE(probe_.total, 2 * kStop);
     EXPECT_EQ(first.wait_for(kReadyTimeout), std::future_status::ready);
     EXPECT_EQ(second.wait_for(kReadyTimeout), std::future_status::ready);
+}
+
+TEST_F(ResumeListenerUTest, GapsDetectedBeforeQueuedResumeDeliveryAreCoalesced)
+{
+    IGateway& gateway = connectAndWait(makeResumeConfig());
+    testSetGatewayTimeSource(jumpClock_.source());
+    gateway.setResumeListener(probeListener());
+    auto firstCall = probe_.firstCall.get_future();
+
+    std::promise<void> callbackEntered;
+    auto callbackEnteredFuture = callbackEntered.get_future();
+    std::promise<void> releaseCallback;
+    auto releaseCallbackFuture = releaseCallback.get_future();
+    bool callbackReleased = false;
+    const auto releaseWorker = [&]
+    {
+        if (!callbackReleased)
+        {
+            releaseCallback.set_value();
+            callbackReleased = true;
+        }
+    };
+
+    int blockerTag = 0;
+    ASSERT_EQ(gateway.subscribe(
+                  "test.blocker",
+                  [&callbackEntered, &releaseCallbackFuture](void*, const nlohmann::json&)
+                  {
+                      callbackEntered.set_value();
+                      releaseCallbackFuture.wait();
+                  },
+                  &blockerTag),
+              Firebolt::Error::None);
+    server_.notify("test.blocker", nlohmann::json::object());
+    ASSERT_EQ(callbackEnteredFuture.wait_for(kReadyTimeout), std::future_status::ready);
+
+    stopFor(kStop);
+    jumpClock_.jump(kStop);
+    auto request = gateway.request("test.free", nlohmann::json::object());
+    if (request.wait_for(kReadyTimeout) != std::future_status::ready)
+    {
+        releaseWorker();
+        FAIL() << "request did not complete while the resume callback was queued";
+    }
+    auto requestResult = request.get();
+    if (!requestResult)
+    {
+        releaseWorker();
+        FAIL() << "request failed while the resume callback was queued";
+    }
+
+    releaseWorker();
+    ASSERT_EQ(firstCall.wait_for(kReadyTimeout), std::future_status::ready);
+    testRunGatewayWatchdogTick();
+    drainNotificationWorker(gateway);
+
+    {
+        std::lock_guard<std::mutex> lock(probe_.mtx);
+        EXPECT_EQ(probe_.calls, 1);
+        EXPECT_GE(probe_.total, 2 * kStop);
+    }
+    EXPECT_EQ(gateway.unsubscribe("test.blocker", &blockerTag), Firebolt::Error::None);
 }
 
 // ---------------------------------------------------------------------------

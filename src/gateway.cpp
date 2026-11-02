@@ -1055,23 +1055,27 @@ private:
         const int observer = Testing::ackObserverFd();
         const auto startedNs = Testing::ackObserverNow();
 #endif
-        const std::chrono::milliseconds budget = std::max(kAckTimeout, clock_.graceRemaining());
+        const std::chrono::milliseconds operationBudget = listen ? std::chrono::milliseconds(runtime_waitTime_ms)
+                                                                 : kAckTimeout;
         const std::chrono::milliseconds start = clock_.activeNow();
+        const std::chrono::milliseconds deadline = start + operationBudget;
 #ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
+        const std::chrono::milliseconds observedBudget = std::max(operationBudget, clock_.graceUntil() - start);
         if (observer >= 0)
         {
-            Testing::observeAck(observer, "entered", id, listen, budget.count(), startedNs, false);
+            Testing::observeAck(observer, "entered", id, listen, observedBudget.count(), startedNs, false);
         }
 #endif
         while (future.wait_for(kAckPollSlice) != std::future_status::ready)
         {
-            if (clock_.activeNow() - start >= budget)
+            const std::chrono::milliseconds activeNow = clock_.activeNow();
+            if (activeNow >= std::max(deadline, clock_.graceUntil()))
             {
                 const bool ready = future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
 #ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
                 if (observer >= 0)
                 {
-                    Testing::observeAck(observer, "exited", id, listen, budget.count(), startedNs, ready);
+                    Testing::observeAck(observer, "exited", id, listen, observedBudget.count(), startedNs, ready);
                 }
 #endif
                 return ready;
@@ -1080,7 +1084,7 @@ private:
 #ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
         if (observer >= 0)
         {
-            Testing::observeAck(observer, "exited", id, listen, budget.count(), startedNs, true);
+            Testing::observeAck(observer, "exited", id, listen, observedBudget.count(), startedNs, true);
         }
 #endif
         return true;
@@ -1090,23 +1094,29 @@ private:
     // before it runs are coalesced into it.
     void dispatchResumeIfStopped()
     {
-        const std::chrono::milliseconds stopped = clock_.takeStoppedTime();
-        if (stopped <= std::chrono::milliseconds(0))
-        {
-            return;
-        }
-        FIREBOLT_LOG_NOTICE("Gateway", "[resume] process stop detected, stoppedFor=%lld ms",
-                            static_cast<long long>(stopped.count()));
+        std::chrono::milliseconds stopped{0};
+        bool shouldPost = false;
         {
             std::lock_guard<std::mutex> lock(resume_mtx_);
-            pendingResume_ += stopped;
-            if (resumeQueued_ || !resumeListener_)
+            stopped = clock_.takeStoppedTime();
+            if (stopped <= std::chrono::milliseconds(0))
             {
                 return;
             }
-            resumeQueued_ = true;
+            pendingResume_ += stopped;
+            if (!resumeQueued_ && resumeListener_)
+            {
+                resumeQueued_ = true;
+                shouldPost = true;
+            }
         }
-        server.post(kResumeEventName, [this](void* /*usercb*/, const nlohmann::json& /*params*/) { deliverResume(); });
+        FIREBOLT_LOG_NOTICE("Gateway", "[resume] process stop detected, stoppedFor=%lld ms",
+                            static_cast<long long>(stopped.count()));
+        if (shouldPost)
+        {
+            server.post(kResumeEventName,
+                        [this](void* /*usercb*/, const nlohmann::json& /*params*/) { deliverResume(); });
+        }
     }
 
     void deliverResume()
@@ -1115,6 +1125,7 @@ private:
         std::chrono::milliseconds stoppedFor{0};
         {
             std::lock_guard<std::mutex> lock(resume_mtx_);
+            pendingResume_ += clock_.takeStoppedTime();
             listener = resumeListener_;
             stoppedFor = pendingResume_;
             pendingResume_ = std::chrono::milliseconds(0);

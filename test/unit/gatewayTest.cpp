@@ -349,12 +349,12 @@ TEST_F(GatewayUTest, SubscribeUnsubscribe)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-TEST_F(GatewayUTest, SubscribeAcceptsAcknowledgementWithinAckTimeout)
+TEST_F(GatewayUTest, SubscribeAcceptsAcknowledgementWithinConfiguredTimeout)
 {
     m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
     {
         auto request = nlohmann::json::parse(msg->get_payload());
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        std::this_thread::sleep_for(std::chrono::milliseconds(75));
 
         nlohmann::json response;
         response["jsonrpc"] = "2.0";

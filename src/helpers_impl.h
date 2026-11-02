@@ -18,6 +18,7 @@
 
 #include "firebolt/gateway.h"
 #include "firebolt/helpers.h"
+#include <exception>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -103,14 +104,29 @@ public:
         }
         // Invoked outside the lock so callbacks may (un)subscribe. As with gateway delivery, a
         // subscription removed before its turn (e.g. by an earlier callback) is dropped.
+        bool callbackFailed = false;
         for (const auto& target : targets)
         {
             if (auto data = target.first.lock())
             {
-                target.second(data.get(), payload);
+                try
+                {
+                    target.second(data.get(), payload);
+                }
+                catch (const std::exception& e)
+                {
+                    callbackFailed = true;
+                    FIREBOLT_LOG_ERROR("Helper", "[dispatchLocal] callback threw for event='%s': %s", eventName.c_str(),
+                                       e.what());
+                }
+                catch (...)
+                {
+                    callbackFailed = true;
+                    FIREBOLT_LOG_ERROR("Helper", "[dispatchLocal] callback threw for event='%s'", eventName.c_str());
+                }
             }
         }
-        return Result<void>{Error::None};
+        return Result<void>{callbackFailed ? Error::General : Error::None};
     }
 
 private:
