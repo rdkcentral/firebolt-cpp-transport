@@ -1,0 +1,78 @@
+name: L1-tests
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  L1-tests:
+    name: Run unit tests and collect coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to the Container registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download build directory
+        uses: actions/download-artifact@v4
+        with:
+          name: build-dir
+          path: ${{ github.workspace }}/build
+
+      - name: Run Unit Tests
+        run: |
+          chmod +x ${{ github.workspace }}/build/test/utApp
+          docker run --rm --user "$(id -u):$(id -g)" -v ${{ github.workspace }}:/workspace ${{ inputs.image_tag }} \
+            bash -c "ctest --test-dir build/test"
+
+      - name: Generate Coverage Report
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v ${{ github.workspace }}:/workspace ${{ inputs.image_tag }} \
+            bash -c " \
+              set -e \
+              && cd build \
+              && mkdir -p coverage \
+              && gcovr -r .. \
+                    --exclude '.*/test/.*\.h' \
+                    --exclude '.*/test/.*\.cpp' \
+                    --gcov-ignore-parse-errors=negative_hits.warn \
+                    --decisions \
+                    --medium-threshold 50 --high-threshold 75 \
+                    --html-details coverage/index.html \
+                    --cobertura coverage.cobertura.xml \
+                    --lcov coverage/coverage.info \
+            "
+
+      - name: Upload L1 coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-L1-transport
+          path: ${{ github.workspace }}/build/coverage/
+          if-no-files-found: error
+
+      - name: Code Coverage Summary Report
+        uses: irongut/CodeCoverageSummary@51cc3a756ddcd398d447c044c02cb6aa83fdae95
+        with:
+          filename: build/coverage.cobertura.xml
+          badge: true
+          hide_complexity: true
+          format: markdown
+          output: both
+          thresholds: "50 75"
+          fail_below_min: false
+
+      - name: Add coverage summary to job summary
+        run: cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY

@@ -88,7 +88,6 @@ _Not applicable — conformance testing is addressed in [transport_recommendatio
 ## Covered Code
 
 - include/firebolt/helpers.h:
-    - IHelper::set
     - IHelper::invoke
     - IHelper::get
     - IHelper::subscribe
@@ -96,7 +95,6 @@ _Not applicable — conformance testing is addressed in [transport_recommendatio
     - IHelper::unsubscribeAll
     - onPropertyChangedCallback
 - src/helpers_impl.h:
-    - HelperImpl::set
     - HelperImpl::invoke
     - HelperImpl::subscribe
     - HelperImpl::unsubscribe

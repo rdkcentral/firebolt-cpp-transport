@@ -115,7 +115,6 @@ This spec is a recommendations document, not a normative specification. It captu
 - src/utils.h:
     - buildGatewayUrl
 - include/firebolt/helpers.h:
-    - IHelper::set
     - IHelper::invoke
     - IHelper::get
     - IHelper::subscribe

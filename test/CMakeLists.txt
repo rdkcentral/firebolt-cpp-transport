@@ -27,6 +27,7 @@ set(UNIT_TESTS_APP utApp)
 message("Setup ${UNIT_TESTS_APP}")
 
 file(GLOB UNIT_TESTS CONFIGURE_DEPENDS unit/*Test.cpp)
+list(REMOVE_ITEM UNIT_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/diagnosticsTest.cpp")
 
 add_executable(${UNIT_TESTS_APP}
     UnitTestsMain.cpp

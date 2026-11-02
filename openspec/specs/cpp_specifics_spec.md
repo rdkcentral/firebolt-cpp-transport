@@ -115,7 +115,6 @@ _Not applicable — conformance testing is addressed in [transport_recommendatio
     - NL_Json_Basic::checkRequiredFields
     - toString
 - src/helpers_impl.h:
-    - HelperImpl::set
     - HelperImpl::invoke
     - HelperImpl::subscribe
     - HelperImpl::unsubscribeAll

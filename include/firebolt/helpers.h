@@ -71,7 +71,7 @@ class IHelper
 public:
     virtual ~IHelper() = default;
 
-    virtual Result<void> set(const std::string& methodName, const nlohmann::json& parameters) = 0;
+    // Blocks until the backend replies and returns its error, if any.
     virtual Result<void> invoke(const std::string& methodName, const nlohmann::json& parameters) = 0;
     template <typename JsonType, typename PropertyType>
     Result<PropertyType> get(const std::string& methodName, const nlohmann::json& parameters = nlohmann::json({}))

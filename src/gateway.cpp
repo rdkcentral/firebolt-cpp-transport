@@ -51,7 +51,13 @@ constexpr std::chrono::milliseconds kAckTimeout{50};
 constexpr std::chrono::milliseconds kAckPollSlice{10};
 constexpr const char* kResumeEventName = "<transport.resume>";
 
+using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
 using MessageID = uint32_t;
+
+static long long elapsedMs(Timestamp since)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - since).count();
+}
 
 IGateway::~IGateway() = default;
 
@@ -158,16 +164,16 @@ public:
         }
     }
 
-    Firebolt::Error send(const std::string& method, const nlohmann::json& parameters)
-    {
-        MessageID id = transport_.getNextMessageID();
-        {
-            std::lock_guard lck(invokes_mtx);
-            invokes.insert(id);
-        }
-        FIREBOLT_LOG_DEBUG("Gateway", "[send] upstream produce method='%s' id=%u", method.c_str(), id);
-        return transport_.send(method, parameters, id);
-    }
+    // Firebolt::Error send(const std::string& method, const nlohmann::json& parameters)
+    // {
+    //     MessageID id = transport_.getNextMessageID();
+    //     {
+    //         std::lock_guard lck(invokes_mtx);
+    //         invokes.insert(id);
+    //     }
+    //     FIREBOLT_LOG_DEBUG("Gateway", "[send] upstream produce method='%s' id=%u", method.c_str(), id);
+    //     return transport_.send(method, parameters, id);
+    // }
 
     std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters,
                                                 std::optional<MessageID> idOpt)
@@ -730,12 +736,6 @@ public:
         }
         cleanupInternalState();
         return Error::None;
-    }
-
-    Firebolt::Error send(const std::string& method, const nlohmann::json& parameters) override
-    {
-        FIREBOLT_LOG_DEBUG("Gateway", "[send] request from helper layer method='%s'", method.c_str());
-        return client.send(method, parameters);
     }
 
     std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters) override

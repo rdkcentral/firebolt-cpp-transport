@@ -1,18 +1,16 @@
-## [Unreleased]
+## [1.1.13](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.12...v1.1.13)
 
-Requires a **minor** version bump: `IGateway` and `IHelper` gain virtual methods (vtable change) and `Config` gains fields (layout change). Rebuild all dependants.
-
-### Added
-- Hibernation resilience for processes frozen by the container runtime (Dobby/memcr, `SIGSTOP`): wall-clock gaps longer than `Config.stopGapThreshold_ms` (default 2000, clamped to at least 4 x `watchdogCycle_ms`) are treated as stopped time
-- `Config.resumeGrace_ms` (default 5000, `0` disables): after a detected stop, pending requests and subscribe/unsubscribe acknowledgements get a grace window before timing out, covering traffic App Gateway still holds after thaw
-- `IGateway::setResumeListener(ResumeCallback)`: one listener, invoked on the notification worker thread with the stopped duration after a detected stop; gaps detected before delivery are coalesced. Non-pure with a no-op default
-- `IHelper::dispatchLocal(owner, eventName, payload)` and `SubscriptionManager::dispatch(eventName, payload)`: deliver a locally synthesized notification to one owner's subscribers through their normal callbacks, without gateway traffic. Non-pure; the default returns `Error::General`
-- `hibernationHarness` CTest (`HibernationSigstopHarness`): end-to-end `SIGSTOP`/`SIGCONT` of a forked child against a scripted gateway, with a negative control
+### Fixed
+- `IHelper::invoke()` now waits for the backend response and returns its result. Errors such as `-40300 NotPermitted` are returned to the caller instead of being discarded. This applies to every void API (for example `Lifecycle2.close`, `Metrics.*`, `Discovery.watched`).
+- `subscribe()` now waits up to `waitTime_ms` for the subscribe acknowledgement instead of 50 ms, so a slightly slow backend no longer causes a false `Timedout`.
 
 ### Changed
-- Response-header lookup is now case-insensitive, as required by HTTP; header values are unchanged.
-- `IGateway` is now exported from the shared library, so consumers can implement or mock it
-- `Config.waitTime_ms` and the subscribe/unsubscribe acknowledgement wait are measured in **active** (non-stopped) time; time spent stopped no longer causes spurious `Timedout`
+- `invoke()` now blocks until the backend replies, or until `waitTime_ms` expires with `Timedout`.
+
+### Removed
+- `IHelper::set()`: unused; `invoke()` replaces it.
+- `IGateway::send()`, which sent requests without waiting for a reply; `invoke()` now uses `request()`.
+
 
 ## [1.1.12](https://github.com/rdkcentral/firebolt-cpp-transport/compare/v1.1.11...v1.1.12)
 

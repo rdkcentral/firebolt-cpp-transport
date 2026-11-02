@@ -55,7 +55,6 @@ subscribe, unsubscribe, and notifications; event names are not case-folded.
 ```cpp
 IHelper& helper = Firebolt::Helpers::GetHelperInstance();
 auto result = helper.get<DeviceIdJson, std::string>("device.id");
-helper.set("device.name", params);
 helper.invoke("lifecycle.ready", {});
 SubscriptionId id = helper.subscribe<EventJson>("device.onNameChanged", callback, userdata);
 helper.unsubscribe("device.onNameChanged", id);
