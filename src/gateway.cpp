@@ -574,6 +574,7 @@ private:
     bool hasLastConnectionLog{false};
     bool lastConnectionState{false};
     bool connectionStarted{false};
+    std::atomic<bool> connectInProgress{false};
     Firebolt::Error lastConnectionError{Firebolt::Error::None};
     std::chrono::steady_clock::time_point lastConnectionLogTs{};
     size_t suppressedConnectionNoticeCount{0};
@@ -604,6 +605,24 @@ public:
     virtual Firebolt::Error connect(const Firebolt::Config& cfg, ConnectionChangeCallback onConnectionChange) override
     {
         assert(onConnectionChange != nullptr);
+
+        bool expected = false;
+        if (!connectInProgress.compare_exchange_strong(expected, true))
+        {
+            return Firebolt::Error::AlreadyConnected;
+        }
+        struct ConnectAttemptGuard
+        {
+            std::atomic<bool>& inProgress;
+            ~ConnectAttemptGuard() { inProgress.store(false); }
+        } connectAttemptGuard{connectInProgress};
+        {
+            std::lock_guard<std::mutex> lock(connectionLog_mtx);
+            if (connectionStarted)
+            {
+                return Firebolt::Error::AlreadyConnected;
+            }
+        }
 
         const Firebolt::LogLevel logLevel = Firebolt::Logger::resolveLogLevelFromEnvironment(cfg.log.level);
 
@@ -1060,10 +1079,9 @@ private:
         const std::chrono::milliseconds start = clock_.activeNow();
         const std::chrono::milliseconds deadline = start + operationBudget;
 #ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
-        const std::chrono::milliseconds observedBudget = std::max(operationBudget, clock_.graceUntil() - start);
         if (observer >= 0)
         {
-            Testing::observeAck(observer, "entered", id, listen, observedBudget.count(), startedNs, false);
+            Testing::observeAck(observer, "entered", id, listen, operationBudget.count(), startedNs, false);
         }
 #endif
         while (future.wait_for(kAckPollSlice) != std::future_status::ready)
@@ -1075,7 +1093,7 @@ private:
 #ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
                 if (observer >= 0)
                 {
-                    Testing::observeAck(observer, "exited", id, listen, observedBudget.count(), startedNs, ready);
+                    Testing::observeAck(observer, "exited", id, listen, operationBudget.count(), startedNs, ready);
                 }
 #endif
                 return ready;
@@ -1084,7 +1102,7 @@ private:
 #ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
         if (observer >= 0)
         {
-            Testing::observeAck(observer, "exited", id, listen, observedBudget.count(), startedNs, true);
+            Testing::observeAck(observer, "exited", id, listen, operationBudget.count(), startedNs, true);
         }
 #endif
         return true;

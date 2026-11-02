@@ -91,6 +91,8 @@ target_link_libraries(${HIBERNATION_HARNESS_APP}
         nlohmann_json::nlohmann_json
 )
 
+target_link_options(${HIBERNATION_HARNESS_APP} PRIVATE --coverage)
+
 target_include_directories(${HIBERNATION_HARNESS_APP}
     PRIVATE
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/>

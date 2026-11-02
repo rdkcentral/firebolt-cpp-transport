@@ -631,6 +631,29 @@ TEST_F(HibernationUTest, GenuineFailureAfterGrace)
     server_.releaseAll();
 }
 
+TEST_F(HibernationUTest, RejectedDuplicateConnectPreservesResumeGrace)
+{
+    server_.holdMethod("test.held");
+    IGateway& gateway = connectAndWait(makeConfig(1000, 5000));
+    testSetGatewayTimeSource(jumpClock_.source());
+
+    auto future = gateway.request("test.held", nlohmann::json::object());
+    ASSERT_TRUE(server_.waitForRequest("test.held", 1, kReadyTimeout));
+
+    stopFor(std::chrono::milliseconds(10000));
+    Firebolt::Config duplicateConfig = makeConfig(100, 0);
+    const Firebolt::Error duplicateStatus = gateway.connect(duplicateConfig, [](bool, const Firebolt::Error&) {});
+    ASSERT_EQ(duplicateStatus, Firebolt::Error::AlreadyConnected);
+
+    runActive(std::chrono::milliseconds(2000));
+    const bool requestStillPending = future.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout;
+    server_.release("test.held");
+
+    ASSERT_EQ(future.wait_for(kReadyTimeout), std::future_status::ready);
+    EXPECT_TRUE(requestStillPending) << "rejected duplicate connect cleared the active resume grace window";
+    EXPECT_TRUE(future.get());
+}
+
 // ---------------------------------------------------------------------------
 // Test name: HibernationUTest.GraceDisabledRestoresStrictTimeout
 // Covers: Client::checkPromises() with resumeGrace_ms = 0
