@@ -42,6 +42,8 @@ void testStopGatewayNotificationWorker();
 /** Whether notification-worker shutdown has been requested. */
 bool testGatewayNotificationWorkerStopRequested();
 
+void testDisconnectBeforeGatewayConnectFinalization();
+
 } // namespace Firebolt::Transport
 
 #endif

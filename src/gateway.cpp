@@ -573,12 +573,16 @@ private:
     std::mutex connectionLog_mtx;
     bool hasLastConnectionLog{false};
     bool lastConnectionState{false};
+    std::mutex cleanup_mtx;
     bool connectionStarted{false};
+    uint64_t connectionCleanupGeneration{0};
     std::atomic<bool> connectInProgress{false};
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    bool disconnectBeforeConnectFinalization{false};
+#endif
     Firebolt::Error lastConnectionError{Firebolt::Error::None};
     std::chrono::steady_clock::time_point lastConnectionLogTs{};
     size_t suppressedConnectionNoticeCount{0};
-    std::mutex cleanup_mtx;
 
 public:
     GatewayImpl()
@@ -593,7 +597,7 @@ public:
     {
         bool needsDisconnection = false;
         {
-            std::lock_guard<std::mutex> lock(connectionLog_mtx);
+            std::lock_guard<std::mutex> lock(cleanup_mtx);
             needsDisconnection = connectionStarted;
         }
         if (needsDisconnection)
@@ -617,7 +621,7 @@ public:
             ~ConnectAttemptGuard() { inProgress.store(false); }
         } connectAttemptGuard{connectInProgress};
         {
-            std::lock_guard<std::mutex> lock(connectionLog_mtx);
+            std::lock_guard<std::mutex> lock(cleanup_mtx);
             if (connectionStarted)
             {
                 return Firebolt::Error::AlreadyConnected;
@@ -692,10 +696,23 @@ public:
                 safeConnectUrl = safeConnectUrl.substr(0, fPos);
         }
         FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s", safeConnectUrl.c_str());
+        uint64_t cleanupGeneration;
+        {
+            std::lock_guard<std::mutex> lock(cleanup_mtx);
+            cleanupGeneration = connectionCleanupGeneration;
+        }
         Firebolt::Error status = transport.connect(
             std::move(url), [this](const nlohmann::json& message) { this->onMessage(message); },
             [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
             transportLoggingInclude, transportLoggingExclude, cfg.headers);
+
+#ifdef FIREBOLT_TRANSPORT_TESTING
+        if (disconnectBeforeConnectFinalization)
+        {
+            disconnectBeforeConnectFinalization = false;
+            cleanupInternalState();
+        }
+#endif
 
         if (status != Firebolt::Error::None)
         {
@@ -706,12 +723,12 @@ public:
         }
         else
         {
-            // Same lock as cleanupInternalState() so this doesn't run at the same time as a disconnect
             std::lock_guard<std::mutex> cleanupLock(cleanup_mtx);
+            if (cleanupGeneration != connectionCleanupGeneration)
             {
-                std::lock_guard<std::mutex> connectionLock(connectionLog_mtx);
-                connectionStarted = true;
+                return status;
             }
+            connectionStarted = true;
 
             if (!watchdogRunning.exchange(true))
             {
@@ -1062,6 +1079,7 @@ public:
     std::chrono::milliseconds testGapThreshold() const { return clock_.gapThreshold(); }
     void testStopNotificationWorker() { server.stopNotificationWorker(); }
     bool testNotificationWorkerStopRequested() const { return server.testStopRequested(); }
+    void testDisconnectBeforeConnectFinalization() { disconnectBeforeConnectFinalization = true; }
 #endif
 
 private:
@@ -1177,6 +1195,7 @@ private:
     void cleanupInternalState()
     {
         std::lock_guard<std::mutex> lock(cleanup_mtx);
+        ++connectionCleanupGeneration;
         if (watchdogRunning.exchange(false))
         {
             watchdogCv.notify_all();
@@ -1199,10 +1218,7 @@ private:
                            static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                                       std::chrono::steady_clock::now() - t0_nw)
                                                       .count()));
-        {
-            std::lock_guard<std::mutex> lock(connectionLog_mtx);
-            connectionStarted = false;
-        }
+        connectionStarted = false;
     }
 };
 
@@ -1236,6 +1252,11 @@ void testStopGatewayNotificationWorker()
 bool testGatewayNotificationWorkerStopRequested()
 {
     return static_cast<GatewayImpl&>(GetGatewayInstance()).testNotificationWorkerStopRequested();
+}
+
+void testDisconnectBeforeGatewayConnectFinalization()
+{
+    static_cast<GatewayImpl&>(GetGatewayInstance()).testDisconnectBeforeConnectFinalization();
 }
 #endif
 

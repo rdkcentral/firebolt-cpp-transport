@@ -18,6 +18,7 @@
 
 #include "firebolt/gateway.h"
 #include "firebolt/logger.h"
+#include "gateway_testing.h"
 #include "utils.h"
 #include <arpa/inet.h>
 #include <atomic>
@@ -855,6 +856,30 @@ TEST_F(GatewayUTest, ConnectAlreadyConnected)
     // Try to connect again
     Firebolt::Error err = gateway.connect(getTestConfig(), [](bool, const Firebolt::Error&) {});
     EXPECT_EQ(err, Firebolt::Error::AlreadyConnected);
+}
+
+TEST_F(GatewayUTest, ReconnectAfterFailureBeforeConnectFinalization)
+{
+    startServer();
+    IGateway& gateway = GetGatewayInstance();
+    testDisconnectBeforeGatewayConnectFinalization();
+    const Firebolt::Error firstStatus = gateway.connect(getTestConfig(), [](bool, const Firebolt::Error&) {});
+    ASSERT_EQ(firstStatus, Firebolt::Error::None);
+    gateway.disconnect();
+
+    std::promise<void> reconnected;
+    auto reconnectedFuture = reconnected.get_future();
+    auto onReconnected = [&reconnected](bool connected, const Firebolt::Error&)
+    {
+        if (connected)
+        {
+            reconnected.set_value();
+        }
+    };
+    const Firebolt::Error reconnectStatus = gateway.connect(getTestConfig(), onReconnected);
+
+    ASSERT_EQ(reconnectStatus, Firebolt::Error::None);
+    EXPECT_EQ(reconnectedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
 }
 
 // ---------------------------------------------------------------------------
