@@ -29,6 +29,18 @@ namespace Firebolt::Transport
 using client = websocketpp::client<websocketpp::config::asio_client>;
 using message_ptr = websocketpp::config::asio_client::message_type::ptr;
 
+static std::string normalizeHeaderName(std::string name)
+{
+    for (char& ch : name)
+    {
+        if (ch >= 'A' && ch <= 'Z')
+        {
+            ch = static_cast<char>(ch + ('a' - 'A'));
+        }
+    }
+    return name;
+}
+
 enum class Transport::TransportState
 {
     NotStarted,
@@ -442,7 +454,7 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
                 const auto& headers = con->get_response().get_headers();
                 for (const auto& header : headers)
                 {
-                    responseHeaders_[header.first] = header.second;
+                    responseHeaders_[normalizeHeaderName(header.first)] = header.second;
                 }
                 FIREBOLT_LOG_DEBUG("Transport", "[onOpen] stored response headers=%zu", responseHeaders_.size());
             }
@@ -522,7 +534,7 @@ void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c,
 std::optional<std::string> Transport::getResponseHeader(const std::string& headerName)
 {
     std::lock_guard<std::mutex> lock(responseHeadersMutex_);
-    auto it = responseHeaders_.find(headerName);
+    auto it = responseHeaders_.find(normalizeHeaderName(headerName));
     if (it != responseHeaders_.end())
     {
         return it->second;

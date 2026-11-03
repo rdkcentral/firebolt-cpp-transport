@@ -17,9 +17,12 @@
  */
 
 #include "firebolt/gateway.h"
+#include "ack_observer.h"
+#include "active_clock.h"
 #include "firebolt/logger.h"
 #include "firebolt/transport_version.h"
 #include "firebolt/types.h"
+#include "gateway_testing.h"
 #include "transport.h"
 #include "utils.h"
 #include <any>
@@ -33,6 +36,7 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <queue>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,6 +47,9 @@ namespace Firebolt::Transport
 // Runtime configuration used by client/server watchdog and provider wait
 static unsigned runtime_waitTime_ms = 3000;
 static unsigned watchdog_interval_ms = 500;
+constexpr std::chrono::milliseconds kAckTimeout{50};
+constexpr std::chrono::milliseconds kAckPollSlice{10};
+constexpr const char* kResumeEventName = "<transport.resume>";
 
 using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
 using MessageID = uint32_t;
@@ -66,25 +73,30 @@ class Client
 {
     struct Caller
     {
-        Caller(MessageID id_, std::string method_)
+        Caller(MessageID id_, std::string method_, std::chrono::milliseconds activeAtEnqueue_)
             : id(id_),
-              method(std::move(method_))
+              method(std::move(method_)),
+              activeAtEnqueue(activeAtEnqueue_)
         {
         }
         const MessageID id;
         const std::string method;
         std::promise<Result<nlohmann::json>> promise;
-        Timestamp timestamp = std::chrono::steady_clock::now();
+        const std::chrono::milliseconds activeAtEnqueue;
     };
 
     std::map<MessageID, std::shared_ptr<Caller>> queue;
     mutable std::mutex queue_mtx;
+    std::set<MessageID> invokes;
+    mutable std::mutex invokes_mtx;
 
     IClientTransport& transport_;
+    ActiveClock& clock_;
 
 public:
-    Client(IClientTransport& transport)
-        : transport_(transport)
+    Client(IClientTransport& transport, ActiveClock& clock)
+        : transport_(transport),
+          clock_(clock)
     {
     }
 
@@ -99,11 +111,13 @@ public:
             // been erased yet, so all promises remain fulfillable.
             timedOut.reserve(queue.size());
             queueSizeSnapshot = queue.size();
-            auto now = std::chrono::steady_clock::now();
+            const std::chrono::milliseconds activeNow = clock_.activeNow();
+            const std::chrono::milliseconds graceUntil = clock_.graceUntil();
+            const std::chrono::milliseconds waitTime{runtime_waitTime_ms};
             for (auto it = queue.begin(); it != queue.end();)
             {
-                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second->timestamp).count() >
-                    runtime_waitTime_ms)
+                // A grace window opened by a resume extends every deadline that would end inside it.
+                if (activeNow > std::max(it->second->activeAtEnqueue + waitTime, graceUntil))
                 {
                     // Capture the Caller pointer under the lock. timedOut.push_back() may allocate;
                     // if it throws, the entry remains in the queue because we erase only after
@@ -150,6 +164,17 @@ public:
         }
     }
 
+    // Firebolt::Error send(const std::string& method, const nlohmann::json& parameters)
+    // {
+    //     MessageID id = transport_.getNextMessageID();
+    //     {
+    //         std::lock_guard lck(invokes_mtx);
+    //         invokes.insert(id);
+    //     }
+    //     FIREBOLT_LOG_DEBUG("Gateway", "[send] upstream produce method='%s' id=%u", method.c_str(), id);
+    //     return transport_.send(method, parameters, id);
+    // }
+
     std::future<Result<nlohmann::json>> request(const std::string& method, const nlohmann::json& parameters,
                                                 std::optional<MessageID> idOpt)
     {
@@ -162,7 +187,7 @@ public:
         {
             id = transport_.getNextMessageID();
         }
-        std::shared_ptr<Caller> c = std::make_shared<Caller>(id, method);
+        std::shared_ptr<Caller> c = std::make_shared<Caller>(id, method, clock_.activeNow());
         auto future = c->promise.get_future();
 
         std::size_t pendingAfterEnqueue = 0;
@@ -202,6 +227,15 @@ public:
     void response(const nlohmann::json& message)
     {
         MessageID id = message["id"];
+        {
+            std::lock_guard lck(invokes_mtx);
+            if (invokes.find(id) != invokes.end())
+            {
+                FIREBOLT_LOG_DEBUG("Gateway", "[response] dropping self-originated invoke ack id=%u", id);
+                invokes.erase(id);
+                return;
+            }
+        }
         // Grab and erase the caller under the mutex, then fulfill the promise
         // after releasing it.  Holding the mutex across set_value() / logging
         // adds unnecessary contention and risks deadlock if a continuation
@@ -280,9 +314,16 @@ class Server
     std::condition_variable notificationQueueCv_;
     std::thread notificationWorkerThread_;
     std::atomic<bool> stopNotificationWorker_{false};
+    std::mutex workerLifecycle_mtx_;
+    std::mutex workerStop_mtx_;
+    bool workerJoining_ = false;
 
 public:
     Server() = default;
+
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    bool testStopRequested() const { return stopNotificationWorker_; }
+#endif
 
     virtual ~Server()
     {
@@ -296,24 +337,53 @@ public:
     void stopNotificationWorker()
     {
         FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] stop requested");
-        stopNotificationWorker_ = true;
+        std::lock_guard<std::mutex> stopLock(workerStop_mtx_);
+        std::thread worker;
+        {
+            std::lock_guard<std::mutex> lifecycleLock(workerLifecycle_mtx_);
+            workerJoining_ = true;
+            {
+                std::lock_guard<std::mutex> queueLock(notificationQueueMutex_);
+                stopNotificationWorker_ = true;
+            }
+            worker = std::move(notificationWorkerThread_);
+        }
         notificationQueueCv_.notify_all();
 
-        if (notificationWorkerThread_.joinable())
+        // Callbacks may subscribe while draining; never hold their lifecycle lock across join.
+        if (worker.joinable())
         {
-            notificationWorkerThread_.join();
+            worker.join();
             FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] joined");
+        }
+        {
+            std::lock_guard<std::mutex> lifecycleLock(workerLifecycle_mtx_);
+            workerJoining_ = false;
         }
     }
 
     void ensureNotificationWorkerStarted()
     {
-        if (!notificationWorkerThread_.joinable())
+        std::lock_guard<std::mutex> lifecycleLock(workerLifecycle_mtx_);
+        if (!workerJoining_ && !notificationWorkerThread_.joinable())
         {
             stopNotificationWorker_ = false;
             notificationWorkerThread_ = std::thread(&Server::processQueuedNotifications, this);
             FIREBOLT_LOG_DEBUG("Gateway", "[notification-worker] started");
         }
+    }
+
+    // Queues an internal (non-JSON-RPC) callback to run on the notification worker.
+    void post(const std::string& name, EventCallback lambda)
+    {
+        ensureNotificationWorkerStarted();
+        {
+            std::lock_guard<std::mutex> lock(notificationQueueMutex_);
+            QueuedNotification item;
+            item.callbacks.push_back(CallbackDataEvent{name, std::move(lambda), nullptr});
+            notificationQueue_.push(std::move(item));
+        }
+        notificationQueueCv_.notify_one();
     }
 
     void processQueuedNotifications()
@@ -465,18 +535,11 @@ public:
 
     bool isAnySubscriber(const std::string& method)
     {
-        std::string key = method;
-        size_t dotPos = key.find('.');
-        if (dotPos != std::string::npos)
-        {
-            std::transform(key.begin(), key.begin() + dotPos, key.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
-        }
         std::lock_guard lck(eventMap_mtx);
 
         for (auto& callback : eventList)
         {
-            if (callback.eventName == key)
+            if (callback.eventName == method)
             {
                 return true;
             }
@@ -490,6 +553,11 @@ class GatewayImpl : public IGateway, private IClientTransport
 private:
     ConnectionChangeCallback connectionChangeListener;
     std::mutex connectionChangeListener_mtx;
+    ActiveClock clock_;
+    std::mutex resume_mtx_;
+    ResumeCallback resumeListener_;
+    std::chrono::milliseconds pendingResume_{0};
+    bool resumeQueued_ = false;
     Transport transport;
     Client client;
     Server server;
@@ -505,15 +573,20 @@ private:
     std::mutex connectionLog_mtx;
     bool hasLastConnectionLog{false};
     bool lastConnectionState{false};
+    std::mutex cleanup_mtx;
     bool connectionStarted{false};
+    uint64_t connectionCleanupGeneration{0};
+    std::atomic<bool> connectInProgress{false};
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    bool disconnectBeforeConnectFinalization{false};
+#endif
     Firebolt::Error lastConnectionError{Firebolt::Error::None};
     std::chrono::steady_clock::time_point lastConnectionLogTs{};
     size_t suppressedConnectionNoticeCount{0};
-    std::mutex cleanup_mtx;
 
 public:
     GatewayImpl()
-        : client(*this),
+        : client(*this, clock_),
           server(),
           watchdogRunning(false),
           legacyRPCv1(false)
@@ -524,7 +597,7 @@ public:
     {
         bool needsDisconnection = false;
         {
-            std::lock_guard<std::mutex> lock(connectionLog_mtx);
+            std::lock_guard<std::mutex> lock(cleanup_mtx);
             needsDisconnection = connectionStarted;
         }
         if (needsDisconnection)
@@ -536,6 +609,24 @@ public:
     virtual Firebolt::Error connect(const Firebolt::Config& cfg, ConnectionChangeCallback onConnectionChange) override
     {
         assert(onConnectionChange != nullptr);
+
+        bool expected = false;
+        if (!connectInProgress.compare_exchange_strong(expected, true))
+        {
+            return Firebolt::Error::AlreadyConnected;
+        }
+        struct ConnectAttemptGuard
+        {
+            std::atomic<bool>& inProgress;
+            ~ConnectAttemptGuard() { inProgress.store(false); }
+        } connectAttemptGuard{connectInProgress};
+        {
+            std::lock_guard<std::mutex> lock(cleanup_mtx);
+            if (connectionStarted)
+            {
+                return Firebolt::Error::AlreadyConnected;
+            }
+        }
 
         const Firebolt::LogLevel logLevel = Firebolt::Logger::resolveLogLevelFromEnvironment(cfg.log.level);
 
@@ -553,6 +644,18 @@ public:
         runtime_waitTime_ms = cfg.waitTime_ms;
         legacyRPCv1 = cfg.legacyRPCv1;
         watchdog_interval_ms = cfg.watchdogCycle_ms;
+
+        const std::chrono::milliseconds gapThreshold =
+            ActiveClock::effectiveGapThreshold(cfg.stopGapThreshold_ms, cfg.watchdogCycle_ms);
+        if (gapThreshold.count() != static_cast<long long>(cfg.stopGapThreshold_ms))
+        {
+            FIREBOLT_LOG_WARNING("Gateway", "[connect] stopGapThreshold_ms=%u clamped to %lld (4 x watchdogCycle_ms=%u)",
+                                 cfg.stopGapThreshold_ms, static_cast<long long>(gapThreshold.count()),
+                                 cfg.watchdogCycle_ms);
+        }
+        clock_.setGapThreshold(gapThreshold);
+        clock_.setResumeGrace(std::chrono::milliseconds(cfg.resumeGrace_ms));
+        clock_.reset();
 
         FIREBOLT_LOG_NOTICE("Gateway", "[connect] config waitTime_ms=%u watchdog_interval_ms=%u headers=%zu",
                             runtime_waitTime_ms, watchdog_interval_ms, cfg.headers.size());
@@ -593,10 +696,23 @@ public:
                 safeConnectUrl = safeConnectUrl.substr(0, fPos);
         }
         FIREBOLT_LOG_NOTICE("Gateway", "Connecting to url = %s", safeConnectUrl.c_str());
+        uint64_t cleanupGeneration;
+        {
+            std::lock_guard<std::mutex> lock(cleanup_mtx);
+            cleanupGeneration = connectionCleanupGeneration;
+        }
         Firebolt::Error status = transport.connect(
             std::move(url), [this](const nlohmann::json& message) { this->onMessage(message); },
             [this](const bool connected, Firebolt::Error error) { this->onConnectionChange(connected, error); },
             transportLoggingInclude, transportLoggingExclude, cfg.headers);
+
+#ifdef FIREBOLT_TRANSPORT_TESTING
+        if (disconnectBeforeConnectFinalization)
+        {
+            disconnectBeforeConnectFinalization = false;
+            cleanupInternalState();
+        }
+#endif
 
         if (status != Firebolt::Error::None)
         {
@@ -607,12 +723,12 @@ public:
         }
         else
         {
-            // Same lock as cleanupInternalState() so this doesn't run at the same time as a disconnect
             std::lock_guard<std::mutex> cleanupLock(cleanup_mtx);
+            if (cleanupGeneration != connectionCleanupGeneration)
             {
-                std::lock_guard<std::mutex> connectionLock(connectionLog_mtx);
-                connectionStarted = true;
+                return status;
             }
+            connectionStarted = true;
 
             if (!watchdogRunning.exchange(true))
             {
@@ -629,18 +745,7 @@ public:
                                 break;
                             }
                             lock.unlock();
-                            try
-                            {
-                                client.checkPromises();
-                            }
-                            catch (const std::exception& e)
-                            {
-                                FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw: %s", e.what());
-                            }
-                            catch (...)
-                            {
-                                FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
-                            }
+                            watchdogTick();
                             lock.lock();
                         }
                     });
@@ -657,7 +762,10 @@ public:
         auto t0_disc = std::chrono::steady_clock::now();
         Firebolt::Error status = transport.disconnect();
         FIREBOLT_LOG_INFO("Gateway", "[disconnect] transport.disconnect() done in %lld ms, status=%d",
-                          elapsedMs(t0_disc), static_cast<int>(status));
+                          static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                     std::chrono::steady_clock::now() - t0_disc)
+                                                     .count()),
+                          static_cast<int>(status));
         if (status != Firebolt::Error::None)
         {
             return status;
@@ -702,17 +810,20 @@ public:
         FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] waiting for subscribe ACK for '%s'...", event.c_str());
         auto t0_sub = std::chrono::steady_clock::now();
         auto future_sub = request(event, params, id);
-        const auto subscribeAckTimeout = std::chrono::milliseconds(runtime_waitTime_ms);
-        if (future_sub.wait_for(subscribeAckTimeout) != std::future_status::ready)
+        if (!waitForAck(future_sub, id, true))
         {
             FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' timed out after %lld ms", event.c_str(),
-                               elapsedMs(t0_sub));
+                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                          std::chrono::steady_clock::now() - t0_sub)
+                                                          .count()));
             status = Firebolt::Error::Timedout;
         }
         else
         {
             FIREBOLT_LOG_DEBUG("Gateway", "[subscribe] ACK for '%s' received in %lld ms", event.c_str(),
-                               elapsedMs(t0_sub));
+                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                          std::chrono::steady_clock::now() - t0_sub)
+                                                          .count()));
             auto result = future_sub.get();
             if (!result)
             {
@@ -775,11 +886,14 @@ public:
         FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] sending unsubscribe for '%s', waiting for ACK (waitTime_ms=%u)...",
                            event.c_str(), runtime_waitTime_ms);
         auto t0_unsub = std::chrono::steady_clock::now();
-        auto future_unsub = request(event, params);
-        constexpr auto unsubscribeAckTimeout = std::chrono::milliseconds(50);
-        if (future_unsub.wait_for(unsubscribeAckTimeout) == std::future_status::ready)
+        const MessageID id = transport.getNextMessageID();
+        auto future_unsub = request(event, params, id);
+        long long unsub_ms = 0;
+        if (waitForAck(future_unsub, id, false))
         {
-            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK received after %lld ms", elapsedMs(t0_unsub));
+            unsub_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
+            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK received after %lld ms", unsub_ms);
             auto result = future_unsub.get();
             if (!result)
             {
@@ -788,8 +902,9 @@ public:
         }
         else
         {
-            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK timed out after %lld ms (server unresponsive)",
-                               elapsedMs(t0_unsub));
+            unsub_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0_unsub).count();
+            FIREBOLT_LOG_DEBUG("Gateway", "[unsubscribe] ACK timed out after %lld ms (server unresponsive)", unsub_ms);
         }
 
         return status;
@@ -951,9 +1066,136 @@ private:
         return transport.getResponseHeader(headerName);
     }
 
+public:
+    void setResumeListener(ResumeCallback listener) override
+    {
+        std::lock_guard<std::mutex> lock(resume_mtx_);
+        resumeListener_ = std::move(listener);
+    }
+
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    void testSetTimeSource(TimeSource source) { clock_.setTimeSource(std::move(source)); }
+    void testWatchdogTick() { watchdogTick(); }
+    std::chrono::milliseconds testGapThreshold() const { return clock_.gapThreshold(); }
+    void testStopNotificationWorker() { server.stopNotificationWorker(); }
+    bool testNotificationWorkerStopRequested() const { return server.testStopRequested(); }
+    void testDisconnectBeforeConnectFinalization() { disconnectBeforeConnectFinalization = true; }
+#endif
+
+private:
+    // Waits for a subscribe/unsubscribe acknowledgement, counting only active time so a
+    // process stop during the wait does not consume the budget.
+    bool waitForAck(std::future<Firebolt::Result<nlohmann::json>>& future, [[maybe_unused]] MessageID id,
+                    [[maybe_unused]] bool listen)
+    {
+#ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
+        const int observer = Testing::ackObserverFd();
+        const auto startedNs = Testing::ackObserverNow();
+#endif
+        const std::chrono::milliseconds operationBudget = listen ? std::chrono::milliseconds(runtime_waitTime_ms)
+                                                                 : kAckTimeout;
+        const std::chrono::milliseconds start = clock_.activeNow();
+        const std::chrono::milliseconds deadline = start + operationBudget;
+#ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
+        if (observer >= 0)
+        {
+            Testing::observeAck(observer, "entered", id, listen, operationBudget.count(), startedNs, false);
+        }
+#endif
+        while (future.wait_for(kAckPollSlice) != std::future_status::ready)
+        {
+            const std::chrono::milliseconds activeNow = clock_.activeNow();
+            if (activeNow >= std::max(deadline, clock_.graceUntil()))
+            {
+                const bool ready = future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+#ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
+                if (observer >= 0)
+                {
+                    Testing::observeAck(observer, "exited", id, listen, operationBudget.count(), startedNs, ready);
+                }
+#endif
+                return ready;
+            }
+        }
+#ifdef FIREBOLT_TRANSPORT_ACK_OBSERVER
+        if (observer >= 0)
+        {
+            Testing::observeAck(observer, "exited", id, listen, operationBudget.count(), startedNs, true);
+        }
+#endif
+        return true;
+    }
+
+    // Accumulates stopped time and queues at most one resume dispatch; further gaps detected
+    // before it runs are coalesced into it.
+    void dispatchResumeIfStopped()
+    {
+        std::chrono::milliseconds stopped{0};
+        bool shouldPost = false;
+        {
+            std::lock_guard<std::mutex> lock(resume_mtx_);
+            stopped = clock_.takeStoppedTime();
+            if (stopped <= std::chrono::milliseconds(0))
+            {
+                return;
+            }
+            pendingResume_ += stopped;
+            if (!resumeQueued_ && resumeListener_)
+            {
+                resumeQueued_ = true;
+                shouldPost = true;
+            }
+        }
+        FIREBOLT_LOG_NOTICE("Gateway", "[resume] process stop detected, stoppedFor=%lld ms",
+                            static_cast<long long>(stopped.count()));
+        if (shouldPost)
+        {
+            server.post(kResumeEventName,
+                        [this](void* /*usercb*/, const nlohmann::json& /*params*/) { deliverResume(); });
+        }
+    }
+
+    void deliverResume()
+    {
+        ResumeCallback listener;
+        std::chrono::milliseconds stoppedFor{0};
+        {
+            std::lock_guard<std::mutex> lock(resume_mtx_);
+            pendingResume_ += clock_.takeStoppedTime();
+            listener = resumeListener_;
+            stoppedFor = pendingResume_;
+            pendingResume_ = std::chrono::milliseconds(0);
+            resumeQueued_ = false;
+        }
+        if (listener && stoppedFor > std::chrono::milliseconds(0))
+        {
+            FIREBOLT_LOG_DEBUG("Gateway", "[resume] invoking listener, stoppedFor=%lld ms",
+                               static_cast<long long>(stoppedFor.count()));
+            listener(stoppedFor);
+        }
+    }
+
+    void watchdogTick()
+    {
+        try
+        {
+            client.checkPromises();
+            dispatchResumeIfStopped();
+        }
+        catch (const std::exception& e)
+        {
+            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw: %s", e.what());
+        }
+        catch (...)
+        {
+            FIREBOLT_LOG_ERROR("Gateway", "[watchdog] checkPromises() threw unknown exception");
+        }
+    }
+
     void cleanupInternalState()
     {
         std::lock_guard<std::mutex> lock(cleanup_mtx);
+        ++connectionCleanupGeneration;
         if (watchdogRunning.exchange(false))
         {
             watchdogCv.notify_all();
@@ -963,17 +1205,20 @@ private:
             {
                 watchdogThread.join();
             }
-            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %lld ms", elapsedMs(t0_wdog));
+            FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] watchdog joined in %lld ms",
+                               static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                          std::chrono::steady_clock::now() - t0_wdog)
+                                                          .count()));
         }
         client.cancelAll();
         FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] stopping notification worker...");
         auto t0_nw = std::chrono::steady_clock::now();
         server.stopNotificationWorker();
-        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %lld ms", elapsedMs(t0_nw));
-        {
-            std::lock_guard<std::mutex> lock(connectionLog_mtx);
-            connectionStarted = false;
-        }
+        FIREBOLT_LOG_DEBUG("Gateway", "[disconnect] notification worker stopped in %lld ms",
+                           static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                      std::chrono::steady_clock::now() - t0_nw)
+                                                      .count()));
+        connectionStarted = false;
     }
 };
 
@@ -982,5 +1227,37 @@ IGateway& GetGatewayInstance()
     static GatewayImpl instance;
     return instance;
 }
+
+#ifdef FIREBOLT_TRANSPORT_TESTING
+void testSetGatewayTimeSource(TimeSource source)
+{
+    static_cast<GatewayImpl&>(GetGatewayInstance()).testSetTimeSource(std::move(source));
+}
+
+void testRunGatewayWatchdogTick()
+{
+    static_cast<GatewayImpl&>(GetGatewayInstance()).testWatchdogTick();
+}
+
+std::chrono::milliseconds testGatewayGapThreshold()
+{
+    return static_cast<GatewayImpl&>(GetGatewayInstance()).testGapThreshold();
+}
+
+void testStopGatewayNotificationWorker()
+{
+    static_cast<GatewayImpl&>(GetGatewayInstance()).testStopNotificationWorker();
+}
+
+bool testGatewayNotificationWorkerStopRequested()
+{
+    return static_cast<GatewayImpl&>(GetGatewayInstance()).testNotificationWorkerStopRequested();
+}
+
+void testDisconnectBeforeGatewayConnectFinalization()
+{
+    static_cast<GatewayImpl&>(GetGatewayInstance()).testDisconnectBeforeConnectFinalization();
+}
+#endif
 
 } // namespace Firebolt::Transport

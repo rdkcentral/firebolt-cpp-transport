@@ -42,6 +42,11 @@ void SubscriptionManager::unsubscribeAll()
     helper_.unsubscribeAll(owner_);
 }
 
+Result<void> SubscriptionManager::dispatch(const std::string& eventName, const nlohmann::json& payload)
+{
+    return helper_.dispatchLocal(owner_, eventName, payload);
+}
+
 IHelper& GetHelperInstance()
 {
     static HelperImpl instance(Firebolt::Transport::GetGatewayInstance());
