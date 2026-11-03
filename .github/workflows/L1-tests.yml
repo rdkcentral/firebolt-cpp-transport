@@ -34,7 +34,7 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-          chmod +x ${{ github.workspace }}/build/test/utApp
+          chmod +x ${{ github.workspace }}/build/test/utApp ${{ github.workspace }}/build/test/hibernationHarness
           docker run --rm --user "$(id -u):$(id -g)" -v ${{ github.workspace }}:/workspace ${{ inputs.image_tag }} \
             bash -c "ctest --test-dir build/test"
 
