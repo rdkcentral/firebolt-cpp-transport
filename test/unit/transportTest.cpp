@@ -22,8 +22,10 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <future>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <thread>
 #include <utility>
@@ -1112,6 +1114,104 @@ TEST_F(TransportCustomServerUTest, DisconnectFromDisconnectedState)
     // Now disconnect from already-disconnected state (no close() call, just cleanup)
     err = transport.disconnect();
     EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+TEST_F(TransportCustomServerUTest, ReconnectWaitsForConcurrentDisconnect)
+{
+    Firebolt::Logger::setLogLevel(Firebolt::LogLevel::Info);
+    std::atomic<unsigned> openCount{0};
+    m_server.set_open_handler(
+        [this, &openCount](connection_hdl hdl)
+        {
+            if (openCount.fetch_add(1) > 0)
+            {
+                m_server.close(hdl, websocketpp::close::status::normal, "End reconnect test");
+            }
+        });
+    StartServer();
+
+    Transport transport;
+    std::promise<void> connectedPromise;
+    auto connectedFuture = connectedPromise.get_future();
+    std::atomic<bool> connectedPromiseSet{false};
+    std::promise<void> disconnectCallbackEnteredPromise;
+    auto disconnectCallbackEnteredFuture = disconnectCallbackEnteredPromise.get_future();
+    std::mutex callbackMutex;
+    std::condition_variable callbackCv;
+    bool releaseDisconnectCallback = false;
+
+    auto onInitialConnection = [&](bool connected, const Firebolt::Error&)
+    {
+        if (connected)
+        {
+            if (!connectedPromiseSet.exchange(true))
+            {
+                connectedPromise.set_value();
+            }
+            return;
+        }
+
+        std::unique_lock<std::mutex> lock(callbackMutex);
+        disconnectCallbackEnteredPromise.set_value();
+        callbackCv.wait(lock, [&] { return releaseDisconnectCallback; });
+    };
+
+    auto onReconnect = [](bool, const Firebolt::Error&) {};
+    EXPECT_EQ(transport.connect(m_uri, [](const nlohmann::json&) {}, onInitialConnection), Firebolt::Error::None);
+    ASSERT_EQ(connectedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    std::promise<Firebolt::Error> disconnectResultPromise;
+    auto disconnectResultFuture = disconnectResultPromise.get_future();
+    std::thread disconnectThread([&]
+                                 { disconnectResultPromise.set_value(transport.disconnect()); });
+
+    const bool disconnectCallbackEntered =
+        disconnectCallbackEnteredFuture.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    if (!disconnectCallbackEntered)
+    {
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex);
+            releaseDisconnectCallback = true;
+        }
+        callbackCv.notify_all();
+        disconnectThread.join();
+        FAIL() << "Disconnect did not reach the connection callback";
+    }
+
+    std::promise<void> reconnectStartedPromise;
+    auto reconnectStartedFuture = reconnectStartedPromise.get_future();
+    std::promise<Firebolt::Error> reconnectResultPromise;
+    auto reconnectResultFuture = reconnectResultPromise.get_future();
+    std::thread reconnectThread([&]
+                                {
+                                    reconnectStartedPromise.set_value();
+                                    reconnectResultPromise.set_value(
+                                        transport.connect(m_uri, [](const nlohmann::json&) {}, onReconnect));
+                                });
+
+    const bool reconnectStarted = reconnectStartedFuture.wait_for(std::chrono::seconds(2)) ==
+                                  std::future_status::ready;
+    const auto reconnectDuringDisconnect = reconnectStarted
+                                               ? reconnectResultFuture.wait_for(std::chrono::milliseconds(100))
+                                               : std::future_status::deferred;
+    {
+        std::lock_guard<std::mutex> lock(callbackMutex);
+        releaseDisconnectCallback = true;
+    }
+    callbackCv.notify_all();
+
+    disconnectThread.join();
+    reconnectThread.join();
+
+    EXPECT_TRUE(reconnectStarted) << "Reconnect thread did not start";
+    EXPECT_EQ(reconnectDuringDisconnect, std::future_status::timeout)
+        << "Reconnect completed while disconnect was still joining the I/O thread";
+    EXPECT_EQ(disconnectResultFuture.get(), Firebolt::Error::None);
+    if (reconnectStarted)
+    {
+        EXPECT_EQ(reconnectResultFuture.get(), Firebolt::Error::None);
+    }
+    EXPECT_EQ(transport.disconnect(), Firebolt::Error::None);
 }
 
 // ---------------------------------------------------------------------------
