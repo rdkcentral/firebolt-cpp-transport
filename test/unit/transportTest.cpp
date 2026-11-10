@@ -1162,11 +1162,10 @@ TEST_F(TransportCustomServerUTest, ReconnectIsRejectedDuringConcurrentDisconnect
 
     std::promise<Firebolt::Error> disconnectResultPromise;
     auto disconnectResultFuture = disconnectResultPromise.get_future();
-    std::thread disconnectThread([&]
-                                 { disconnectResultPromise.set_value(transport.disconnect()); });
+    std::thread disconnectThread([&] { disconnectResultPromise.set_value(transport.disconnect()); });
 
-    const bool disconnectCallbackEntered =
-        disconnectCallbackEnteredFuture.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    const bool disconnectCallbackEntered = disconnectCallbackEnteredFuture.wait_for(std::chrono::seconds(2)) ==
+                                           std::future_status::ready;
     if (!disconnectCallbackEntered)
     {
         {
@@ -1182,15 +1181,14 @@ TEST_F(TransportCustomServerUTest, ReconnectIsRejectedDuringConcurrentDisconnect
     auto reconnectStartedFuture = reconnectStartedPromise.get_future();
     std::promise<Firebolt::Error> reconnectResultPromise;
     auto reconnectResultFuture = reconnectResultPromise.get_future();
-    std::thread reconnectThread([&]
-                                {
-                                    reconnectStartedPromise.set_value();
-                                    reconnectResultPromise.set_value(
-                                        transport.connect(m_uri, [](const nlohmann::json&) {}, onReconnect));
-                                });
+    std::thread reconnectThread(
+        [&]
+        {
+            reconnectStartedPromise.set_value();
+            reconnectResultPromise.set_value(transport.connect(m_uri, [](const nlohmann::json&) {}, onReconnect));
+        });
 
-    const bool reconnectStarted = reconnectStartedFuture.wait_for(std::chrono::seconds(2)) ==
-                                  std::future_status::ready;
+    const bool reconnectStarted = reconnectStartedFuture.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
     const auto reconnectDuringDisconnect = reconnectStarted
                                                ? reconnectResultFuture.wait_for(std::chrono::milliseconds(100))
                                                : std::future_status::deferred;
