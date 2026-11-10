@@ -37,6 +37,7 @@ enum class Transport::TransportState
     Connecting,
     Connected,
     Disconnected,
+    Disconnecting,
 };
 
 static Firebolt::Error mapError(websocketpp::lib::error_code error)
@@ -162,8 +163,10 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
                                    std::optional<unsigned> transportLoggingExclude,
                                    const std::map<std::string, std::string>& headers)
 {
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     const auto state = connectionStatus_.load();
-    if (state == TransportState::Connected || state == TransportState::Connecting)
+    if (state == TransportState::Connected || state == TransportState::Connecting ||
+        state == TransportState::Disconnecting)
     {
         FIREBOLT_LOG_WARNING("Transport", "[connect] ignored at generation=%llu because state=%d",
                              static_cast<unsigned long long>(lifecycleGeneration_.load(std::memory_order_relaxed)),
@@ -296,17 +299,22 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
 Firebolt::Error Transport::disconnect()
 {
     const uint64_t generation = lifecycleGeneration_.load(std::memory_order_relaxed);
-    FIREBOLT_LOG_INFO("Transport", "[disconnect:%llu] requested thread=%zu state=%d",
-                      static_cast<unsigned long long>(generation),
-                      std::hash<std::thread::id>{}(std::this_thread::get_id()),
-                      static_cast<int>(connectionStatus_.load()));
-    if (connectionStatus_ == TransportState::NotStarted)
+    TransportState state;
     {
-        return Firebolt::Error::None;
+        std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+        state = connectionStatus_.load();
+        FIREBOLT_LOG_INFO("Transport", "[disconnect:%llu] requested thread=%zu state=%d",
+                          static_cast<unsigned long long>(generation),
+                          std::hash<std::thread::id>{}(std::this_thread::get_id()), static_cast<int>(state));
+        if (state == TransportState::NotStarted || state == TransportState::Disconnecting)
+        {
+            return Firebolt::Error::None;
+        }
+        connectionStatus_ = TransportState::Disconnecting;
     }
     client_->stop_perpetual();
 
-    const bool closeHandshakeInitiated = (connectionStatus_ == TransportState::Connected);
+    const bool closeHandshakeInitiated = (state == TransportState::Connected);
     if (closeHandshakeInitiated)
     {
         // Shorten the close-handshake timeout so that join() below does not block
@@ -359,15 +367,18 @@ Firebolt::Error Transport::disconnect()
                                              std::chrono::steady_clock::now() - t0_mw)
                                              .count()));
 
-    client_ = std::make_unique<client>();
     {
-        std::lock_guard<std::mutex> lock(responseHeadersMutex_);
-        responseHeaders_.clear();
+        std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+        client_ = std::make_unique<client>();
+        {
+            std::lock_guard<std::mutex> lock(responseHeadersMutex_);
+            responseHeaders_.clear();
+        }
+        connectionStatus_ = TransportState::NotStarted;
     }
-    connectionStatus_ = TransportState::NotStarted;
     FIREBOLT_LOG_INFO("Transport", "[disconnect:%llu] transport reset complete, state=%d",
                       static_cast<unsigned long long>(generation),
-                       static_cast<int>(connectionStatus_.load()));
+                      static_cast<int>(connectionStatus_.load()));
     return Firebolt::Error::None;
 }
 
@@ -474,10 +485,21 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
             FIREBOLT_LOG_WARNING("Transport", "[onOpen] failed to resolve connection handle (%s)", ex.what());
         }
     }
-    connectionStatus_ = TransportState::Connected;
+    bool connectionAccepted = false;
+    {
+        std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+        if (connectionStatus_ != TransportState::Disconnecting)
+        {
+            connectionStatus_ = TransportState::Connected;
+            connectionAccepted = true;
+        }
+    }
     FIREBOLT_LOG_NOTICE("Transport", "[onOpen:%llu] connection opened (state=%d)",
                         static_cast<unsigned long long>(generation), static_cast<int>(connectionStatus_.load()));
-    connectionReceiver_(true, Firebolt::Error::None);
+    if (connectionAccepted)
+    {
+        connectionReceiver_(true, Firebolt::Error::None);
+    }
     FIREBOLT_LOG_INFO("Transport", "[onOpen:%llu] callback returned",
                       static_cast<unsigned long long>(generation));
 }
@@ -489,7 +511,13 @@ void Transport::onClose(websocketpp::client<websocketpp::config::asio_client>* c
                       static_cast<unsigned long long>(generation),
                       std::hash<std::thread::id>{}(std::this_thread::get_id()),
                       static_cast<int>(connectionStatus_.load()));
-    connectionStatus_ = TransportState::Disconnected;
+    {
+        std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+        if (connectionStatus_ != TransportState::Disconnecting)
+        {
+            connectionStatus_ = TransportState::Disconnected;
+        }
+    }
     {
         std::lock_guard<std::mutex> lock(responseHeadersMutex_);
         responseHeaders_.clear();
@@ -525,7 +553,13 @@ void Transport::onFail(websocketpp::client<websocketpp::config::asio_client>* c,
                       static_cast<unsigned long long>(generation),
                       std::hash<std::thread::id>{}(std::this_thread::get_id()),
                       static_cast<int>(connectionStatus_.load()));
-    connectionStatus_ = TransportState::Disconnected;
+    {
+        std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+        if (connectionStatus_ != TransportState::Disconnecting)
+        {
+            connectionStatus_ = TransportState::Disconnected;
+        }
+    }
     {
         std::lock_guard<std::mutex> lock(responseHeadersMutex_);
         responseHeaders_.clear();
