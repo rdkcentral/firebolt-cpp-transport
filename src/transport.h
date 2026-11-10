@@ -98,6 +98,7 @@ private:
 
     std::unique_ptr<websocketpp::client<websocketpp::config::asio_client>> client_;
     std::atomic<TransportState> connectionStatus_;
+    std::mutex lifecycleMutex_;
     std::atomic<uint64_t> lifecycleGeneration_{0};
     std::atomic<unsigned> id_counter_ = 0;
     bool debugEnabled_ = false;

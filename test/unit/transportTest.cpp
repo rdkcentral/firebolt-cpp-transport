@@ -1116,7 +1116,7 @@ TEST_F(TransportCustomServerUTest, DisconnectFromDisconnectedState)
     EXPECT_EQ(err, Firebolt::Error::None);
 }
 
-TEST_F(TransportCustomServerUTest, ReconnectWaitsForConcurrentDisconnect)
+TEST_F(TransportCustomServerUTest, ReconnectIsRejectedDuringConcurrentDisconnectAndCanRetry)
 {
     Firebolt::Logger::setLogLevel(Firebolt::LogLevel::Info);
     std::atomic<unsigned> openCount{0};
@@ -1204,13 +1204,14 @@ TEST_F(TransportCustomServerUTest, ReconnectWaitsForConcurrentDisconnect)
     reconnectThread.join();
 
     EXPECT_TRUE(reconnectStarted) << "Reconnect thread did not start";
-    EXPECT_EQ(reconnectDuringDisconnect, std::future_status::timeout)
-        << "Reconnect completed while disconnect was still joining the I/O thread";
+    EXPECT_EQ(reconnectDuringDisconnect, std::future_status::ready)
+        << "Reconnect did not return while disconnect was in progress";
     EXPECT_EQ(disconnectResultFuture.get(), Firebolt::Error::None);
     if (reconnectStarted)
     {
-        EXPECT_EQ(reconnectResultFuture.get(), Firebolt::Error::None);
+        EXPECT_EQ(reconnectResultFuture.get(), Firebolt::Error::AlreadyConnected);
     }
+    EXPECT_EQ(transport.connect(m_uri, [](const nlohmann::json&) {}, onReconnect), Firebolt::Error::None);
     EXPECT_EQ(transport.disconnect(), Firebolt::Error::None);
 }
 
