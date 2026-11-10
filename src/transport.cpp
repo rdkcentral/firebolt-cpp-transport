@@ -281,9 +281,9 @@ Firebolt::Error Transport::connect(std::string url, MessageCallback onMessage, C
     con->set_open_handler(websocketpp::lib::bind(&Transport::onOpen, this, client_.get(),
                                                  websocketpp::lib::placeholders::_1, generation));
     con->set_fail_handler(websocketpp::lib::bind(&Transport::onFail, this, client_.get(),
-                                                websocketpp::lib::placeholders::_1, generation));
-    con->set_close_handler(websocketpp::lib::bind(&Transport::onClose, this, client_.get(),
                                                  websocketpp::lib::placeholders::_1, generation));
+    con->set_close_handler(websocketpp::lib::bind(&Transport::onClose, this, client_.get(),
+                                                  websocketpp::lib::placeholders::_1, generation));
 
     con->set_message_handler(websocketpp::lib::bind(&Transport::onMessage, this, websocketpp::lib::placeholders::_1,
                                                     websocketpp::lib::placeholders::_2));
@@ -377,8 +377,7 @@ Firebolt::Error Transport::disconnect()
         connectionStatus_ = TransportState::NotStarted;
     }
     FIREBOLT_LOG_INFO("Transport", "[disconnect:%llu] transport reset complete, state=%d",
-                      static_cast<unsigned long long>(generation),
-                      static_cast<int>(connectionStatus_.load()));
+                      static_cast<unsigned long long>(generation), static_cast<int>(connectionStatus_.load()));
     return Firebolt::Error::None;
 }
 
@@ -456,8 +455,7 @@ void Transport::onMessage(websocketpp::connection_hdl /* hdl */,
 void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl,
                        uint64_t generation)
 {
-    FIREBOLT_LOG_INFO("Transport", "[onOpen:%llu] entered thread=%zu",
-                      static_cast<unsigned long long>(generation),
+    FIREBOLT_LOG_INFO("Transport", "[onOpen:%llu] entered thread=%zu", static_cast<unsigned long long>(generation),
                       std::hash<std::thread::id>{}(std::this_thread::get_id()));
     // Populate responseHeaders_ from the connection's response headers
     {
@@ -500,8 +498,7 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
     {
         connectionReceiver_(true, Firebolt::Error::None);
     }
-    FIREBOLT_LOG_INFO("Transport", "[onOpen:%llu] callback returned",
-                      static_cast<unsigned long long>(generation));
+    FIREBOLT_LOG_INFO("Transport", "[onOpen:%llu] callback returned", static_cast<unsigned long long>(generation));
 }
 
 void Transport::onClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl,
