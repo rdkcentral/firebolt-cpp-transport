@@ -18,6 +18,12 @@ cmake_minimum_required(VERSION 3.12)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
+if (NOT DEFINED FIREBOLT_TRANSPORT_VERSION)
+    # TEMPORARY local override: the upstream build metadata is currently stale.
+    # Revert this once the project version is corrected to the intended release.
+    set(FIREBOLT_TRANSPORT_VERSION "1.1.13" CACHE STRING "Firebolt transport version")
+endif()
+
 project(FireboltTransport)
 
 include(version)
