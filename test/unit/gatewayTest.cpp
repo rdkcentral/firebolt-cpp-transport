@@ -17,12 +17,15 @@
  */
 
 #include "firebolt/gateway.h"
+#include "firebolt/helpers.h"
 #include "firebolt/logger.h"
 #include "gateway_testing.h"
 #include "utils.h"
 #include <arpa/inet.h>
 #include <atomic>
+#include <condition_variable>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <netinet/in.h>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -33,6 +36,25 @@
 #include <websocketpp/server.hpp>
 
 using namespace Firebolt::Transport;
+
+struct QueuedEventJson
+{
+    int value_ = 0;
+
+    void fromJson(const nlohmann::json& json) { value_ = json.get<int>(); }
+    int value() const { return value_; }
+};
+
+struct DeviceNetworkJson
+{
+    bool connected_ = false;
+
+    void fromJson(const nlohmann::json& json)
+    {
+        connected_ = json.at("state") == "connected" && json.at("type") == "wifi";
+    }
+    bool value() const { return connected_; }
+};
 
 struct ReservedLoopbackPort
 {
@@ -348,6 +370,175 @@ TEST_F(GatewayUTest, SubscribeUnsubscribe)
 
     err = gateway.unsubscribe("test.onEvent", &eventPromise);
     EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+TEST_F(GatewayUTest, DeviceNotificationDuringSubscribeThenStartupQuery)
+{
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        const auto request = nlohmann::json::parse(msg->get_payload());
+        const std::string method = request.at("method").get<std::string>();
+        const bool listening = request.value("params", nlohmann::json::object()).value("listen", false);
+
+        if (method == "Device.onNetworkChanged" && listening)
+        {
+            nlohmann::json event;
+            event["jsonrpc"] = "2.0";
+            event["method"] = method;
+            event["params"] = {{"state", "connected"}, {"type", "wifi"}};
+            m_server.send(hdl, event.dump(), msg->get_opcode());
+        }
+
+        nlohmann::json response;
+        response["jsonrpc"] = "2.0";
+        response["id"] = request.at("id");
+        if (method == "Device.onNetworkChanged")
+        {
+            response["result"] = {{"event", method}, {"listening", listening}};
+        }
+        else if (method == "Device.network")
+        {
+            response["result"] = {{"state", "connected"}, {"type", "wifi"}};
+        }
+        else
+        {
+            response["result"] = nlohmann::json::object();
+        }
+        m_server.send(hdl, response.dump(), msg->get_opcode());
+    };
+
+    connectAndWait();
+    auto& helper = Firebolt::Helpers::GetHelperInstance();
+    int owner = 0;
+    Firebolt::Helpers::SubscriptionManager subscriptions(helper, &owner);
+    std::promise<bool> eventPromise;
+    auto eventFuture = eventPromise.get_future();
+    std::atomic<int> callbackCount{0};
+    std::function<void(bool)> onNetworkChanged = [&eventPromise, &callbackCount](bool connected)
+    {
+        if (callbackCount.fetch_add(1) == 0)
+        {
+            eventPromise.set_value(connected);
+        }
+    };
+
+    auto subscription =
+        subscriptions.subscribe<DeviceNetworkJson, bool>("Device.onNetworkChanged", std::move(onNetworkChanged));
+    ASSERT_TRUE(subscription);
+
+    ASSERT_EQ(eventFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(eventFuture.get());
+    EXPECT_EQ(callbackCount.load(), 1);
+
+    auto network = helper.get<DeviceNetworkJson, bool>("Device.network");
+    ASSERT_TRUE(network);
+    EXPECT_TRUE(*network);
+
+    EXPECT_TRUE(subscriptions.unsubscribe(*subscription));
+}
+
+TEST_F(GatewayUTest, UnsubscribeDropsNotificationAlreadyQueuedOnWorker)
+{
+    IGateway& gateway = connectAndWait();
+
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        const auto request = nlohmann::json::parse(msg->get_payload());
+        if (request.value("method", std::string{}) == "test.trigger")
+        {
+            const auto sendEvent = [this, hdl](const std::string& method, const nlohmann::json& params)
+            {
+                nlohmann::json event;
+                event["jsonrpc"] = "2.0";
+                event["method"] = method;
+                event["params"] = params;
+                m_server.send(hdl, event.dump(), websocketpp::frame::opcode::text);
+            };
+            sendEvent("test.blockWorker", nlohmann::json::object());
+            sendEvent("test.onQueued", {{"value", 7}});
+            sendEvent("test.workerDrained", nlohmann::json::object());
+        }
+
+        nlohmann::json response;
+        response["jsonrpc"] = "2.0";
+        response["id"] = request["id"];
+        response["result"] = nlohmann::json::object();
+        if (request.contains("params") && request["params"].contains("listen"))
+        {
+            response["result"]["listening"] = request["params"]["listen"];
+        }
+        m_server.send(hdl, response.dump(), websocketpp::frame::opcode::text);
+    };
+
+    std::mutex workerMutex;
+    std::condition_variable workerCv;
+    bool blockerEntered = false;
+    bool releaseWorker = false;
+    struct ReleaseWorkerOnExit
+    {
+        std::mutex& mutex;
+        std::condition_variable& cv;
+        bool& release;
+
+        ~ReleaseWorkerOnExit()
+        {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                release = true;
+            }
+            cv.notify_all();
+        }
+    } releaseWorkerOnExit{workerMutex, workerCv, releaseWorker};
+
+    int blockerUserData = 0;
+    const Firebolt::Error blockerSubscribeStatus = gateway.subscribe(
+        "test.blockWorker",
+        [&](void*, const nlohmann::json&)
+        {
+            std::unique_lock<std::mutex> lock(workerMutex);
+            blockerEntered = true;
+            workerCv.notify_all();
+            workerCv.wait(lock, [&] { return releaseWorker; });
+        },
+        &blockerUserData);
+    ASSERT_EQ(blockerSubscribeStatus, Firebolt::Error::None);
+
+    int owner = 0;
+    std::atomic<int> targetCallbackCount{0};
+    Firebolt::Helpers::SubscriptionManager subscriptions(Firebolt::Helpers::GetHelperInstance(), &owner);
+    std::function<void(int)> targetCallback = [&targetCallbackCount](int) { ++targetCallbackCount; };
+    auto targetSubscription = subscriptions.subscribe<QueuedEventJson, int>("test.onQueued", std::move(targetCallback));
+    ASSERT_TRUE(targetSubscription);
+
+    std::promise<void> drainPromise;
+    auto drainFuture = drainPromise.get_future();
+    int drainUserData = 0;
+    const Firebolt::Error drainSubscribeStatus =
+        gateway
+            .subscribe("test.workerDrained", [&drainPromise](void*, const nlohmann::json&) { drainPromise.set_value(); }, &drainUserData);
+    ASSERT_EQ(drainSubscribeStatus, Firebolt::Error::None);
+
+    auto triggerFuture = gateway.request("test.trigger", nlohmann::json::object());
+    ASSERT_EQ(triggerFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    ASSERT_TRUE(triggerFuture.get());
+
+    {
+        std::unique_lock<std::mutex> lock(workerMutex);
+        ASSERT_TRUE(workerCv.wait_for(lock, std::chrono::seconds(2), [&] { return blockerEntered; }));
+    }
+
+    EXPECT_TRUE(subscriptions.unsubscribe(*targetSubscription));
+    {
+        std::lock_guard<std::mutex> lock(workerMutex);
+        releaseWorker = true;
+    }
+    workerCv.notify_all();
+
+    ASSERT_EQ(drainFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(targetCallbackCount.load(), 0);
+
+    EXPECT_EQ(gateway.unsubscribe("test.blockWorker", &blockerUserData), Firebolt::Error::None);
+    EXPECT_EQ(gateway.unsubscribe("test.workerDrained", &drainUserData), Firebolt::Error::None);
 }
 
 TEST_F(GatewayUTest, SubscribeAcceptsAcknowledgementWithinConfiguredTimeout)
