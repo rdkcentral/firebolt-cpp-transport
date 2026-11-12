@@ -44,6 +44,17 @@ struct QueuedEventJson
     int value() const { return value_; }
 };
 
+struct DeviceNetworkJson
+{
+    bool connected_ = false;
+
+    void fromJson(const nlohmann::json& json)
+    {
+        connected_ = json.at("state") == "connected" && json.at("type") == "wifi";
+    }
+    bool value() const { return connected_; }
+};
+
 struct ReservedLoopbackPort
 {
     int fd = -1;
@@ -358,6 +369,71 @@ TEST_F(GatewayUTest, SubscribeUnsubscribe)
 
     err = gateway.unsubscribe("test.onEvent", &eventPromise);
     EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+TEST_F(GatewayUTest, DeviceNotificationDuringSubscribeThenStartupQuery)
+{
+    m_messageHandler = [this](connection_hdl hdl, server::message_ptr msg)
+    {
+        const auto request = nlohmann::json::parse(msg->get_payload());
+        const std::string method = request.at("method").get<std::string>();
+        const bool listening = request.value("params", nlohmann::json::object()).value("listen", false);
+
+        if (method == "Device.onNetworkChanged" && listening)
+        {
+            nlohmann::json event;
+            event["jsonrpc"] = "2.0";
+            event["method"] = method;
+            event["params"] = {{"state", "connected"}, {"type", "wifi"}};
+            m_server.send(hdl, event.dump(), msg->get_opcode());
+        }
+
+        nlohmann::json response;
+        response["jsonrpc"] = "2.0";
+        response["id"] = request.at("id");
+        if (method == "Device.onNetworkChanged")
+        {
+            response["result"] = {{"event", method}, {"listening", listening}};
+        }
+        else if (method == "Device.network")
+        {
+            response["result"] = {{"state", "connected"}, {"type", "wifi"}};
+        }
+        else
+        {
+            response["result"] = nlohmann::json::object();
+        }
+        m_server.send(hdl, response.dump(), msg->get_opcode());
+    };
+
+    connectAndWait();
+    auto& helper = Firebolt::Helpers::GetHelperInstance();
+    int owner = 0;
+    Firebolt::Helpers::SubscriptionManager subscriptions(helper, &owner);
+    std::promise<bool> eventPromise;
+    auto eventFuture = eventPromise.get_future();
+    std::atomic<int> callbackCount{0};
+    std::function<void(bool)> onNetworkChanged = [&eventPromise, &callbackCount](bool connected)
+    {
+        if (callbackCount.fetch_add(1) == 0)
+        {
+            eventPromise.set_value(connected);
+        }
+    };
+
+    auto subscription =
+        subscriptions.subscribe<DeviceNetworkJson, bool>("Device.onNetworkChanged", std::move(onNetworkChanged));
+    ASSERT_TRUE(subscription);
+
+    ASSERT_EQ(eventFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_TRUE(eventFuture.get());
+    EXPECT_EQ(callbackCount.load(), 1);
+
+    auto network = helper.get<DeviceNetworkJson, bool>("Device.network");
+    ASSERT_TRUE(network);
+    EXPECT_TRUE(*network);
+
+    EXPECT_TRUE(subscriptions.unsubscribe(*subscription));
 }
 
 TEST_F(GatewayUTest, UnsubscribeDropsNotificationAlreadyQueuedOnWorker)
