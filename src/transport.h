@@ -58,7 +58,7 @@ public:
 
     /**
      * @brief Retrieve a response header by name from the server after connection.
-     * @param headerName The name of the header to retrieve.
+     * @param headerName The name of the header to retrieve (case-insensitive).
      * @return The header value if present, otherwise std::nullopt.
      */
     std::optional<std::string> getResponseHeader(const std::string& headerName);
