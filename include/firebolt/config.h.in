@@ -116,6 +116,33 @@ struct Config
      * Default: 10000 (10 seconds).
      */
     unsigned connect_attempt_timeout_ms = 10000;
+
+    /**
+     * @brief Minimum gap between clock samples treated as a process stop (ms).
+     *
+     * When the transport observes an interval between consecutive internal
+     * clock samples longer than this, it assumes the process was stopped
+     * (e.g. container hibernation) and excludes that interval from
+     * waitTime_ms accounting. The effective value is
+     * max(stopGapThreshold_ms, 4 * watchdogCycle_ms); a warning is logged
+     * if the configured value is clamped.
+     *
+     * Default: 2000.
+     */
+    unsigned stopGapThreshold_ms = 2000;
+
+    /**
+     * @brief Grace period after a detected process stop (ms of active time).
+     *
+     * After resuming, App Gateway may keep holding traffic for a while. During
+     * this window, requests that were pending at the resume or sent within it
+     * do not fail with Error::Timedout before the window ends, and
+     * subscribe/unsubscribe acknowledgement waits extend to the end of the
+     * window. 0 disables the grace period.
+     *
+     * Default: 5000.
+     */
+    unsigned resumeGrace_ms = 5000;
 };
 
 } // namespace Firebolt

@@ -18,9 +18,12 @@
 
 #include "firebolt/gateway.h"
 #include "firebolt/helpers.h"
+#include <exception>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 namespace Firebolt::Helpers
 {
@@ -38,8 +41,8 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& subscription : subscriptions_)
         {
-            void* notificationPtr = static_cast<void*>(subscription.second.get());
-            gateway_.unsubscribe(subscription.second->eventName, notificationPtr);
+            void* notificationPtr = static_cast<void*>(subscription.second.data.get());
+            gateway_.unsubscribe(subscription.second.data->eventName, notificationPtr);
         }
         subscriptions_.clear();
     }
@@ -62,8 +65,8 @@ public:
         {
             return Result<void>{Error::General};
         }
-        void* notificationPtr = static_cast<void*>(it->second.get());
-        auto errorStatus{gateway_.unsubscribe(it->second->eventName, notificationPtr)};
+        void* notificationPtr = static_cast<void*>(it->second.data.get());
+        auto errorStatus{gateway_.unsubscribe(it->second.data->eventName, notificationPtr)};
         subscriptions_.erase(it);
         return Result<void>{errorStatus};
     }
@@ -73,10 +76,10 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto it = subscriptions_.begin(); it != subscriptions_.end();)
         {
-            if (it->second->owner == owner)
+            if (it->second.data->owner == owner)
             {
-                void* notificationPtr = static_cast<void*>(it->second.get());
-                gateway_.unsubscribe(it->second->eventName, notificationPtr);
+                void* notificationPtr = static_cast<void*>(it->second.data.get());
+                gateway_.unsubscribe(it->second.data->eventName, notificationPtr);
                 it = subscriptions_.erase(it);
             }
             else
@@ -86,7 +89,53 @@ public:
         }
     }
 
+    Result<void> dispatchLocal(void* owner, const std::string& eventName, const nlohmann::json& payload) override
+    {
+        std::vector<std::pair<std::weak_ptr<SubscriptionData>, void (*)(void*, const nlohmann::json&)>> targets;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (const auto& subscription : subscriptions_)
+            {
+                if (subscription.second.data->owner == owner && subscription.second.data->eventName == eventName)
+                {
+                    targets.emplace_back(subscription.second.data, subscription.second.callback);
+                }
+            }
+        }
+        // Invoked outside the lock so callbacks may (un)subscribe. As with gateway delivery, a
+        // subscription removed before its turn (e.g. by an earlier callback) is dropped.
+        bool callbackFailed = false;
+        for (const auto& target : targets)
+        {
+            if (auto data = target.first.lock())
+            {
+                try
+                {
+                    target.second(data.get(), payload);
+                }
+                catch (const std::exception& e)
+                {
+                    callbackFailed = true;
+                    FIREBOLT_LOG_ERROR("Helper", "[dispatchLocal] callback threw for event='%s': %s", eventName.c_str(),
+                                       e.what());
+                }
+                catch (...)
+                {
+                    callbackFailed = true;
+                    FIREBOLT_LOG_ERROR("Helper", "[dispatchLocal] callback threw for event='%s'", eventName.c_str());
+                }
+            }
+        }
+        return Result<void>{callbackFailed ? Error::General : Error::None};
+    }
+
 private:
+    struct Subscription
+    {
+        std::shared_ptr<SubscriptionData> data;
+        void (*callback)(void*, const nlohmann::json&);
+    };
+
     Result<nlohmann::json> getJson(const std::string& methodName, const nlohmann::json& parameters) override
     {
         auto result = gateway_.request(methodName, parameters).get();
@@ -103,7 +152,7 @@ private:
         std::lock_guard<std::mutex> lock(mutex_);
         uint64_t newId = currentId_++;
         auto spData = std::make_shared<SubscriptionData>(SubscriptionData{owner, eventName, std::move(notification)});
-        subscriptions_[newId] = spData;
+        subscriptions_[newId] = Subscription{spData, callback};
         void* notificationPtr = static_cast<void*>(spData.get());
 
         // Guard the callback with a weak_ptr so that any notification already queued
@@ -138,7 +187,7 @@ private:
 
     Firebolt::Transport::IGateway& gateway_;
     std::mutex mutex_;
-    std::map<uint64_t, std::shared_ptr<SubscriptionData>> subscriptions_;
+    std::map<uint64_t, Subscription> subscriptions_;
     uint64_t currentId_{0};
 };
 } // namespace Firebolt::Helpers

@@ -302,6 +302,7 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
                 auto con = headerServer.get_con_from_hdl(hdl);
                 if (con)
                 {
+                    con->append_header("X-Response-Header", "ResponseValue");
                     std::string headerValue;
                     bool found = false;
                     const auto& requestHeaders = con->get_request().get_headers();
@@ -428,6 +429,14 @@ TEST_F(TransportIntegrationUTest, HeaderInjectionAndResponseHeaderRetrieval)
 
     auto stdHeader = transport.getResponseHeader("Sec-WebSocket-Accept");
     EXPECT_TRUE(stdHeader.has_value());
+
+    auto responseHeader = transport.getResponseHeader("X-Response-Header");
+    ASSERT_TRUE(responseHeader.has_value());
+    EXPECT_EQ(responseHeader.value(), "ResponseValue");
+    EXPECT_EQ(transport.getResponseHeader("x-response-header"), responseHeader);
+    EXPECT_EQ(transport.getResponseHeader("X-RESPONSE-HEADER"), responseHeader);
+    EXPECT_EQ(transport.getResponseHeader("x-ReSpOnSe-HeAdEr"), responseHeader);
+    EXPECT_EQ(transport.getResponseHeader("sec-websocket-accept"), stdHeader);
 
     auto customHeader = transport.getResponseHeader("X-Test-Header");
     EXPECT_EQ(customHeader, std::nullopt);

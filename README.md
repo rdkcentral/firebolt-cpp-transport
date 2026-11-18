@@ -45,6 +45,12 @@ gw.unsubscribe("module.onEvent", userdata);
 gw.disconnect();
 ```
 
+Local subscribers using the same exact event name share one upstream
+subscription, including mixed-case module names such as
+`Lifecycle2.onStateChanged`. Removing one local subscriber retains upstream
+delivery until the last subscriber is removed. Use the same wire spelling for
+subscribe, unsubscribe, and notifications; event names are not case-folded.
+
 ### `IHelper` — typed wrapper over IGateway
 ```cpp
 IHelper& helper = Firebolt::Helpers::GetHelperInstance();
@@ -65,6 +71,26 @@ helper.unsubscribe("device.onNameChanged", id);
 
 ## Building
 
+### Test-only ACK wait observation
+
+`-DFIREBOLT_TRANSPORT_ACK_OBSERVER=ON` enables an internal Linux test observer;
+it is **OFF by default and must not be enabled for release builds**. No public
+SDK API is added. A test controller may pass an inherited nonblocking pipe
+descriptor in `FIREBOLT_ACK_OBSERVER_FD`. Without that variable, the observer
+build emits nothing. Invalid descriptors or incomplete writes fail explicitly.
+
+Each subscribe/unsubscribe wait emits newline-delimited JSON entry/exit records
+with the wire operation ID, listen flag, original active-time budget,
+CLOCK_MONOTONIC start/observation timestamps and ready-future outcome. The
+controller owns SIGSTOP/SIGCONT and must independently prove that all threads
+stopped before the original budget expired, with no exit record at stop. Entry
+is observation, not a blocking barrier; no timeout or poll slice is extended.
+Unsubscribe's ordinary success return on ACK timeout is unchanged: an exit
+record with `ready: false` cannot qualify ACK receipt.
+
+Observer SDK artifacts require separate provenance. Their local test evidence
+does not qualify production release builds, actual Dobby/memcr or GUI survival.
+
 Dependencies (GTest, nlohmann_json, websocketpp, gcovr) are only available inside the CI Docker image. Use the helper scripts:
 
 ```bash
@@ -80,11 +106,38 @@ For cross-compilation against a sysroot (e.g. for device targets):
 SYSROOT_PATH=/path/to/sysroot ./build.sh --release
 ```
 
+## Hibernation / Process Freeze
+
+When the hosting container is hibernated the process is frozen (e.g. `SIGSTOP`, cgroup freezer) and later resumed. The transport detects this from the gap in its watchdog clock and adapts:
+
+| `Config` field | Default | Meaning |
+|---|---|---|
+| `waitTime_ms` | 3000 | Request timeout, counted in **active** time only; stopped time is excluded |
+| `stopGapThreshold_ms` | 2000 | Wall-clock gap treated as a stop. Clamped to at least 4 x `watchdogCycle_ms` |
+| `resumeGrace_ms` | 5000 | After a detected stop, pending requests and subscribe acknowledgements are not failed before this much active time has passed. `0` disables |
+
+```cpp
+gw.setResumeListener([](std::chrono::milliseconds stoppedFor) {
+    // Runs on the notification worker thread; may issue requests (e.g. re-query state).
+});
+gw.setResumeListener(nullptr); // clear
+```
+
+The transport is lifecycle-agnostic: it only reports that a stop happened. Reconciling application state (e.g. lifecycle) is the client library's job.
+
+Tests: `test/unit/hibernationTest.cpp` and `activeClockTest.cpp` use an injected clock (deterministic); `test/integration/hibernationHarness.cpp` freezes a real forked child with `SIGSTOP`/`SIGCONT`. Both run as part of `./test.sh`. To run only the harness after a build:
+
+```bash
+docker run --rm -v $PWD:/workspace firebolt-cpp-transport-ci:local \
+    bash -c "ctest --test-dir build-dev/test -L hibernation --output-on-failure"
+```
+
 ## Project Layout
 ```
 include/firebolt/   public headers (gateway.h, helpers.h, json_types.h, types.h, logger.h)
 src/                implementation
 test/unit/          GTest unit tests (*Test.cpp)
+test/integration/   integration tests and the SIGSTOP hibernation harness
 .github/Dockerfile  CI image definition
 ```
 
@@ -126,7 +179,7 @@ if (value) {
 
 - If the header is present, its value is returned.
 - If the header is not present, `std::nullopt` is returned.
-- Header-name lookup is case-sensitive; use the same capitalization as received from the server.
+- Header-name lookup is case-insensitive, as required by HTTP; header values are returned unchanged.
 
 #### Thread Safety
 Header operations are thread-safe. Access to response headers is protected by a mutex internally.
@@ -151,4 +204,3 @@ Example:
 export FIREBOLT_TRANSPORT_LOG_LEVEL=debug
 export FIREBOLT_TRANSPORT_LOG_FILE=/opt/logs/firebolt-transport.log
 ```
-

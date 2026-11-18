@@ -27,6 +27,7 @@ set(UNIT_TESTS_APP utApp)
 message("Setup ${UNIT_TESTS_APP}")
 
 file(GLOB UNIT_TESTS CONFIGURE_DEPENDS unit/*Test.cpp)
+list(REMOVE_ITEM UNIT_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/diagnosticsTest.cpp")
 
 add_executable(${UNIT_TESTS_APP}
     UnitTestsMain.cpp
@@ -42,6 +43,9 @@ target_link_options(${UNIT_TESTS_APP} PRIVATE --coverage)
 # target that happens to link FireboltTransport during the test build.
 target_compile_definitions(FireboltTransport PRIVATE FIREBOLT_TRANSPORT_TESTING=1)
 target_compile_definitions(${UNIT_TESTS_APP} PRIVATE FIREBOLT_TRANSPORT_TESTING=1)
+if(FIREBOLT_TRANSPORT_ACK_OBSERVER)
+    target_compile_definitions(${UNIT_TESTS_APP} PRIVATE FIREBOLT_TRANSPORT_ACK_OBSERVER=1)
+endif()
 
 target_link_libraries(${UNIT_TESTS_APP}
     PRIVATE
@@ -74,3 +78,37 @@ if(DISCOVER_UT)
             ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/src"
     )
 endif()
+
+# End-to-end freeze harness: real SIGSTOP/SIGCONT of a forked child using the transport.
+# Plain executable (no gtest): it forks before any thread exists.
+set(HIBERNATION_HARNESS_APP hibernationHarness)
+
+add_executable(${HIBERNATION_HARNESS_APP} integration/hibernationHarness.cpp)
+
+target_link_libraries(${HIBERNATION_HARNESS_APP}
+    PRIVATE
+        FireboltTransport
+        nlohmann_json::nlohmann_json
+)
+
+target_link_options(${HIBERNATION_HARNESS_APP} PRIVATE --coverage)
+
+target_include_directories(${HIBERNATION_HARNESS_APP}
+    PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/>
+        $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/src>
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/test/>
+)
+
+set_target_properties(${HIBERNATION_HARNESS_APP} PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    BUILD_RPATH "${CMAKE_BINARY_DIR}/src"
+)
+
+add_test(NAME HibernationSigstopHarness COMMAND ${HIBERNATION_HARNESS_APP})
+set_tests_properties(HibernationSigstopHarness PROPERTIES
+    TIMEOUT 60
+    LABELS "integration;hibernation"
+    ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/src"
+)

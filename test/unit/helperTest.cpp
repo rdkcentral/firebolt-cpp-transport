@@ -19,9 +19,11 @@
 #include "firebolt/gateway.h"
 #include "firebolt/helpers.h"
 #include "helpers_impl.h"
+#include <algorithm>
 #include <future>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 using namespace Firebolt;
 using namespace Firebolt::Helpers;
@@ -53,6 +55,8 @@ public:
                 (override));
     MOCK_METHOD(Result<void>, unsubscribe, (SubscriptionId id), (override));
     MOCK_METHOD(void, unsubscribeAll, (void* owner), (override));
+    MOCK_METHOD(Result<void>, dispatchLocal, (void* owner, const std::string& eventName, const nlohmann::json& payload),
+                (override));
 };
 
 struct TestJson
@@ -711,4 +715,191 @@ TEST_F(HelperUTest, WeakPtrGuard_NotificationDroppedAfterUnsubscribeById)
 
     EXPECT_FALSE(notificationFired);
     // Reaching this line without crashing IS the primary assertion of this test
+}
+
+// ---------------------------------------------------------------------------
+// Local dispatch: deliver a synthesized payload to an owner's own subscribers,
+// without the wire (used by the client to reconcile state after a resume).
+// ---------------------------------------------------------------------------
+
+namespace
+{
+void throwingDispatchCallback(void*, const nlohmann::json&)
+{
+    throw std::runtime_error("subscriber failure");
+}
+
+void countingDispatchCallback(void* context, const nlohmann::json&)
+{
+    auto* subscription = static_cast<SubscriptionData*>(context);
+    ++*std::any_cast<int*>(subscription->notification);
+}
+
+// Implements only the pure virtuals, so dispatchLocal falls back to the IHelper default.
+class MinimalHelper : public IHelper
+{
+public:
+    Result<void> invoke(const std::string&, const nlohmann::json&) override { return Result<void>{Error::None}; }
+    Result<SubscriptionId> subscribe(void*, const std::string&, std::any&&, void (*)(void*, const nlohmann::json&)) override
+    {
+        return Result<SubscriptionId>{Error::General};
+    }
+    Result<void> unsubscribe(SubscriptionId) override { return Result<void>{Error::None}; }
+    void unsubscribeAll(void*) override {}
+
+private:
+    Result<nlohmann::json> getJson(const std::string&, const nlohmann::json&) override
+    {
+        return Result<nlohmann::json>{Error::General};
+    }
+};
+} // namespace
+
+// Covers: IHelper::dispatchLocal default (non-pure; existing implementations keep compiling)
+TEST(IHelperDefaultUTest, DispatchLocalDefaultsToError)
+{
+    MinimalHelper helper;
+    IHelper& ihelper = helper;
+    auto result = ihelper.dispatchLocal(&helper, "test.onEvent", nlohmann::json{{"value", 1}});
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), Error::General);
+}
+
+// Covers: HelperImpl::dispatchLocal delivers only to the given owner's subscribers of the given event
+TEST_F(HelperUTest, DispatchLocalDeliversToOwnerSubscribersOfEvent)
+{
+    EXPECT_CALL(mockGateway, subscribe(_, _, _)).WillRepeatedly(Return(Error::None));
+    EXPECT_CALL(mockGateway, unsubscribe(_, _)).WillRepeatedly(Return(Error::None));
+
+    int ownerA = 0;
+    int ownerB = 0;
+    std::vector<std::string> delivered;
+    auto record = [&delivered](const std::string& tag) {
+        return std::function<void(int)>([&delivered, tag](int v) { delivered.push_back(tag + ":" + std::to_string(v)); });
+    };
+
+    IHelper& ihelper = helper;
+    ASSERT_TRUE(ihelper.subscribe(&ownerA, "test.onEvent", record("a1"), onPropertyChangedCallback<TestJson, int>));
+    ASSERT_TRUE(ihelper.subscribe(&ownerA, "test.onEvent", record("a2"), onPropertyChangedCallback<TestJson, int>));
+    ASSERT_TRUE(ihelper.subscribe(&ownerA, "test.onOther", record("aOther"), onPropertyChangedCallback<TestJson, int>));
+    ASSERT_TRUE(ihelper.subscribe(&ownerB, "test.onEvent", record("b"), onPropertyChangedCallback<TestJson, int>));
+
+    auto result = ihelper.dispatchLocal(&ownerA, "test.onEvent", nlohmann::json{{"value", 7}});
+
+    EXPECT_TRUE(result);
+    std::sort(delivered.begin(), delivered.end());
+    EXPECT_EQ(delivered, (std::vector<std::string>{"a1:7", "a2:7"}));
+}
+
+TEST_F(HelperUTest, DispatchLocalContinuesAfterSubscriberThrows)
+{
+    EXPECT_CALL(mockGateway, subscribe(_, _, _)).WillRepeatedly(Return(Error::None));
+    EXPECT_CALL(mockGateway, unsubscribe(_, _)).WillRepeatedly(Return(Error::None));
+
+    int owner = 0;
+    int delivered = 0;
+    IHelper& ihelper = helper;
+    ASSERT_TRUE(ihelper.subscribe(&owner, "test.onEvent", std::any{}, throwingDispatchCallback));
+    ASSERT_TRUE(ihelper.subscribe(&owner, "test.onEvent", std::any{&delivered}, countingDispatchCallback));
+
+    auto result = ihelper.dispatchLocal(&owner, "test.onEvent", nlohmann::json::object());
+
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.error(), Error::General);
+    EXPECT_EQ(delivered, 1);
+}
+
+// Covers: HelperImpl::dispatchLocal with no matching subscribers succeeds and delivers nothing
+TEST_F(HelperUTest, DispatchLocalWithoutSubscribersDeliversNothing)
+{
+    int owner = 0;
+    IHelper& ihelper = helper;
+    auto result = ihelper.dispatchLocal(&owner, "test.onEvent", nlohmann::json{{"value", 7}});
+    EXPECT_TRUE(result);
+}
+
+// Covers: HelperImpl::dispatchLocal skips subscriptions removed by unsubscribe
+TEST_F(HelperUTest, DispatchLocalSkipsUnsubscribed)
+{
+    EXPECT_CALL(mockGateway, subscribe(_, _, _)).WillRepeatedly(Return(Error::None));
+    EXPECT_CALL(mockGateway, unsubscribe(_, _)).WillRepeatedly(Return(Error::None));
+
+    int owner = 0;
+    int calls = 0;
+    std::function<void(int)> notification = [&calls](int) { ++calls; };
+    IHelper& ihelper = helper;
+    auto id =
+        ihelper.subscribe(&owner, "test.onEvent", std::move(notification), onPropertyChangedCallback<TestJson, int>);
+    ASSERT_TRUE(id);
+    ASSERT_TRUE(helper.unsubscribe(*id));
+
+    EXPECT_TRUE(ihelper.dispatchLocal(&owner, "test.onEvent", nlohmann::json{{"value", 7}}));
+    EXPECT_EQ(calls, 0);
+}
+
+// Covers: HelperImpl::dispatchLocal lets a subscriber unsubscribe from inside its callback (no self-deadlock)
+TEST_F(HelperUTest, DispatchLocalAllowsUnsubscribeFromCallback)
+{
+    EXPECT_CALL(mockGateway, subscribe(_, _, _)).WillRepeatedly(Return(Error::None));
+    EXPECT_CALL(mockGateway, unsubscribe(_, _)).WillRepeatedly(Return(Error::None));
+
+    int owner = 0;
+    SubscriptionId id = 0;
+    int calls = 0;
+    std::function<void(int)> notification = [this, &id, &calls](int)
+    {
+        ++calls;
+        helper.unsubscribe(id);
+    };
+    IHelper& ihelper = helper;
+    auto subResult =
+        ihelper.subscribe(&owner, "test.onEvent", std::move(notification), onPropertyChangedCallback<TestJson, int>);
+    ASSERT_TRUE(subResult);
+    id = *subResult;
+
+    EXPECT_TRUE(ihelper.dispatchLocal(&owner, "test.onEvent", nlohmann::json{{"value", 7}}));
+    EXPECT_EQ(calls, 1);
+}
+
+// Covers: HelperImpl::dispatchLocal drops a subscription removed by an earlier callback in the same dispatch
+TEST_F(HelperUTest, DispatchLocalDropsSubscriptionRemovedMidDispatch)
+{
+    EXPECT_CALL(mockGateway, subscribe(_, _, _)).WillRepeatedly(Return(Error::None));
+    EXPECT_CALL(mockGateway, unsubscribe(_, _)).WillRepeatedly(Return(Error::None));
+
+    int owner = 0;
+    SubscriptionId first = 0;
+    SubscriptionId second = 0;
+    int calls = 0;
+    // Whichever runs first removes the other; exactly one must be delivered.
+    std::function<void(int)> a = [this, &second, &calls](int)
+    {
+        ++calls;
+        helper.unsubscribe(second);
+    };
+    std::function<void(int)> b = [this, &first, &calls](int)
+    {
+        ++calls;
+        helper.unsubscribe(first);
+    };
+    IHelper& ihelper = helper;
+    auto r1 = ihelper.subscribe(&owner, "test.onEvent", std::move(a), onPropertyChangedCallback<TestJson, int>);
+    auto r2 = ihelper.subscribe(&owner, "test.onEvent", std::move(b), onPropertyChangedCallback<TestJson, int>);
+    ASSERT_TRUE(r1);
+    ASSERT_TRUE(r2);
+    first = *r1;
+    second = *r2;
+
+    EXPECT_TRUE(ihelper.dispatchLocal(&owner, "test.onEvent", nlohmann::json{{"value", 7}}));
+    EXPECT_EQ(calls, 1);
+}
+
+// Covers: SubscriptionManager::dispatch forwarding to IHelper::dispatchLocal with its owner
+TEST_F(SubscriptionManagerUTest, DispatchForwardsToHelperWithOwner)
+{
+    EXPECT_CALL(mockHelper, dispatchLocal(owner, "test.onEvent", nlohmann::json{{"value", 3}}))
+        .WillOnce(Return(Result<void>{Error::None}));
+    auto result = subscriptionManager->dispatch("test.onEvent", nlohmann::json{{"value", 3}});
+    EXPECT_TRUE(result);
+    EXPECT_CALL(mockHelper, unsubscribeAll(owner)).Times(::testing::AnyNumber());
 }
