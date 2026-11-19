@@ -41,6 +41,9 @@ add_library(${TARGET}
 )
 
 add_library(${TARGET}::${TARGET} ALIAS ${TARGET})
+if(FIREBOLT_TRANSPORT_ACK_OBSERVER)
+    target_compile_definitions(${TARGET} PRIVATE FIREBOLT_TRANSPORT_ACK_OBSERVER=1)
+endif()
 
 set(FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL "" CACHE STRING "Built-in log level override (empty uses runtime/config)")
 set_property(CACHE FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL PROPERTY STRINGS "" error warning notice info debug)
