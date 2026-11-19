@@ -147,10 +147,14 @@ When set, `FIREBOLT_TRANSPORT_LOG_LEVEL` overrides `config.log.level` passed by 
 - `FIREBOLT_TRANSPORT_LOG_OUTPUT`: `stdout|stderr|syslog` selects the stream when no build-time default or log file is configured. If unset, the existing build default is used (stderr or syslog with `ENABLE_SYSLOG`). Requesting syslog without `ENABLE_SYSLOG` falls back to stderr.
 - Note: changing environment variables at runtime is not guaranteed to be thread-safe on all platforms; prefer setting these variables before starting the transport, or avoid updating them while multiple threads are logging.
 
+Invalid non-empty CMake logging defaults fail configuration. Leave both cache
+settings empty to retain runtime overrides. A version/SONAME override does not
+replace checkout Git identity in diagnostic banners; source archives may supply
+`FIREBOLT_GIT_REF` explicitly.
+
 Example:
 
 ```bash
 export FIREBOLT_TRANSPORT_LOG_LEVEL=debug
 export FIREBOLT_TRANSPORT_LOG_OUTPUT=stdout
 ```
-

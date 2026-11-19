@@ -473,11 +473,19 @@ TEST_F(GatewayUTest, UnsubscribeDropsNotificationAlreadyQueuedOnWorker)
     std::condition_variable workerCv;
     bool blockerEntered = false;
     bool releaseWorker = false;
+    int blockerUserData = 0;
+    int owner = 0;
+    std::atomic<int> targetCallbackCount{0};
+    Firebolt::Helpers::SubscriptionManager subscriptions(Firebolt::Helpers::GetHelperInstance(), &owner);
+    std::promise<void> drainPromise;
+    auto drainFuture = drainPromise.get_future();
+    int drainUserData = 0;
     struct ReleaseWorkerOnExit
     {
         std::mutex& mutex;
         std::condition_variable& cv;
         bool& release;
+        IGateway& gateway;
 
         ~ReleaseWorkerOnExit()
         {
@@ -486,10 +494,10 @@ TEST_F(GatewayUTest, UnsubscribeDropsNotificationAlreadyQueuedOnWorker)
                 release = true;
             }
             cv.notify_all();
+            gateway.disconnect();
         }
-    } releaseWorkerOnExit{workerMutex, workerCv, releaseWorker};
+    } releaseWorkerOnExit{workerMutex, workerCv, releaseWorker, gateway};
 
-    int blockerUserData = 0;
     const Firebolt::Error blockerSubscribeStatus = gateway.subscribe(
         "test.blockWorker",
         [&](void*, const nlohmann::json&)
@@ -502,16 +510,10 @@ TEST_F(GatewayUTest, UnsubscribeDropsNotificationAlreadyQueuedOnWorker)
         &blockerUserData);
     ASSERT_EQ(blockerSubscribeStatus, Firebolt::Error::None);
 
-    int owner = 0;
-    std::atomic<int> targetCallbackCount{0};
-    Firebolt::Helpers::SubscriptionManager subscriptions(Firebolt::Helpers::GetHelperInstance(), &owner);
     std::function<void(int)> targetCallback = [&targetCallbackCount](int) { ++targetCallbackCount; };
     auto targetSubscription = subscriptions.subscribe<QueuedEventJson, int>("test.onQueued", std::move(targetCallback));
     ASSERT_TRUE(targetSubscription);
 
-    std::promise<void> drainPromise;
-    auto drainFuture = drainPromise.get_future();
-    int drainUserData = 0;
     const Firebolt::Error drainSubscribeStatus =
         gateway
             .subscribe("test.workerDrained", [&drainPromise](void*, const nlohmann::json&) { drainPromise.set_value(); }, &drainUserData);

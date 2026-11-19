@@ -65,6 +65,10 @@ public:
     std::optional<std::string> getResponseHeader(const std::string& headerName);
 
 #ifdef FIREBOLT_TRANSPORT_TESTING
+    void testSetBeforeOpenNotification(std::function<void()> callback)
+    {
+        beforeOpenNotification_ = std::move(callback);
+    }
     void testSetConnectionReceiver(ConnectionCallback callback) { connectionReceiver_ = callback; }
 
     void testInvokeOnClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
@@ -99,6 +103,10 @@ private:
     std::unique_ptr<websocketpp::client<websocketpp::config::asio_client>> client_;
     std::atomic<TransportState> connectionStatus_;
     std::mutex lifecycleMutex_;
+    std::recursive_mutex connectionNotificationMutex_;
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    std::function<void()> beforeOpenNotification_;
+#endif
     std::atomic<uint64_t> lifecycleGeneration_{0};
     std::atomic<unsigned> id_counter_ = 0;
     bool debugEnabled_ = false;

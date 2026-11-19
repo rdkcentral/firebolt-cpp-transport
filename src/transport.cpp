@@ -301,6 +301,8 @@ Firebolt::Error Transport::disconnect()
     const uint64_t generation = lifecycleGeneration_.load(std::memory_order_relaxed);
     TransportState state;
     {
+        // Serialize the transition with success delivery, but never hold this lock while joining the I/O thread.
+        std::lock_guard<std::recursive_mutex> notificationLock(connectionNotificationMutex_);
         std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
         state = connectionStatus_.load();
         FIREBOLT_LOG_INFO("Transport", "[disconnect:%llu] requested thread=%zu state=%d",
@@ -496,7 +498,27 @@ void Transport::onOpen(websocketpp::client<websocketpp::config::asio_client>* c,
                         static_cast<unsigned long long>(generation), static_cast<int>(connectionStatus_.load()));
     if (connectionAccepted)
     {
-        connectionReceiver_(true, Firebolt::Error::None);
+#ifdef FIREBOLT_TRANSPORT_TESTING
+        if (beforeOpenNotification_)
+        {
+            beforeOpenNotification_();
+        }
+#endif
+        std::lock_guard<std::recursive_mutex> notificationLock(connectionNotificationMutex_);
+        {
+            std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+            connectionAccepted = connectionStatus_ == TransportState::Connected &&
+                                 lifecycleGeneration_.load(std::memory_order_relaxed) == generation;
+        }
+        if (connectionAccepted)
+        {
+            connectionReceiver_(true, Firebolt::Error::None);
+        }
+        else
+        {
+            FIREBOLT_LOG_INFO("Transport", "[onOpen:%llu] suppressing success after teardown started",
+                              static_cast<unsigned long long>(generation));
+        }
     }
     FIREBOLT_LOG_INFO("Transport", "[onOpen:%llu] callback returned", static_cast<unsigned long long>(generation));
 }
