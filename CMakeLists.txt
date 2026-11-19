@@ -75,6 +75,6 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 
 add_subdirectory(src)
 
-if(ENABLE_TESTS)
+if(ENABLE_TESTS AND FIREBOLT_TRANSPORT_STANDALONE)
     add_subdirectory(test)
 endif()

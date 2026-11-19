@@ -1,3 +1,4 @@
+
 # Copyright 2025 Comcast Cable Communications Management, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,8 +21,9 @@ include(CMakePackageConfigHelpers)
 
 set(TARGET ${PROJECT_NAME})
 message("Setup ${TARGET} v${PROJECT_VERSION}")
+
 if(ENABLE_LEGACY_RPC_V1)
-  message("RPC-v1 enabled")
+    message("RPC-v1 enabled")
 endif()
 
 string(TOLOWER "${TARGET}" TARGET_LOWER)
@@ -41,29 +43,47 @@ add_library(${TARGET}
 )
 
 add_library(${TARGET}::${TARGET} ALIAS ${TARGET})
+
 if(FIREBOLT_TRANSPORT_ACK_OBSERVER)
     target_compile_definitions(${TARGET} PRIVATE FIREBOLT_TRANSPORT_ACK_OBSERVER=1)
 endif()
 
-set(FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL "" CACHE STRING "Built-in log level override (empty uses runtime/config)")
-set_property(CACHE FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL PROPERTY STRINGS "" error warning notice info debug)
-set(FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT "" CACHE STRING "Built-in log output override (empty uses runtime/default)")
-set_property(CACHE FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT PROPERTY STRINGS "" stdout stderr syslog)
+set(FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL "" CACHE STRING
+    "Built-in log level override (empty uses runtime/config)")
+
+set_property(CACHE FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL
+    PROPERTY STRINGS "" error warning notice info debug)
+
+set(FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT "" CACHE STRING
+    "Built-in log output override (empty uses runtime/default)")
+
+set_property(CACHE FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT
+    PROPERTY STRINGS "" stdout stderr syslog)
+
 if(NOT FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL STREQUAL "")
     set(_log_levels error warning notice info debug)
     list(FIND _log_levels "${FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL}" _log_level)
+
     if(_log_level EQUAL -1)
-        message(FATAL_ERROR "Invalid FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL: ${FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL}")
+        message(FATAL_ERROR
+            "Invalid FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL: ${FIREBOLT_TRANSPORT_DEFAULT_LOG_LEVEL}")
     endif()
-    target_compile_definitions(${TARGET} PRIVATE FIREBOLT_TRANSPORT_LOG_LEVEL_DEFAULT=${_log_level})
+
+    target_compile_definitions(${TARGET}
+        PRIVATE FIREBOLT_TRANSPORT_LOG_LEVEL_DEFAULT=${_log_level})
 endif()
+
 if(NOT FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT STREQUAL "")
     set(_log_outputs default stdout stderr syslog)
     list(FIND _log_outputs "${FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT}" _log_output)
+
     if(_log_output LESS 1)
-        message(FATAL_ERROR "Invalid FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT: ${FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT}")
+        message(FATAL_ERROR
+            "Invalid FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT: ${FIREBOLT_TRANSPORT_DEFAULT_LOG_OUTPUT}")
     endif()
-    target_compile_definitions(${TARGET} PRIVATE FIREBOLT_TRANSPORT_LOG_OUTPUT_DEFAULT=${_log_output})
+
+    target_compile_definitions(${TARGET}
+        PRIVATE FIREBOLT_TRANSPORT_LOG_OUTPUT_DEFAULT=${_log_output})
 endif()
 
 if(ENABLE_LEGACY_RPC_V1)
@@ -93,7 +113,7 @@ configure_file(
 )
 
 configure_file(
-    "${CMAKE_SOURCE_DIR}/include/firebolt/config.h.in"
+    "${PROJECT_SOURCE_DIR}/include/firebolt/config.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/firebolt/config.h"
     @ONLY
 )
@@ -112,7 +132,7 @@ target_include_directories(${TARGET}
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
@@ -122,6 +142,7 @@ set_target_properties(${TARGET} PROPERTIES
     CXX_STANDARD_REQUIRED YES
     POSITION_INDEPENDENT_CODE ON
 )
+
 if(DISABLE_SO_VERSION)
     set_target_properties(${TARGET} PROPERTIES
         NO_SONAME ON
@@ -142,7 +163,7 @@ write_basic_package_version_file(
 )
 
 configure_package_config_file(
-    "${CMAKE_SOURCE_DIR}/cmake/${PROJECT_NAME}Config.cmake.in"
+    "${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}Config.cmake.in"
     "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
 )
@@ -162,7 +183,7 @@ install(
 )
 
 install(
-    DIRECTORY ${CMAKE_SOURCE_DIR}/include/
+    DIRECTORY "${PROJECT_SOURCE_DIR}/include/"
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/
     FILES_MATCHING PATTERN "*.h"
 )
