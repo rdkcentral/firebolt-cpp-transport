@@ -50,7 +50,7 @@ std::string toLowerCopy(std::string value)
     return value;
 }
 
-std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
+[[maybe_unused]] std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
 {
     // Copy to a local buffer immediately: the pointer returned by getenv() can
     // become stale if another thread calls setenv/unsetenv/putenv.
@@ -92,7 +92,51 @@ std::optional<Firebolt::LogLevel> parseEnvLogLevel(const char* name)
     return std::nullopt;
 }
 
-bool isEnvLogDisabled(const char* name)
+enum class LogOutput
+{
+    Default = 0,
+    Stdout = 1,
+    Stderr = 2,
+    Syslog = 3
+};
+
+[[maybe_unused]] LogOutput resolveLogOutputFromEnvironment()
+{
+    char buffer[32];
+    const char* raw = std::getenv("FIREBOLT_TRANSPORT_LOG_OUTPUT");
+    if (raw == nullptr || *raw == '\0' || std::strlen(raw) >= sizeof(buffer))
+    {
+        return LogOutput::Default;
+    }
+
+    std::strncpy(buffer, raw, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+    const std::string value = toLowerCopy(buffer);
+    if (value == "stdout")
+    {
+        return LogOutput::Stdout;
+    }
+    if (value == "stderr")
+    {
+        return LogOutput::Stderr;
+    }
+    if (value == "syslog")
+    {
+        return LogOutput::Syslog;
+    }
+    return LogOutput::Default;
+}
+
+LogOutput resolveLogOutput()
+{
+#ifdef FIREBOLT_TRANSPORT_LOG_OUTPUT_DEFAULT
+    return static_cast<LogOutput>(FIREBOLT_TRANSPORT_LOG_OUTPUT_DEFAULT);
+#else
+    return resolveLogOutputFromEnvironment();
+#endif
+}
+
+[[maybe_unused]] bool isEnvLogDisabled(const char* name)
 {
     // Copy to a local buffer immediately: the pointer returned by getenv() can
     // become stale if another thread calls setenv/unsetenv/putenv.
@@ -329,6 +373,11 @@ void Logger::setLogLevel(LogLevel logLevel)
 
 LogLevel Logger::resolveLogLevelFromEnvironment(LogLevel defaultLevel)
 {
+#ifdef FIREBOLT_TRANSPORT_LOG_LEVEL_DEFAULT
+    static_cast<void>(defaultLevel);
+    _loggingEnabled.store(true);
+    return static_cast<LogLevel>(FIREBOLT_TRANSPORT_LOG_LEVEL_DEFAULT);
+#else
     if (isEnvLogDisabled("FIREBOLT_TRANSPORT_LOG_LEVEL"))
     {
         _loggingEnabled.store(false);
@@ -342,6 +391,7 @@ LogLevel Logger::resolveLogLevelFromEnvironment(LogLevel defaultLevel)
     }
 
     return defaultLevel;
+#endif
 }
 
 void Logger::setFormat(bool addTs, bool addLocation, bool addFunction, bool addThreadId)
@@ -450,13 +500,25 @@ void Logger::log(LogLevel logLevel, const std::string& module, const std::string
 
     if (!tryWriteToConfiguredLogFile(formattedMsg))
     {
+        const auto output = resolveLogOutput();
 #ifdef ENABLE_SYSLOG
-        const auto syslogLevel = _logLevel2SysLog.find(logLevel);
-        syslog(syslogLevel != _logLevel2SysLog.end() ? syslogLevel->second : LOG_ERR, "%s", formattedMsg);
+        if (output == LogOutput::Default || output == LogOutput::Syslog)
+        {
+            const auto syslogLevel = _logLevel2SysLog.find(logLevel);
+            syslog(syslogLevel != _logLevel2SysLog.end() ? syslogLevel->second : LOG_ERR, "%s", formattedMsg);
+            return;
+        }
 #else
-        fprintf(stderr, "%s\n", formattedMsg);
-        fflush(stderr);
+        if (output == LogOutput::Syslog)
+        {
+            fprintf(stderr, "%s\n", formattedMsg);
+            fflush(stderr);
+            return;
+        }
 #endif
+        FILE* stream = output == LogOutput::Stdout ? stdout : stderr;
+        fprintf(stream, "%s\n", formattedMsg);
+        fflush(stream);
     }
 }
 } // namespace Firebolt

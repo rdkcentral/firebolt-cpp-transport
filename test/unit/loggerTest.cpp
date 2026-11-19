@@ -42,6 +42,7 @@ protected:
     void SetUp() override
     {
         unsetenv("FIREBOLT_TRANSPORT_LOG_LEVEL");
+        unsetenv("FIREBOLT_TRANSPORT_LOG_OUTPUT");
         // Force the file sink to an unwritable path (a directory) so that stderr-based
         // assertions are not silently swallowed when FIREBOLT_TRANSPORT_LOG_FILE env var
         // might otherwise direct logs to a file. Individual file-sink tests override this.
@@ -54,38 +55,38 @@ protected:
     {
         // Restore defaults
         unsetenv("FIREBOLT_TRANSPORT_LOG_LEVEL");
+        unsetenv("FIREBOLT_TRANSPORT_LOG_OUTPUT");
         unsetenv("FIREBOLT_TRANSPORT_LOG_FILE");
         Logger::resolveLogLevelFromEnvironment(LogLevel::Error);
         Logger::setFormat(true, false, true, true);
         Logger::setLogLevel(LogLevel::Error);
     }
 
-    // Captures stderr output from a Logger::log call via the FIREBOLT_LOG_ERROR macro style
-    std::string captureLogCall(LogLevel level, const std::string& module, const char* msg)
+    std::string captureLogCall(LogLevel level, const std::string& module, const char* msg, int outputFd = STDERR_FILENO)
     {
-        // Redirect stderr to a pipe
-        fflush(stderr);
+        FILE* stream = outputFd == STDOUT_FILENO ? stdout : stderr;
+        fflush(stream);
         int pipefd[2] = {-1, -1};
         if (pipe(pipefd) != 0)
         {
             ADD_FAILURE() << "pipe() failed while capturing logger output";
             return std::string();
         }
-        int savedStderr = dup(STDERR_FILENO);
-        if (savedStderr < 0)
+        int savedOutput = dup(outputFd);
+        if (savedOutput < 0)
         {
             close(pipefd[0]);
             close(pipefd[1]);
-            ADD_FAILURE() << "dup(STDERR_FILENO) failed while capturing logger output";
+            ADD_FAILURE() << "dup() failed while capturing logger output";
             return std::string();
         }
-        dup2(pipefd[1], STDERR_FILENO);
+        dup2(pipefd[1], outputFd);
 
         Logger::log(level, module, __FILE__, __func__, __LINE__, "%s", msg);
 
-        fflush(stderr);
-        dup2(savedStderr, STDERR_FILENO);
-        close(savedStderr);
+        fflush(stream);
+        dup2(savedOutput, outputFd);
+        close(savedOutput);
         close(pipefd[1]);
 
         char buf[2048] = {0};
@@ -98,6 +99,26 @@ protected:
         return std::string(buf);
     }
 };
+
+TEST_F(LoggerFormatUTest, StdoutOutputOverride)
+{
+    setenv("FIREBOLT_TRANSPORT_LOG_OUTPUT", "stdout", 1);
+
+    const std::string output = captureLogCall(LogLevel::Error, "Test", "stdout payload", STDOUT_FILENO);
+
+    EXPECT_NE(output.find("[FireboltNative|Test|Error]"), std::string::npos) << output;
+    EXPECT_NE(output.find("stdout payload"), std::string::npos) << output;
+}
+
+TEST_F(LoggerFormatUTest, StderrOutputOverride)
+{
+    setenv("FIREBOLT_TRANSPORT_LOG_OUTPUT", "stderr", 1);
+
+    const std::string output = captureLogCall(LogLevel::Error, "Test", "stderr payload");
+
+    EXPECT_NE(output.find("[FireboltNative|Test|Error]"), std::string::npos) << output;
+    EXPECT_NE(output.find("stderr payload"), std::string::npos) << output;
+}
 
 // ---------------------------------------------------------------------------
 // Test name: LoggerFormatUTest.LocationTrue_FunctionTrue

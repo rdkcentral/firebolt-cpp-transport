@@ -21,6 +21,7 @@
 #include "firebolt/types.h"
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -64,16 +65,20 @@ public:
     std::optional<std::string> getResponseHeader(const std::string& headerName);
 
 #ifdef FIREBOLT_TRANSPORT_TESTING
+    void testSetBeforeOpenNotification(std::function<void()> callback)
+    {
+        beforeOpenNotification_ = std::move(callback);
+    }
     void testSetConnectionReceiver(ConnectionCallback callback) { connectionReceiver_ = callback; }
 
     void testInvokeOnClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
     {
-        onClose(c, hdl);
+        onClose(c, hdl, lifecycleGeneration_.load(std::memory_order_relaxed));
     }
 
     void testInvokeOnFail(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl)
     {
-        onFail(c, hdl);
+        onFail(c, hdl, lifecycleGeneration_.load(std::memory_order_relaxed));
     }
 #endif
 
@@ -85,15 +90,24 @@ private:
     void setLogging(websocketpp::log::level include, websocketpp::log::level exclude = 0);
     void onMessage(websocketpp::connection_hdl hdl,
                    websocketpp::client<websocketpp::config::asio_client>::message_ptr msg);
-    void onOpen(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl);
-    void onClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl);
-    void onFail(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl);
+    void onOpen(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl,
+                uint64_t generation);
+    void onClose(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl,
+                 uint64_t generation);
+    void onFail(websocketpp::client<websocketpp::config::asio_client>* c, websocketpp::connection_hdl hdl,
+                uint64_t generation);
 
 private:
     enum class TransportState;
 
     std::unique_ptr<websocketpp::client<websocketpp::config::asio_client>> client_;
     std::atomic<TransportState> connectionStatus_;
+    std::mutex lifecycleMutex_;
+    std::recursive_mutex connectionNotificationMutex_;
+#ifdef FIREBOLT_TRANSPORT_TESTING
+    std::function<void()> beforeOpenNotification_;
+#endif
+    std::atomic<uint64_t> lifecycleGeneration_{0};
     std::atomic<unsigned> id_counter_ = 0;
     bool debugEnabled_ = false;
     MessageCallback messageReceiver_;

@@ -39,7 +39,15 @@ struct SubscriptionData
 template <typename JsonType, typename... Args>
 void onPropertyChangedCallback(void* subscriptionDataPtr, const nlohmann::json& jsonResponse)
 {
+    if (subscriptionDataPtr == nullptr)
+    {
+        FIREBOLT_LOG_ERROR("Event", "Notification callback received null subscription data");
+        return;
+    }
     SubscriptionData* subscriptionData = reinterpret_cast<SubscriptionData*>(subscriptionDataPtr);
+    FIREBOLT_LOG_DEBUG("Event", "Dispatching notification event='%s' data=%p has_value=%d",
+                       subscriptionData->eventName.c_str(), static_cast<void*>(subscriptionData),
+                       subscriptionData->notification.has_value() ? 1 : 0);
     try
     {
         auto notifier = std::any_cast<std::function<void(Args...)>>(subscriptionData->notification);

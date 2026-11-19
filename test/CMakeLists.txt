@@ -21,6 +21,11 @@ find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 include(GoogleTest)
 
 enable_testing()
+add_test(NAME BuildConfigurationDefaults
+    COMMAND ${CMAKE_COMMAND} "-DSOURCE=${CMAKE_SOURCE_DIR}"
+        "-DBINARY=${CMAKE_CURRENT_BINARY_DIR}/build-configuration"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/buildConfigurationTest.cmake")
+set_tests_properties(BuildConfigurationDefaults PROPERTIES TIMEOUT 60)
 
 set(UNIT_TESTS_APP utApp)
 

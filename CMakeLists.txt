@@ -1,3 +1,4 @@
+
 # Copyright 2025 Comcast Cable Communications Management, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,11 +17,28 @@
 
 cmake_minimum_required(VERSION 3.12)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+# Determine whether Transport is being built standalone or
+# included as a subproject (e.g. by FireboltEntos).
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(FIREBOLT_TRANSPORT_STANDALONE ON)
+else()
+    set(FIREBOLT_TRANSPORT_STANDALONE OFF)
+endif()
+
+# Always use Transport's own CMake modules.
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+if(NOT DEFINED FIREBOLT_TRANSPORT_VERSION)
+    # TEMPORARY local override for Yocto/debug work.
+    set(FIREBOLT_TRANSPORT_VERSION "1.1.13"
+        CACHE STRING "Firebolt transport version")
+endif()
 
 project(FireboltTransport)
 
-include(version)
+# Explicit path avoids accidentally loading a parent
+# project's version module.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.cmake")
 
 message(STATUS "Project version: ${PROJECT_VERSION}")
 
@@ -31,23 +49,32 @@ option(ENABLE_LEGACY_RPC_V1 "Use legacy communication" OFF)
 option(DISABLE_SO_VERSION "Disable SONAME/SOVERSION of shared library" OFF)
 option(FIREBOLT_TRANSPORT_ACK_OBSERVER "Test-only nonblocking ACK wait observation (not for release builds)" OFF)
 
-if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX "${SYSROOT_PATH}/usr" CACHE INTERNAL "" FORCE)
-    set(CMAKE_PREFIX_PATH ${SYSROOT_PATH}/usr/lib/cmake CACHE INTERNAL "" FORCE)
+# Only adjust global installation settings when building
+# Transport as the top-level project.
+if(FIREBOLT_TRANSPORT_STANDALONE AND SYSROOT_PATH)
+    if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+        set(CMAKE_INSTALL_PREFIX "${SYSROOT_PATH}/usr"
+            CACHE PATH "Install prefix" FORCE)
+        set(CMAKE_PREFIX_PATH "${SYSROOT_PATH}/usr/lib/cmake"
+            CACHE PATH "Package prefix" FORCE)
+    endif()
 endif()
 
-list(APPEND CMAKE_PREFIX_PATH
+# Add toolchain/sysroot search locations when available.
+if(SYSROOT_PATH)
+    list(APPEND CMAKE_PREFIX_PATH
         "${SYSROOT_PATH}/usr/share/cmake")
 
-list(APPEND CMAKE_MODULE_PATH
+    list(APPEND CMAKE_MODULE_PATH
         "${SYSROOT_PATH}/usr/share/cmake"
         "${SYSROOT_PATH}/usr/lib/cmake"
         "${SYSROOT_PATH}/tools/cmake")
+endif()
 
 add_compile_options(-Wall -Wextra -Wpedantic)
 
 add_subdirectory(src)
 
-if (ENABLE_TESTS)
+if(ENABLE_TESTS AND FIREBOLT_TRANSPORT_STANDALONE)
     add_subdirectory(test)
 endif()

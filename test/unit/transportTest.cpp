@@ -22,8 +22,10 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <future>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <thread>
 #include <utility>
@@ -1121,6 +1123,248 @@ TEST_F(TransportCustomServerUTest, DisconnectFromDisconnectedState)
     // Now disconnect from already-disconnected state (no close() call, just cleanup)
     err = transport.disconnect();
     EXPECT_EQ(err, Firebolt::Error::None);
+}
+
+TEST_F(TransportCustomServerUTest, ReconnectIsRejectedDuringConcurrentDisconnectAndCanRetry)
+{
+    Firebolt::Logger::setLogLevel(Firebolt::LogLevel::Info);
+    std::atomic<unsigned> openCount{0};
+    m_server.set_open_handler(
+        [this, &openCount](connection_hdl hdl)
+        {
+            if (openCount.fetch_add(1) > 0)
+            {
+                m_server.close(hdl, websocketpp::close::status::normal, "End reconnect test");
+            }
+        });
+    StartServer();
+
+    Transport transport;
+    std::promise<void> connectedPromise;
+    auto connectedFuture = connectedPromise.get_future();
+    std::atomic<bool> connectedPromiseSet{false};
+    std::promise<void> disconnectCallbackEnteredPromise;
+    auto disconnectCallbackEnteredFuture = disconnectCallbackEnteredPromise.get_future();
+    std::mutex callbackMutex;
+    std::condition_variable callbackCv;
+    bool releaseDisconnectCallback = false;
+    std::promise<Firebolt::Error> disconnectResultPromise;
+    auto disconnectResultFuture = disconnectResultPromise.get_future();
+    std::thread disconnectThread;
+    std::promise<void> reconnectStartedPromise;
+    auto reconnectStartedFuture = reconnectStartedPromise.get_future();
+    std::promise<Firebolt::Error> reconnectResultPromise;
+    auto reconnectResultFuture = reconnectResultPromise.get_future();
+    std::thread reconnectThread;
+    struct Cleanup
+    {
+        std::function<void()> run;
+        ~Cleanup() { run(); }
+    } cleanup{[&]
+              {
+                  {
+                      std::lock_guard<std::mutex> lock(callbackMutex);
+                      releaseDisconnectCallback = true;
+                  }
+                  callbackCv.notify_all();
+                  if (disconnectThread.joinable())
+                      disconnectThread.join();
+                  if (reconnectThread.joinable())
+                      reconnectThread.join();
+                  transport.disconnect();
+                  TearDown();
+                  m_serverStarted = false;
+              }};
+
+    auto onInitialConnection = [&](bool connected, const Firebolt::Error&)
+    {
+        if (connected)
+        {
+            if (!connectedPromiseSet.exchange(true))
+            {
+                connectedPromise.set_value();
+            }
+            return;
+        }
+
+        std::unique_lock<std::mutex> lock(callbackMutex);
+        disconnectCallbackEnteredPromise.set_value();
+        callbackCv.wait(lock, [&] { return releaseDisconnectCallback; });
+    };
+
+    auto onReconnect = [](bool, const Firebolt::Error&) {};
+    EXPECT_EQ(transport.connect(m_uri, [](const nlohmann::json&) {}, onInitialConnection), Firebolt::Error::None);
+    ASSERT_EQ(connectedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    disconnectThread = std::thread([&] { disconnectResultPromise.set_value(transport.disconnect()); });
+
+    const bool disconnectCallbackEntered = disconnectCallbackEnteredFuture.wait_for(std::chrono::seconds(2)) ==
+                                           std::future_status::ready;
+    if (!disconnectCallbackEntered)
+    {
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex);
+            releaseDisconnectCallback = true;
+        }
+        callbackCv.notify_all();
+        disconnectThread.join();
+        FAIL() << "Disconnect did not reach the connection callback";
+    }
+
+    reconnectThread = std::thread(
+        [&]
+        {
+            reconnectStartedPromise.set_value();
+            reconnectResultPromise.set_value(transport.connect(m_uri, [](const nlohmann::json&) {}, onReconnect));
+        });
+
+    const bool reconnectStarted = reconnectStartedFuture.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    const auto reconnectDuringDisconnect = reconnectStarted
+                                               ? reconnectResultFuture.wait_for(std::chrono::milliseconds(100))
+                                               : std::future_status::deferred;
+    {
+        std::lock_guard<std::mutex> lock(callbackMutex);
+        releaseDisconnectCallback = true;
+    }
+    callbackCv.notify_all();
+
+    disconnectThread.join();
+    reconnectThread.join();
+
+    EXPECT_TRUE(reconnectStarted) << "Reconnect thread did not start";
+    EXPECT_EQ(reconnectDuringDisconnect, std::future_status::ready)
+        << "Reconnect did not return while disconnect was in progress";
+    EXPECT_EQ(disconnectResultFuture.get(), Firebolt::Error::None);
+    if (reconnectStarted)
+    {
+        EXPECT_EQ(reconnectResultFuture.get(), Firebolt::Error::AlreadyConnected);
+    }
+    EXPECT_EQ(transport.connect(m_uri, [](const nlohmann::json&) {}, onReconnect), Firebolt::Error::None);
+    EXPECT_EQ(transport.disconnect(), Firebolt::Error::None);
+}
+
+TEST_F(TransportCustomServerUTest, TeardownBeforeOpenNotificationSuppressesConnectedCallback)
+{
+    StartServer();
+    Transport transport;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered = false;
+    bool release = false;
+    std::atomic<unsigned> successes{0};
+    std::thread teardown;
+    struct Cleanup
+    {
+        std::function<void()> run;
+        ~Cleanup() { run(); }
+    } cleanup{[&]
+              {
+                  {
+                      std::lock_guard<std::mutex> lock(mutex);
+                      release = true;
+                  }
+                  cv.notify_all();
+                  if (teardown.joinable())
+                      teardown.join();
+                  transport.disconnect();
+              }};
+    transport.testSetBeforeOpenNotification(
+        [&]
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            entered = true;
+            cv.notify_all();
+            cv.wait(lock, [&] { return release; });
+        });
+    ASSERT_EQ(transport.connect(
+                  m_uri, [](const nlohmann::json&) {},
+                  [&](bool connected, Firebolt::Error)
+                  {
+                      if (connected)
+                          ++successes;
+                  }),
+              Firebolt::Error::None);
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(2), [&] { return entered; }));
+    }
+    teardown = std::thread([&] { transport.disconnect(); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (transport.send("test.probe", nlohmann::json::object(), 1) != Firebolt::Error::NotConnected &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    ASSERT_EQ(transport.send("test.probe", nlohmann::json::object(), 2), Firebolt::Error::NotConnected);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        release = true;
+    }
+    cv.notify_all();
+    teardown.join();
+    EXPECT_EQ(successes.load(), 0u);
+}
+
+TEST_F(TransportCustomServerUTest, ConnectedCallbackCanReenterConnectBeforeTeardown)
+{
+    StartServer();
+    Transport transport;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered = false;
+    bool release = false;
+    std::promise<Firebolt::Error> reconnectResult;
+    auto reconnectFuture = reconnectResult.get_future();
+    std::promise<void> teardownStarted;
+    auto teardownStartedFuture = teardownStarted.get_future();
+    std::thread teardown;
+    struct Cleanup
+    {
+        std::function<void()> run;
+        ~Cleanup() { run(); }
+    } cleanup{[&]
+              {
+                  {
+                      std::lock_guard<std::mutex> lock(mutex);
+                      release = true;
+                  }
+                  cv.notify_all();
+                  if (teardown.joinable())
+                      teardown.join();
+                  transport.disconnect();
+              }};
+    ASSERT_EQ(transport.connect(
+                  m_uri, [](const nlohmann::json&) {},
+                  [&](bool connected, Firebolt::Error)
+                  {
+                      if (!connected)
+                          return;
+                      reconnectResult.set_value(
+                          transport.connect(m_uri, [](const nlohmann::json&) {}, [](bool, Firebolt::Error) {}));
+                      std::unique_lock<std::mutex> lock(mutex);
+                      entered = true;
+                      cv.notify_all();
+                      cv.wait(lock, [&] { return release; });
+                  }),
+              Firebolt::Error::None);
+    ASSERT_EQ(reconnectFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(reconnectFuture.get(), Firebolt::Error::AlreadyConnected);
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(2), [&] { return entered; }));
+    }
+    teardown = std::thread(
+        [&]
+        {
+            teardownStarted.set_value();
+            transport.disconnect();
+        });
+    ASSERT_EQ(teardownStartedFuture.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(transport.send("test.callback", nlohmann::json::object(), 1), Firebolt::Error::None);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        release = true;
+    }
+    cv.notify_all();
+    teardown.join();
 }
 
 // ---------------------------------------------------------------------------
